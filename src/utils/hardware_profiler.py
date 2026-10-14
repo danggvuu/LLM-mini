@@ -246,30 +246,10 @@ class ModelZooManager:
 
     def auto_setup(self):
         config = self.get_recommended_config()
-        print(f"--- Auto Hardware Profiler & Model Zoo (3-Layer Auto-Adaptation) ---")
+        print(f"--- Auto Hardware Profiler ---")
         print(f"OS: {self.os_name} | RAM: {self.total_ram_gb:.1f} GB | VRAM: {self.vram_gb:.1f} GB")
-        print(f"Assigned Tier: {config['tier_name']}")
+        print(f"Đề xuất cấu hình: {config['tier_name']} -> {config['model_tag']}")
         print(f"--------------------------------------------------------------------")
-        
-        # Thử Lớp 1 và Lớp 2
-        layer_1_2_success = self.setup_layer_1_and_2()
-        
-        if layer_1_2_success:
-            model_path = self.check_and_install_model(config['repo_id'], config['filename'])
-            config['model_path'] = model_path
-            
-            # Kiểm thử xem CPU có chạy được Llama (Pre-compiled) không
-            if model_path and self.test_llama_cpp(model_path):
-                config['engine'] = 'llama-cpp-python'
-                return config
-            else:
-                print("\n[Điều phối viên] Phát hiện phần cứng không tương thích với Lớp 1/2. Đang tự động chuyển hướng...")
-        else:
-            print("\n[Điều phối viên] Không thể cài đặt Lớp 1/2. Đang tự động chuyển hướng...")
-
-        # Chuyển sang Lớp 3
-        self.setup_ollama_portable(config['model_tag'])
-        config['engine'] = 'ollama'
         return config
 
 if __name__ == "__main__":
