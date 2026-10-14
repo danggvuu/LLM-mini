@@ -17,7 +17,7 @@ class LLMEngine:
     """
 
     DEFAULT_MODELS = {
-        "9router": "gemini-2.5-flash",
+        "9router": "kr/claude-sonnet-4.5",
         "ollama": "qwen2.5:3b",
         "lm_studio": "local-model",
         "gemini": "gemini-2.5-flash",
@@ -192,7 +192,7 @@ class LLMEngine:
         actual_key = api_key or gemini_api_key or ""
         actual_model = model_name or self.DEFAULT_MODELS.get(actual_provider, "")
         if actual_provider == "9router" and (not actual_model or actual_model.lower() == "default"):
-            actual_model = "gemini-2.5-flash"
+            actual_model = "kr/claude-sonnet-4.5"
 
         # 1. Xử lý Ollama Local
         if actual_provider == "ollama":

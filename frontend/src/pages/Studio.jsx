@@ -550,31 +550,49 @@ function Studio() {
                     </>
                   )}
 
-                  <div className="text-[10px] text-orange-400 px-2 pt-2 font-medium">9Router AI Gateway:</div>
+                  <div className="text-[10px] text-orange-400 px-2 pt-2 font-medium">9Router Gateway (Mới nhất):</div>
+                  <button
+                    onClick={() => handleSwitchModel('9router', 'kr/claude-sonnet-4.5')}
+                    className={`w-full text-left text-xs px-2.5 py-1.5 rounded-lg hover:bg-white/10 transition flex items-center justify-between ${
+                      currentProvider === '9router' && currentModel === 'kr/claude-sonnet-4.5' ? 'bg-orange-500/20 text-orange-300 font-semibold' : 'text-gray-300'
+                    }`}
+                  >
+                    <span>Claude 3.7 / 4.5 Sonnet</span>
+                    <span className="text-[9px] bg-purple-500/30 text-purple-300 px-1.5 py-0.5 rounded font-mono">Top 1</span>
+                  </button>
+                  <button
+                    onClick={() => handleSwitchModel('9router', 'kr/deepseek-3.2')}
+                    className={`w-full text-left text-xs px-2.5 py-1.5 rounded-lg hover:bg-white/10 transition flex items-center justify-between ${
+                      currentProvider === '9router' && currentModel === 'kr/deepseek-3.2' ? 'bg-orange-500/20 text-orange-300 font-semibold' : 'text-gray-300'
+                    }`}
+                  >
+                    <span>DeepSeek V3.2</span>
+                    <span className="text-[9px] bg-blue-500/30 text-blue-300 px-1.5 py-0.5 rounded font-mono">Mới</span>
+                  </button>
+                  <button
+                    onClick={() => handleSwitchModel('9router', 'kr/auto')}
+                    className={`w-full text-left text-xs px-2.5 py-1.5 rounded-lg hover:bg-white/10 transition flex items-center justify-between ${
+                      currentProvider === '9router' && currentModel === 'kr/auto' ? 'bg-orange-500/20 text-orange-300 font-semibold' : 'text-gray-300'
+                    }`}
+                  >
+                    <span>Auto Router (Tự chọn model tốt)</span>
+                    <span className="text-[9px] bg-green-500/30 text-green-300 px-1.5 py-0.5 rounded font-mono">Auto</span>
+                  </button>
+                  <button
+                    onClick={() => handleSwitchModel('9router', 'kr/glm-5')}
+                    className={`w-full text-left text-xs px-2.5 py-1.5 rounded-lg hover:bg-white/10 transition ${
+                      currentProvider === '9router' && currentModel === 'kr/glm-5' ? 'bg-orange-500/20 text-orange-300 font-semibold' : 'text-gray-300'
+                    }`}
+                  >
+                    GLM 5.0
+                  </button>
                   <button
                     onClick={() => handleSwitchModel('9router', 'gemini-2.5-flash')}
-                    className={`w-full text-left text-xs px-2.5 py-1.5 rounded-lg hover:bg-white/10 transition flex items-center justify-between ${
+                    className={`w-full text-left text-xs px-2.5 py-1.5 rounded-lg hover:bg-white/10 transition ${
                       currentProvider === '9router' && currentModel === 'gemini-2.5-flash' ? 'bg-orange-500/20 text-orange-300 font-semibold' : 'text-gray-300'
                     }`}
                   >
-                    <span>Gemini 2.5 Flash</span>
-                    <span className="text-[9px] bg-green-500/20 text-green-300 px-1.5 py-0.5 rounded">Active</span>
-                  </button>
-                  <button
-                    onClick={() => handleSwitchModel('9router', 'cl/deepseek/deepseek-chat')}
-                    className={`w-full text-left text-xs px-2.5 py-1.5 rounded-lg hover:bg-white/10 transition ${
-                      currentProvider === '9router' && currentModel === 'cl/deepseek/deepseek-chat' ? 'bg-orange-500/20 text-orange-300 font-semibold' : 'text-gray-300'
-                    }`}
-                  >
-                    DeepSeek Chat
-                  </button>
-                  <button
-                    onClick={() => handleSwitchModel('9router', 'openai/gpt-4o-mini')}
-                    className={`w-full text-left text-xs px-2.5 py-1.5 rounded-lg hover:bg-white/10 transition ${
-                      currentProvider === '9router' && currentModel === 'openai/gpt-4o-mini' ? 'bg-orange-500/20 text-orange-300 font-semibold' : 'text-gray-300'
-                    }`}
-                  >
-                    OpenAI GPT-4o Mini
+                    Gemini 2.5 Flash
                   </button>
 
                   <div className="text-[10px] text-blue-400 px-2 pt-2 font-medium">Cloud AI:</div>

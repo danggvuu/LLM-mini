@@ -353,17 +353,18 @@ function Dashboard() {
               {/* Model selection based on provider */}
               {provider === '9router' && (
                 <div className="bg-black/30 p-3 rounded-xl border border-white/10 space-y-2">
-                  <label className="block text-xs text-orange-300 font-medium">Chọn Model trong 9Router:</label>
+                  <label className="block text-xs text-orange-300 font-medium">Chọn Model trong 9Router (Mới nhất):</label>
                   <select
                     value={selectedModel}
                     onChange={e => setSelectedModel(e.target.value)}
                     className="w-full bg-[#121316] border border-white/15 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-orange-500"
                   >
-                    <option value="gemini-2.5-flash">gemini-2.5-flash (Khuyên dùng - Đang chạy tốt)</option>
-                    <option value="cl/deepseek/deepseek-chat">cl/deepseek/deepseek-chat</option>
-                    <option value="openai/gpt-4o-mini">openai/gpt-4o-mini</option>
-                    <option value="openai/gpt-4o">openai/gpt-4o</option>
-                    <option value="venice/llama-3.3-70b">venice/llama-3.3-70b</option>
+                    <option value="kr/claude-sonnet-4.5">kr/claude-sonnet-4.5 (Claude 3.7 / 4.5 Sonnet ⭐)</option>
+                    <option value="kr/deepseek-3.2">kr/deepseek-3.2 (DeepSeek V3.2 🔥 Mới nhất)</option>
+                    <option value="kr/auto">kr/auto (Tự động định tuyến tối ưu)</option>
+                    <option value="kr/glm-5">kr/glm-5 (GLM 5.0)</option>
+                    <option value="kr/qwen3-coder-next">kr/qwen3-coder-next (Qwen 3 Coder Next)</option>
+                    <option value="gemini-2.5-flash">gemini-2.5-flash (Google Gemini)</option>
                   </select>
                 </div>
               )}
