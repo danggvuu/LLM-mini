@@ -552,12 +552,29 @@ function Studio() {
 
                   <div className="text-[10px] text-orange-400 px-2 pt-2 font-medium">9Router AI Gateway:</div>
                   <button
-                    onClick={() => handleSwitchModel('9router', 'default')}
-                    className={`w-full text-left text-xs px-2.5 py-1.5 rounded-lg hover:bg-white/10 transition ${
-                      currentProvider === '9router' ? 'bg-orange-500/20 text-orange-300 font-semibold' : 'text-gray-300'
+                    onClick={() => handleSwitchModel('9router', 'gemini-2.5-flash')}
+                    className={`w-full text-left text-xs px-2.5 py-1.5 rounded-lg hover:bg-white/10 transition flex items-center justify-between ${
+                      currentProvider === '9router' && currentModel === 'gemini-2.5-flash' ? 'bg-orange-500/20 text-orange-300 font-semibold' : 'text-gray-300'
                     }`}
                   >
-                    9Router (localhost:20128)
+                    <span>Gemini 2.5 Flash</span>
+                    <span className="text-[9px] bg-green-500/20 text-green-300 px-1.5 py-0.5 rounded">Active</span>
+                  </button>
+                  <button
+                    onClick={() => handleSwitchModel('9router', 'cl/deepseek/deepseek-chat')}
+                    className={`w-full text-left text-xs px-2.5 py-1.5 rounded-lg hover:bg-white/10 transition ${
+                      currentProvider === '9router' && currentModel === 'cl/deepseek/deepseek-chat' ? 'bg-orange-500/20 text-orange-300 font-semibold' : 'text-gray-300'
+                    }`}
+                  >
+                    DeepSeek Chat
+                  </button>
+                  <button
+                    onClick={() => handleSwitchModel('9router', 'openai/gpt-4o-mini')}
+                    className={`w-full text-left text-xs px-2.5 py-1.5 rounded-lg hover:bg-white/10 transition ${
+                      currentProvider === '9router' && currentModel === 'openai/gpt-4o-mini' ? 'bg-orange-500/20 text-orange-300 font-semibold' : 'text-gray-300'
+                    }`}
+                  >
+                    OpenAI GPT-4o Mini
                   </button>
 
                   <div className="text-[10px] text-blue-400 px-2 pt-2 font-medium">Cloud AI:</div>

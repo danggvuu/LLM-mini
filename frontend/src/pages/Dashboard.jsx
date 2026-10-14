@@ -336,9 +336,38 @@ function Dashboard() {
                 >
                   LM Studio
                 </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setProvider('9router');
+                    setSelectedModel('gemini-2.5-flash');
+                  }}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition ${
+                    provider === '9router' ? 'border-orange-500 bg-orange-500/10 text-orange-300' : 'border-white/10 text-gray-400 hover:text-white'
+                  }`}
+                >
+                  9Router Gateway
+                </button>
               </div>
 
               {/* Model selection based on provider */}
+              {provider === '9router' && (
+                <div className="bg-black/30 p-3 rounded-xl border border-white/10 space-y-2">
+                  <label className="block text-xs text-orange-300 font-medium">Chọn Model trong 9Router:</label>
+                  <select
+                    value={selectedModel}
+                    onChange={e => setSelectedModel(e.target.value)}
+                    className="w-full bg-[#121316] border border-white/15 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-orange-500"
+                  >
+                    <option value="gemini-2.5-flash">gemini-2.5-flash (Khuyên dùng - Đang chạy tốt)</option>
+                    <option value="cl/deepseek/deepseek-chat">cl/deepseek/deepseek-chat</option>
+                    <option value="openai/gpt-4o-mini">openai/gpt-4o-mini</option>
+                    <option value="openai/gpt-4o">openai/gpt-4o</option>
+                    <option value="venice/llama-3.3-70b">venice/llama-3.3-70b</option>
+                  </select>
+                </div>
+              )}
+
               {provider === 'ollama' && (
                 <div className="bg-black/30 p-3 rounded-xl border border-white/10 space-y-2">
                   <label className="block text-xs text-gray-400 font-medium">Chọn mô hình trong Ollama:</label>
