@@ -130,6 +130,21 @@ class SessionManager:
             cursor = conn.execute("SELECT key, value FROM app_settings")
             for key, val in cursor.fetchall():
                 default_settings[key] = val
+
+        # Đọc bổ sung từ biến môi trường (Environment Variables / .env)
+        env_mappings = {
+            "router9_api_key": "ROUTER9_API_KEY",
+            "router9_base_url": "ROUTER9_BASE_URL",
+            "router9_model": "ROUTER9_MODEL",
+            "groq_api_key": "GROQ_API_KEY",
+            "gemini_api_key": "GEMINI_API_KEY",
+            "openai_api_key": "OPENAI_API_KEY",
+            "openrouter_api_key": "OPENROUTER_API_KEY"
+        }
+        for s_key, env_var in env_mappings.items():
+            if not default_settings.get(s_key) and os.getenv(env_var):
+                default_settings[s_key] = os.getenv(env_var)
+
         return default_settings
 
     def save_app_settings(self, settings_dict: Dict[str, Any]):

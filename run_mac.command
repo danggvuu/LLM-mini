@@ -53,45 +53,25 @@ fi
 # 4. Kích hoạt môi trường ảo
 source .venv/bin/activate
 
-# 5. Cài đặt các thư viện lõi
-echo "📥 Đang đồng bộ hóa thư viện..."
-uv pip install -r requirements.txt
-
-# 6. Cài đặt llama-cpp-python với cờ Metal cho Mac M-series (tối ưu tốc độ)
-echo "⚡ Đang kiểm tra/cài đặt Engine AI tối ưu cho máy Mac..."
-# Kiểm tra nếu chưa cài llama-cpp-python
-if ! python -c "import llama_cpp" 2>/dev/null; then
-    echo "🚀 Cài đặt Llama.cpp với cấu hình Apple Metal GPU..."
-    CMAKE_ARGS="-DGGML_METAL=on" uv pip install llama-cpp-python --no-cache-dir
-fi
-
-# 6.5 Quét phần cứng và tự động cài đặt Model Zoo
-echo "🔍 Đang quét cấu hình máy tính của bạn để đề xuất Model AI tối ưu..."
-python src/utils/hardware_profiler.py
-
-# 6.8 Xây dựng giao diện Frontend
-if command_exists npm; then
-    echo "📦 Đang kiểm tra và xây dựng giao diện người dùng (Frontend)..."
-    cd frontend
-    if [ ! -d "node_modules" ]; then
-        echo "📥 Đang cài đặt thư viện Node.js..."
-        npm install
-    fi
-    if [ ! -d "dist" ]; then
-        echo "🏗 Đang biên dịch giao diện Web..."
+# 5. Đảm bảo frontend dist đã sẵn sàng
+if [ ! -d "frontend/dist" ]; then
+    if command_exists npm; then
+        echo "🏗 Đang biên dịch giao diện Frontend lần đầu..."
+        cd frontend
+        if [ ! -d "node_modules" ]; then
+            npm install
+        fi
         npm run build
+        cd ..
     fi
-    cd ..
-else
-    echo "⚠️ Lỗi: Không tìm thấy lệnh 'npm'. Giao diện Web sẽ không hiển thị. Vui lòng cài đặt Node.js."
 fi
 
-# 7. Khởi động hệ thống
-echo "✨ Bắt đầu chạy hệ thống..."
-echo "-> Mở trình duyệt Web tại: http://localhost:8000"
+# 6. Khởi động hệ thống siêu tốc (1-2s)
+echo "✨ Khởi động NotebookLM Mini thành công!"
+echo "-> Đang mở trình duyệt tại: http://localhost:8000"
 
-# Đợi 2 giây cho Server Uvicorn khởi động, sau đó mở web
-(sleep 3 && open http://localhost:8000) &
+# Mở trình duyệt sau 1.5s
+(sleep 1.5 && open http://localhost:8000) &
 
-# Chạy Backend (chiếm màn hình chính)
+# Chạy Backend FastAPI
 uvicorn src.api.api:app --host 127.0.0.1 --port 8000

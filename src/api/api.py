@@ -339,6 +339,8 @@ async def chat_endpoint(request: ChatRequest):
             model_name = global_settings.get("groq_model", "llama-3.3-70b-versatile")
         elif provider == "openrouter":
             model_name = global_settings.get("openrouter_model", "deepseek/deepseek-r1")
+        elif provider == "9router":
+            model_name = global_settings.get("router9_model", "claude-3-5-sonnet")
 
     api_key = notebook.get('api_key') or notebook.get('gemini_api_key')
     if not api_key:
@@ -350,6 +352,8 @@ async def chat_endpoint(request: ChatRequest):
             api_key = global_settings.get("groq_api_key")
         elif provider == "openrouter":
             api_key = global_settings.get("openrouter_api_key")
+        elif provider == "9router":
+            api_key = global_settings.get("router9_api_key")
 
     base_url = notebook.get('base_url')
     if not base_url:
@@ -357,6 +361,8 @@ async def chat_endpoint(request: ChatRequest):
             base_url = global_settings.get("ollama_base_url", "http://localhost:11434")
         elif provider in ["lm_studio", "local_ai"]:
             base_url = global_settings.get("lm_studio_base_url", "http://localhost:1234/v1")
+        elif provider == "9router":
+            base_url = global_settings.get("router9_base_url", "http://localhost:20128/v1")
 
     is_private = notebook.get('is_private', True)
 
