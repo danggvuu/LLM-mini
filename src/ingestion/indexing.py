@@ -1,12 +1,15 @@
 import os
 import uuid
+import logging
 from typing import List, Dict, Any
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams, PointStruct
 from ..utils.config import settings
 
+logger = logging.getLogger(__name__)
+
 class VectorStoreManager:
-    """Quản lý việc lưu trữ Vector vào Qdrant Local."""
+    """Quản lý việc lưu trữ Vector vào Qdrant Local và đồng bộ hóa BM25 Index."""
     
     def __init__(self, embedder):
         self.embedder = embedder
@@ -39,7 +42,7 @@ class VectorStoreManager:
             print(f"[Qdrant] Đã kết nối tới Collection: {self.collection_name}")
 
     def index_chunks(self, chunks: List[Dict[str, Any]]):
-        """Nhúng và lưu các đoạn văn bản vào Database."""
+        """Nhúng và lưu các đoạn văn bản vào Database, đồng thời cập nhật BM25."""
         if not chunks:
             return
             
@@ -47,24 +50,59 @@ class VectorStoreManager:
         texts = [chunk["content"] for chunk in chunks]
         embeddings = self.embedder.embed_documents(texts)
         
+        def _clean_meta(meta_dict):
+            cleaned = {}
+            for k, v in (meta_dict or {}).items():
+                if isinstance(v, (str, int, float, bool)):
+                    cleaned[k] = v
+                elif isinstance(v, (list, tuple)):
+                    cleaned[k] = [str(item) if not isinstance(item, (int, float, bool)) else item for item in v]
+                else:
+                    cleaned[k] = str(v)
+            return cleaned
+
         points = []
         for i, chunk in enumerate(chunks):
+            point_id = str(uuid.uuid4())
+            cleaned_payload = {
+                "content": str(chunk["content"]),
+                **_clean_meta(chunk.get("metadata", {}))
+            }
             point = PointStruct(
-                id=str(uuid.uuid4()), # Sinh ID duy nhất
+                id=point_id,
                 vector=embeddings[i],
-                payload={
-                    "content": chunk["content"],
-                    **chunk["metadata"] # Gắn kèm siêu dữ liệu (Metadata)
-                }
+                payload=cleaned_payload
             )
             points.append(point)
             
-        print(f"[Qdrant] Đang lưu {len(points)} Vectors vào Database...")
-        self.client.upsert(
-            collection_name=self.collection_name,
-            points=points
-        )
-        print("[Qdrant] Lưu dữ liệu hoàn tất!")
+        print(f"[Qdrant] Đang lưu {len(points)} Vectors vào Database (batching 200/lần)...")
+        batch_size = 200
+        for b_idx in range(0, len(points), batch_size):
+            batch_points = points[b_idx:b_idx + batch_size]
+            self.client.upsert(
+                collection_name=self.collection_name,
+                points=batch_points
+            )
+        print("[Qdrant] Lưu dữ liệu Vector hoàn tất!")
+
+        # Đồng bộ hóa sang BM25 Index cho Hybrid Search
+        try:
+            from ..retrieval.bm25_index import get_bm25_index, BM25Document
+            notebook_id = chunks[0]["metadata"].get("notebook_id", "default")
+            bm25 = get_bm25_index(notebook_id)
+            bm25_docs = [
+                BM25Document(
+                    chunk_id=points[i].id,
+                    text=chunks[i]["content"],
+                    metadata=chunks[i]["metadata"]
+                )
+                for i in range(len(chunks))
+            ]
+            bm25.add_documents(bm25_docs)
+            bm25.save()
+            print(f"[BM25] Đã đồng bộ {len(bm25_docs)} chunks vào chỉ mục từ khóa.")
+        except Exception as e:
+            logger.warning(f"Lỗi đồng bộ BM25 Index: {e}")
 
     def delete_notebook_chunks(self, notebook_id: str):
         """Xóa tất cả các chunk thuộc về một notebook."""
@@ -80,12 +118,15 @@ class VectorStoreManager:
                 ]
             )
         )
+        try:
+            from ..retrieval.bm25_index import delete_bm25_folder
+            delete_bm25_folder(notebook_id)
+        except Exception as e:
+            logger.warning(f"Lỗi xóa BM25 folder: {e}")
 
     def delete_document_chunks(self, notebook_id: str, filename: str):
         """Xóa tất cả các chunk thuộc về một tài liệu trong notebook."""
-        from qdrant_client.http.models import Filter, FieldCondition, MatchValue, FilterSelector
-        # Qdrant delete bằng filter
-        # Chúng ta xóa các chunk có notebook_id = notebook_id VÀ (source_file = filename HOẶC title = filename HOẶC source_url = filename)
+        from qdrant_client.http.models import Filter, FieldCondition, MatchValue
         self.client.delete(
             collection_name=self.collection_name,
             points_selector=Filter(
@@ -93,15 +134,23 @@ class VectorStoreManager:
                     FieldCondition(key="notebook_id", match=MatchValue(value=notebook_id))
                 ],
                 should=[
+                    FieldCondition(key="filename", match=MatchValue(value=filename)),
                     FieldCondition(key="source_file", match=MatchValue(value=filename)),
                     FieldCondition(key="title", match=MatchValue(value=filename)),
                     FieldCondition(key="source_url", match=MatchValue(value=filename))
                 ]
             )
         )
+        try:
+            from ..retrieval.bm25_index import get_bm25_index
+            bm25 = get_bm25_index(notebook_id)
+            bm25.remove_document(filename)
+            bm25.save()
+        except Exception as e:
+            logger.warning(f"Lỗi cập nhật BM25 khi xóa file {filename}: {e}")
 
     def search(self, query: str, limit: int = 5, notebook_id: str = None) -> List[Dict[str, Any]]:
-        """Tìm kiếm dữ liệu tương tự."""
+        """Tìm kiếm dữ liệu tương tự theo Vector."""
         from qdrant_client.http.models import Filter, FieldCondition, MatchValue
         
         query_vector = self.embedder.embed_query(query)

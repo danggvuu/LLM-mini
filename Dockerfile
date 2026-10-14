@@ -1,36 +1,42 @@
-# Sử dụng image Python chuẩn và nhẹ
-FROM python:3.10-slim
+# ==============================================================================
+# Stage 1: Build React Frontend
+# ==============================================================================
+FROM node:20-alpine AS frontend-builder
+WORKDIR /app/frontend
 
-# Ngăn Python tạo ra các file .pyc và bật stdout logging ngay lập tức
+COPY frontend/package*.json ./
+RUN npm install
+
+COPY frontend/ ./
+RUN npm run build
+
+# ==============================================================================
+# Stage 2: Python Backend Runtime
+# ==============================================================================
+FROM python:3.11-slim
+
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+ENV HF_DEVICE=cpu
 
-# Cài đặt các thư viện hệ thống cần thiết (nếu có thư viện c++ compiling)
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Thiết lập thư mục làm việc
 WORKDIR /app
 
-# Copy requirement và cài đặt dependencies trước để tận dụng Docker cache
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    curl \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy toàn bộ mã nguồn
-COPY . .
+# Copy source code và assets
+COPY src/ ./src/
+COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
 
-# Tạo sẵn các thư mục data và storage
-RUN mkdir -p data storage/qdrant storage/bm25
+# Tạo thư mục lưu trữ persistent
+RUN mkdir -p storage/qdrant storage/bm25 data
 
-# Phân quyền cho user không root (Best practice về security)
-RUN useradd -m appuser && chown -R appuser:appuser /app
-USER appuser
+EXPOSE 8000
 
-# Expose ports: 8000 cho FastAPI, 8501 cho Streamlit
-EXPOSE 8000 8501
-
-# Chạy bằng script start.sh hoặc chỉ định CMD mặc định
-# CMD sẽ được override trong docker-compose.yml để chạy API hoặc UI
 CMD ["uvicorn", "src.api.api:app", "--host", "0.0.0.0", "--port", "8000"]

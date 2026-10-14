@@ -11,9 +11,9 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from src.ingestion.parsers.web_parser import WebParser
 from src.ingestion.markdown_renderer import MarkdownRenderer
-from src.chunking.chunker import AdaptiveChunker
-from src.embeddings.embedder import LocalEmbedder
-from src.vectordb.vector_store import VectorStoreManager
+from src.ingestion.chunking import AdaptiveChunker
+from src.ingestion.embedding import LocalEmbedder
+from src.ingestion.indexing import VectorStoreManager
 
 def main():
     print("=" * 60)

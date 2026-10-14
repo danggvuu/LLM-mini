@@ -74,7 +74,8 @@ class WebParser:
         for element in soup(["script", "style", "nav", "footer", "header", "aside"]):
             element.decompose()
 
-        meta["title"] = soup.title.string if soup.title else "Untitled Webpage"
+        title_text = str(soup.title.string).strip() if (soup.title and soup.title.string) else "Untitled Webpage"
+        meta["title"] = title_text
 
         root = DocumentNode(metadata=meta)
         

@@ -1,54 +1,19 @@
-services:
-  redis:
-    image: redis:7-alpine
-    container_name: llm_mini_redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-    restart: unless-stopped
+version: '3.8'
 
-  api:
+services:
+  notebooklm:
     build: .
-    container_name: llm_mini_api
+    container_name: notebooklm_mini
+    restart: unless-stopped
     ports:
       - "8000:8000"
     volumes:
-      - ./data:/app/data
       - ./storage:/app/storage
-    env_file:
-      - .env
-    environment:
-      - RAG_REDIS_HOST=redis
-    depends_on:
-      redis:
-        condition: service_healthy
-    command: uvicorn src.interfaces.api:app --host 0.0.0.0 --port 8000
-    restart: unless-stopped
-
-  ui:
-    build: .
-    container_name: llm_mini_ui
-    ports:
-      - "8501:8501"
-    volumes:
       - ./data:/app/data
-      - ./storage:/app/storage
-    env_file:
-      - .env
     environment:
-      - RAG_API_URL=http://api:8000
-    depends_on:
-      - api
-    command: streamlit run src/interfaces/ui.py
-    restart: unless-stopped
+      - HF_DEVICE=cpu
+      - DEFAULT_PROVIDER=groq
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
 
-volumes:
-  redis_data:
-    driver: local
