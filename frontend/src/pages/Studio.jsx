@@ -332,7 +332,7 @@ function Studio() {
           if (event.startsWith("data: ")) {
             const dataStr = event.substring(6);
             try {
-              const data = json.parse(dataStr);
+              const data = JSON.parse(dataStr);
               
               setMessages(prev => {
                 const newMessages = [...prev];
@@ -675,22 +675,24 @@ function Studio() {
                         <span className="inline-block w-2 h-3.5 bg-blue-500 animate-pulse ml-1 align-middle rounded-sm"></span>
                       )}
                     </div>
+                  ) : msg.role === 'assistant' && loading && idx === messages.length - 1 ? (
+                    <div className="flex flex-col gap-2">
+                      <span className="flex gap-1 items-center h-4">
+                        <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"></span>
+                        <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></span>
+                        <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: '0.4s'}}></span>
+                      </span>
+                      {msg.status && (
+                        <div className="flex items-center gap-1.5 text-xs text-blue-400 font-medium animate-pulse">
+                          <Loader size={11} className="animate-spin" />
+                          {msg.status}
+                        </div>
+                      )}
+                    </div>
                   ) : (
-                    msg.role === 'assistant' && loading && idx === messages.length - 1 && (
-                      <div className="flex flex-col gap-2">
-                        <span className="flex gap-1 items-center h-4">
-                          <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"></span>
-                          <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></span>
-                          <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: '0.4s'}}></span>
-                        </span>
-                        {msg.status && (
-                          <div className="flex items-center gap-1.5 text-xs text-blue-400 font-medium animate-pulse">
-                            <Loader size={11} className="animate-spin" />
-                            {msg.status}
-                          </div>
-                        )}
-                      </div>
-                    )
+                    <div className="text-gray-400 text-xs italic">
+                      (Không có nội dung phản hồi)
+                    </div>
                   )}
                 </div>
 
