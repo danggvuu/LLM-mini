@@ -272,6 +272,7 @@ class SessionManager:
 
     def delete_notebook(self, notebook_id: str):
         with self._get_conn() as conn:
+            conn.execute("DELETE FROM flashcard_progress WHERE notebook_id = ?", (notebook_id,))
             conn.execute("DELETE FROM study_guides WHERE notebook_id = ?", (notebook_id,))
             conn.execute("DELETE FROM messages WHERE notebook_id = ?", (notebook_id,))
             conn.execute("DELETE FROM documents WHERE notebook_id = ?", (notebook_id,))
@@ -390,6 +391,14 @@ class SessionManager:
         mindmap: Any = None,
         timeline_outline: Any = None
     ):
+        # Giữ lại mindmap và timeline_outline cũ nếu không được truyền mới
+        existing = self.get_study_guide(notebook_id)
+        if existing:
+            if mindmap is None:
+                mindmap = existing.get("mindmap")
+            if timeline_outline is None:
+                timeline_outline = existing.get("timeline_outline")
+
         # Hỗ trợ nhận cả string JSON lẫn object Python (dict/list)
         quiz_str = json.dumps(quiz, ensure_ascii=False) if isinstance(quiz, (list, dict)) else quiz
         flashcards_str = json.dumps(flashcards, ensure_ascii=False) if isinstance(flashcards, (list, dict)) else flashcards

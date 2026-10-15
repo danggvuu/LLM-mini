@@ -727,9 +727,15 @@ async def upload_file(
     with open(file_path, "wb") as f:
         f.write(await file.read())
         
-    if file.filename.lower().endswith(('.mp3', '.wav', '.flac', '.ogg', '.m4a')):
+    lower_name = file.filename.lower()
+    if lower_name.endswith(('.mp3', '.wav', '.flac', '.ogg', '.m4a')):
         from src.ingestion.parsers.audio_parser import AudioParser
         parser = AudioParser()
+    elif lower_name.endswith(('.png', '.jpg', '.jpeg', '.webp', '.bmp')):
+        from src.ingestion.parsers.image_parser import ImageParser
+        settings_data = sm.get_app_settings()
+        ollama_url = settings_data.get("ollama_base_url", "http://localhost:11434")
+        parser = ImageParser(ollama_url=ollama_url)
     else:
         parser = MarkItDownParser()
         

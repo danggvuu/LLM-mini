@@ -56,3 +56,7 @@ pytesseract>=0.3.10
 Pillow>=10.2.0
 cachetools>=5.3.3
 google-genai>=0.1.0
+
+# --- Text-to-Speech (Podcast Generator) ---
+edge-tts>=6.1.9
+pyttsx3>=2.90
