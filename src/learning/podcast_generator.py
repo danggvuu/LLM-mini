@@ -24,16 +24,28 @@ class PodcastGenerator:
         provider: Optional[str] = None,
         model_name: Optional[str] = None,
         api_key: Optional[str] = None,
-        base_url: Optional[str] = None
+        base_url: Optional[str] = None,
+        focus_topic: Optional[str] = None,
+        style: Optional[str] = "fun"
     ) -> str:
-        """Sinh Podcast MP3 dựa trên Study Guide hoặc tài liệu."""
+        """Sinh Podcast MP3 dựa trên Study Guide hoặc tài liệu có tùy biến chủ đề & phong cách."""
         guide = self.db.get_study_guide(notebook_id)
         summary = guide.get('summary', '') if guide else 'Tài liệu kiến thức tổng hợp.'
         faq = guide.get('faq', '') if guide else ''
         
+        style_instructions = {
+            "fun": "Phong cách trò chuyện: Hài hước, sôi nổi, dí dỏm, sử dụng ngôn từ đời thường gần gũi, nhiều năng lượng.",
+            "academic": "Phong cách trò chuyện: Học thuật, phân tích chuyên sâu, đi thẳng vào bản chất vấn đề và logic chặt chẽ.",
+            "debate": "Phong cách trò chuyện: Tranh luận phản biện, một người nêu quan điểm/thắc mắc, người kia bổ sung hoặc phản biện sắc bén."
+        }
+        chosen_style = style_instructions.get(style, style_instructions["fun"])
+        topic_clause = f"\nCHỦ ĐỀ TRỌNG TÂM: Tập trung thảo luận sâu về '{focus_topic.strip()}'.\n" if focus_topic and focus_topic.strip() else ""
+
         # 1. Sinh kịch bản bằng LLM
         prompt = (
-            f"Dưới đây là tóm tắt tài liệu:\n{summary[:2500]}\n\n"
+            f"Dưới đây là tóm tắt tài liệu:\n{summary[:3000]}\n\n"
+            f"{topic_clause}"
+            f"{chosen_style}\n"
             f"Hãy viết một kịch bản trò chuyện Podcast ngắn (khoảng 4-6 lượt thoại) giữa 2 người: "
             f"MC Nam (A) và MC Nữ (B), thảo luận sinh động về nội dung trên.\n"
             f"Định dạng BẮT BUỘC như sau, không thêm lời chào ngoài kịch bản:\n"
@@ -41,10 +53,10 @@ class PodcastGenerator:
             f"B: [Lời thoại của B]\n"
         )
         
-        logger.info(f"Đang sinh kịch bản Podcast cho notebook {notebook_id}...")
+        logger.info(f"Đang sinh kịch bản Podcast cho notebook {notebook_id} (Focus: '{focus_topic}', Style: '{style}')...")
         script_raw = "".join(self.llm.generate(
             prompt, 
-            system_prompt="Bạn là biên kịch Podcast chuyên nghiệp, hài hước và giàu kiến thức.",
+            system_prompt="Bạn là biên kịch Podcast chuyên nghiệp, giàu kiến thức và biết cách dẫn dắt câu chuyện cuốn hút.",
             is_private=is_private,
             gemini_api_key=api_key or gemini_api_key,
             provider=provider,

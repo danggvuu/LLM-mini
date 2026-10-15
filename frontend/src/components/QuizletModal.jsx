@@ -4,7 +4,7 @@ import {
   ExternalLink, Copy, CheckCheck, Sparkles, ArrowRight, ArrowLeft 
 } from 'lucide-react';
 
-export default function QuizletModal({ isOpen, onClose, flashcards = [], title = "Bộ thẻ học tập" }) {
+export default function QuizletModal({ isOpen, onClose, flashcards = [], title = "Bộ thẻ học tập", onOpenConfig }) {
   const [mode, setMode] = useState('flashcards'); // 'flashcards', 'match', 'export'
 
   // --- Flashcards State ---
@@ -194,9 +194,20 @@ export default function QuizletModal({ isOpen, onClose, flashcards = [], title =
             </div>
           </div>
           
-          <button onClick={onClose} className="p-2 text-gray-400 hover:text-white rounded-xl hover:bg-white/5 transition">
-            <X size={20} />
-          </button>
+          <div className="flex items-center gap-2">
+            {onOpenConfig && (
+              <button 
+                onClick={() => { onClose(); onOpenConfig(); }}
+                className="flex items-center gap-1.5 text-xs bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 border border-purple-500/30 px-3 py-1.5 rounded-xl transition font-medium"
+                title="Tùy chỉnh số lượng thẻ, độ khó và chủ đề học tập"
+              >
+                <Sparkles size={13} /> Tùy chỉnh sinh thẻ
+              </button>
+            )}
+            <button onClick={onClose} className="p-2 text-gray-400 hover:text-white rounded-xl hover:bg-white/5 transition">
+              <X size={20} />
+            </button>
+          </div>
         </div>
 
         {/* Navigation Tabs */}

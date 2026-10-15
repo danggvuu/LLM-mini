@@ -14,29 +14,42 @@ class GuideGenerator:
         self.db = session_manager
 
     def _extract_json_array(self, text: str) -> Optional[list]:
-        """Trích xuất mảng JSON an toàn bằng regex."""
+        """Trích xuất mảng JSON an toàn bằng regex và dọn dẹp lỗi cú pháp thường gặp."""
         cleaned = text.strip()
         if "```json" in cleaned:
             cleaned = cleaned.split("```json", 1)[1].split("```", 1)[0].strip()
         elif "```" in cleaned:
             cleaned = cleaned.split("```", 1)[1].split("```", 1)[0].strip()
 
-        match = re.search(r'\[.*\]', cleaned, re.DOTALL)
-        if match:
-            try:
-                parsed = json.loads(match.group(0))
-                if isinstance(parsed, list):
-                    return parsed
-            except Exception:
-                pass
+        # Thử parse toàn bộ chuỗi
         try:
             parsed = json.loads(cleaned)
             if isinstance(parsed, list):
                 return parsed
-            if isinstance(parsed, dict) and "items" in parsed:
-                return parsed["items"]
+            if isinstance(parsed, dict):
+                for key in ["items", "questions", "quiz", "flashcards", "data"]:
+                    if key in parsed and isinstance(parsed[key], list):
+                        return parsed[key]
         except Exception:
             pass
+
+        # Tìm block mảng [ ... ]
+        match = re.search(r'\[.*\]', cleaned, re.DOTALL)
+        if match:
+            raw_array = match.group(0)
+            try:
+                parsed = json.loads(raw_array)
+                if isinstance(parsed, list):
+                    return parsed
+            except Exception:
+                # Xử lý trailing commas: e.g. [..., {"a": 1}, ] -> loại bỏ dấu phẩy trước ] hoặc }
+                cleaned_commas = re.sub(r',\s*([\]\}])', r'\1', raw_array)
+                try:
+                    parsed = json.loads(cleaned_commas)
+                    if isinstance(parsed, list):
+                        return parsed
+                except Exception:
+                    pass
         return None
 
     def generate(
@@ -48,10 +61,22 @@ class GuideGenerator:
         provider: Optional[str] = None,
         model_name: Optional[str] = None,
         api_key: Optional[str] = None,
-        base_url: Optional[str] = None
+        base_url: Optional[str] = None,
+        quiz_count: int = 5,
+        flashcards_count: int = 5,
+        difficulty: str = "medium",
+        focus_topic: Optional[str] = None
     ):
-        """Hàm chạy ngầm để sinh và lưu Study Guide."""
-        logger.info(f"Bắt đầu sinh Study Guide cho Notebook {notebook_id}...")
+        """Hàm chạy ngầm để sinh và lưu Study Guide với các tùy chọn tùy biến."""
+        quiz_count = max(1, min(int(quiz_count or 5), 30))
+        flashcards_count = max(1, min(int(flashcards_count or 5), 50))
+        difficulty = difficulty if difficulty in ["easy", "medium", "hard"] else "medium"
+        focus_topic_str = focus_topic.strip() if focus_topic and focus_topic.strip() else None
+
+        logger.info(
+            f"Bắt đầu sinh Study Guide cho Notebook {notebook_id} "
+            f"(Quiz: {quiz_count}, Flashcards: {flashcards_count}, Mức: {difficulty}, Focus: '{focus_topic_str}')..."
+        )
         
         # Nếu chưa truyền thông tin provider, lấy từ notebook
         notebook = self.db.get_notebook(notebook_id)
@@ -62,7 +87,7 @@ class GuideGenerator:
             base_url = base_url or notebook.get("base_url")
             is_private = notebook.get("is_private", is_private)
 
-        context = document_text[:8000]
+        context = document_text[:10000]
 
         llm_kwargs = {
             "is_private": is_private,
@@ -73,9 +98,21 @@ class GuideGenerator:
             "base_url": base_url
         }
 
+        diff_map = {
+            "easy": "Mức độ Cơ bản: Nhận biết khái niệm, định nghĩa và ý chính rõ ràng, dễ nhớ.",
+            "medium": "Mức độ Trung bình: Kết hợp lý thuyết và câu hỏi vận dụng, kiểm tra mức độ hiểu sâu sắc.",
+            "hard": "Mức độ Nâng cao: Câu hỏi phân tích, tình huống thực tế chuyên sâu, thử thách tư duy phản biện."
+        }
+        diff_text = diff_map.get(difficulty, diff_map["medium"])
+        focus_prompt_clause = f"YÊU CẦU ĐẶC BIỆT: Hãy tập trung sâu vào nội dung / khía cạnh: '{focus_topic_str}'.\n" if focus_topic_str else ""
+
         try:
             # 1. Sinh Tóm tắt (Summary)
-            summary_prompt = f"Dựa vào tài liệu sau, hãy viết một bản tóm tắt ngắn gọn và súc tích (khoảng 3-5 đoạn) bằng tiếng Việt:\n\n{context}"
+            if focus_topic_str:
+                summary_prompt = f"Dựa vào tài liệu sau, hãy viết một bản tóm tắt ngắn gọn (khoảng 3-4 đoạn) bằng tiếng Việt, đặc biệt làm nổi bật phần liên quan đến '{focus_topic_str}':\n\n{context}"
+            else:
+                summary_prompt = f"Dựa vào tài liệu sau, hãy viết một bản tóm tắt ngắn gọn và súc tích (khoảng 3-4 đoạn) bằng tiếng Việt:\n\n{context}"
+            
             summary = "".join(self.llm.generate(
                 summary_prompt, 
                 system_prompt="Bạn là chuyên gia phân tích tài liệu và sư phạm học tập.",
@@ -85,7 +122,11 @@ class GuideGenerator:
                 summary = "Tài liệu đã được nạp thành công vào hệ thống. Bạn có thể bắt đầu đặt câu hỏi trong phòng Chat."
 
             # 2. Sinh FAQ
-            faq_prompt = f"Dựa vào tài liệu sau, hãy tạo ra 3-4 câu hỏi thường gặp (FAQ) và câu trả lời súc tích bằng tiếng Việt:\n\n{context}"
+            if focus_topic_str:
+                faq_prompt = f"Dựa vào tài liệu sau, hãy tạo ra 3-4 câu hỏi thường gặp (FAQ) và câu trả lời súc tích bằng tiếng Việt liên quan đến '{focus_topic_str}':\n\n{context}"
+            else:
+                faq_prompt = f"Dựa vào tài liệu sau, hãy tạo ra 3-4 câu hỏi thường gặp (FAQ) và câu trả lời súc tích bằng tiếng Việt:\n\n{context}"
+            
             faq = "".join(self.llm.generate(
                 faq_prompt, 
                 system_prompt="Bạn là giáo viên thiết kế cẩm nang học tập.",
@@ -104,23 +145,26 @@ class GuideGenerator:
 
             # 4. Sinh Quiz
             quiz_prompt = (
-                f"Dựa vào tài liệu sau, hãy tạo ra 4-5 câu hỏi trắc nghiệm tiếng Việt ôn tập. "
-                f"Định dạng trả về BẮT BUỘC là JSON array các câu hỏi, KHÔNG CÓ BẤT KỲ VĂN BẢN NÀO NGOÀI JSON.\n"
+                f"Dựa vào tài liệu sau, hãy tạo ra CHÍNH XÁC {quiz_count} câu hỏi trắc nghiệm tiếng Việt ôn tập.\n"
+                f"{focus_prompt_clause}"
+                f"{diff_text}\n"
+                f"Định dạng trả về BẮT BUỘC là JSON array gồm đúng {quiz_count} câu hỏi, KHÔNG CÓ BẤT KỲ VĂN BẢN NÀO NGOÀI JSON.\n"
                 f"Mỗi phần tử có cấu trúc:\n"
                 f"[\n"
-                f"  {{\"question\": \"Câu hỏi...\", \"options\": [\"Đáp án A\", \"Đáp án B\", \"Đáp án C\", \"Đáp án D\"], \"answer\": 0}}\n"
+                f"  {{\"question\": \"Nội dung câu hỏi...\", \"options\": [\"Đáp án A\", \"Đáp án B\", \"Đáp án C\", \"Đáp án D\"], \"answer\": 0}}\n"
                 f"]\n\n"
+                f"Lưu ý: 'answer' là số nguyên chỉ mục 0-indexed (0=A, 1=B, 2=C, 3=D) của đáp án đúng.\n\n"
                 f"Tài liệu:\n{context}"
             )
             quiz_raw = "".join(self.llm.generate(
                 quiz_prompt, 
-                system_prompt="Bạn là giáo viên ra đề trắc nghiệm. CHỈ TRẢ VỀ JSON array [ ... ]. Không thêm lời chào.",
+                system_prompt=f"Bạn là giáo viên ra đề trắc nghiệm chuyên nghiệp. Tạo đúng {quiz_count} câu hỏi. CHỈ TRẢ VỀ JSON array [ ... ]. Tuyệt đối không thêm lời chào hay markdown thừa.",
                 **llm_kwargs
             )).strip()
             
             quiz_data = self._extract_json_array(quiz_raw)
             if not quiz_data:
-                # Fallback quiz mẫu nếu parse không thành công để UI vẫn có quiz tương tác
+                # Fallback quiz mẫu
                 quiz_data = [
                     {
                         "question": "Nội dung chính được đề cập trong tài liệu này là gì?",
@@ -129,24 +173,26 @@ class GuideGenerator:
                     },
                     {
                         "question": "Trợ lý NotebookLM Mini hỗ trợ những tính năng nào?",
-                        "options": ["Chỉ đọc văn bản", "Hỏi đáp, tóm tắt, tạo Quiz và thẻ nhớ", "Chỉ tạo nhạc", "Chỉ gửi email"],
+                        "options": ["Chỉ đọc văn bản", "Hỏi đáp, tóm tắt, tạo Quiz và thẻ nhớ Quizlet", "Chỉ tạo nhạc", "Chỉ gửi email"],
                         "answer": 1
                     }
                 ]
 
-            # 5. Sinh Flashcards
+            # 5. Sinh Flashcards (Quizlet)
             flashcard_prompt = (
-                f"Dựa vào tài liệu sau, hãy tạo ra 4-5 thẻ nhớ (flashcard) tiếng Việt. "
-                f"Định dạng trả về BẮT BUỘC là JSON array, KHÔNG CÓ BẤT KỲ VĂN BẢN NÀO NGOÀI JSON.\n"
+                f"Dựa vào tài liệu sau, hãy tạo ra CHÍNH XÁC {flashcards_count} thẻ nhớ (flashcards) tiếng Việt ôn tập theo phong cách Quizlet.\n"
+                f"{focus_prompt_clause}"
+                f"{diff_text}\n"
+                f"Định dạng trả về BẮT BUỘC là JSON array gồm đúng {flashcards_count} thẻ, KHÔNG CÓ BẤT KỲ VĂN BẢN NÀO NGOÀI JSON.\n"
                 f"Mỗi phần tử có cấu trúc:\n"
                 f"[\n"
-                f"  {{\"front\": \"Khái niệm hoặc câu hỏi\", \"back\": \"Định nghĩa hoặc câu trả lời tóm tắt\"}}\n"
+                f"  {{\"front\": \"Khái niệm, thuật ngữ hoặc câu hỏi ngắn\", \"back\": \"Định nghĩa, giải thích chi tiết hoặc câu trả lời tóm tắt\"}}\n"
                 f"]\n\n"
                 f"Tài liệu:\n{context}"
             )
             flashcards_raw = "".join(self.llm.generate(
                 flashcard_prompt, 
-                system_prompt="Bạn là giáo viên tạo flashcards. CHỈ TRẢ VỀ JSON array [ ... ]. Không thêm lời chào.",
+                system_prompt=f"Bạn là giáo viên tạo thẻ nhớ Quizlet. Tạo đúng {flashcards_count} thẻ. CHỈ TRẢ VỀ JSON array [ ... ]. Tuyệt đối không thêm lời chào.",
                 **llm_kwargs
             )).strip()
             
@@ -156,17 +202,17 @@ class GuideGenerator:
                 flashcards_data = [
                     {
                         "front": "Mục tiêu tài liệu",
-                        "back": "Cung cấp các thông tin và kiến thức cốt lõi cho người đọc."
+                        "back": "Cung cấp các thông tin và kiến thức cốt lõi cho người học."
                     },
                     {
                         "front": "NotebookLM Mini",
-                        "back": "Hệ thống trợ lý học tập cá nhân hỗ trợ RAG và Local AI."
+                        "back": "Hệ thống trợ lý học tập cá nhân hỗ trợ RAG, Local AI và Quizlet."
                     }
                 ]
 
             # Lưu vào Database
             self.db.save_study_guide(notebook_id, summary, faq, glossary, quiz=quiz_data, flashcards=flashcards_data)
-            logger.info(f"Hoàn thành sinh Study Guide cho {notebook_id}.")
+            logger.info(f"Hoàn thành sinh Study Guide cho {notebook_id} ({len(quiz_data)} quiz, {len(flashcards_data)} thẻ).")
 
         except Exception as e:
             logger.error(f"Lỗi khi sinh Study Guide: {e}")

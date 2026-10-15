@@ -309,6 +309,52 @@ def delete_document(notebook_id: str, filename: str):
     store.delete_document_chunks(notebook_id, filename)
     return {"status": "success"}
 
+@app.get("/api/notebooks/{notebook_id}/documents/preview")
+def preview_document(notebook_id: str, filename: str):
+    """Trích xuất và xem trước nội dung văn bản thô cùng số chunk của tài liệu."""
+    sm = get_session_manager()
+    notebook = sm.get_notebook(notebook_id)
+    if not notebook:
+        raise HTTPException(status_code=404, detail="Notebook not found")
+    
+    store = get_vector_store()
+    from qdrant_client.http.models import Filter, FieldCondition, MatchValue
+    try:
+        res, _ = store.client.scroll(
+            collection_name=store.collection_name,
+            scroll_filter=Filter(
+                must=[
+                    FieldCondition(key="notebook_id", match=MatchValue(value=notebook_id))
+                ],
+                should=[
+                    FieldCondition(key="filename", match=MatchValue(value=filename)),
+                    FieldCondition(key="source_file", match=MatchValue(value=filename)),
+                    FieldCondition(key="title", match=MatchValue(value=filename)),
+                    FieldCondition(key="source_url", match=MatchValue(value=filename))
+                ]
+            ),
+            limit=50,
+            with_payload=True
+        )
+        chunks = [p.payload.get("content", "") for p in res if p.payload]
+        total_chars = sum(len(c) for c in chunks)
+        preview_text = "\n\n--- [Đoạn phân đoạn] ---\n\n".join(chunks[:15])
+        return {
+            "filename": filename,
+            "chunk_count": len(chunks),
+            "character_count": total_chars,
+            "preview_text": preview_text or "Chưa tìm thấy đoạn trích xuất văn bản."
+        }
+    except Exception as e:
+        logger.error(f"Lỗi preview document: {e}")
+        return {
+            "filename": filename,
+            "chunk_count": 0,
+            "character_count": 0,
+            "preview_text": f"Không thể tải nội dung xem trước: {e}"
+        }
+
+
 # --- Chat & Retrieval ---
 @app.get("/api/notebooks/{notebook_id}/messages")
 def get_messages(notebook_id: str):
@@ -533,8 +579,12 @@ def get_study_guide(notebook_id: str):
     return guide
 
 @app.post("/api/notebooks/{notebook_id}/study-guide/regenerate")
-async def regenerate_study_guide(notebook_id: str, background_tasks: BackgroundTasks):
-    """Tạo lại Study Guide theo yêu cầu."""
+async def regenerate_study_guide(
+    notebook_id: str, 
+    background_tasks: BackgroundTasks,
+    request: Request
+):
+    """Tạo lại Study Guide theo yêu cầu có tùy biến số câu hỏi, flashcards, mức độ khó và chủ đề."""
     sm = get_session_manager()
     notebook = sm.get_notebook(notebook_id)
     if not notebook:
@@ -544,9 +594,29 @@ async def regenerate_study_guide(notebook_id: str, background_tasks: BackgroundT
     if not docs:
         raise HTTPException(status_code=400, detail="Không có tài liệu nào trong sổ tay.")
 
+    # Đọc tùy chọn tùy biến từ body JSON nếu có
+    quiz_count = 5
+    flashcards_count = 5
+    difficulty = "medium"
+    focus_topic = None
+
+    try:
+        body = await request.json()
+        if body and isinstance(body, dict):
+            quiz_count = int(body.get("quiz_count") or 5)
+            flashcards_count = int(body.get("flashcards_count") or 5)
+            difficulty = body.get("difficulty") or "medium"
+            raw_focus = body.get("focus_topic")
+            if raw_focus and isinstance(raw_focus, str):
+                focus_topic = raw_focus.strip()
+    except Exception:
+        pass
+
     # Lấy dữ liệu chunks từ Qdrant
     store = get_vector_store()
-    results = store.search(query="tổng quan tài liệu", limit=25, notebook_id=notebook_id)
+    search_query = focus_topic if focus_topic else "tổng quan tài liệu kiến thức cốt lõi"
+    chunk_limit = max(25, (quiz_count + flashcards_count) * 2)
+    results = store.search(query=search_query, limit=chunk_limit, notebook_id=notebook_id)
     document_text = "\n\n".join([r["content"] for r in results]) if results else "Tài liệu học tập"
 
     llm = get_llm_engine()
@@ -559,9 +629,16 @@ async def regenerate_study_guide(notebook_id: str, background_tasks: BackgroundT
         provider=notebook.get('provider'),
         model_name=notebook.get('model_name'),
         api_key=notebook.get('api_key') or notebook.get('gemini_api_key'),
-        base_url=notebook.get('base_url')
+        base_url=notebook.get('base_url'),
+        quiz_count=quiz_count,
+        flashcards_count=flashcards_count,
+        difficulty=difficulty,
+        focus_topic=focus_topic
     )
-    return {"status": "processing", "message": "Đang tạo lại Cẩm nang học tập trong nền..."}
+    return {
+        "status": "processing", 
+        "message": f"Đang tạo cẩm nang học tập ({quiz_count} câu hỏi, {flashcards_count} thẻ, mức {difficulty}) trong nền..."
+    }
 
 # --- Podcast Audio APIs ---
 @app.post("/api/podcast/generate")
@@ -570,15 +647,22 @@ async def generate_podcast(
     background_tasks: BackgroundTasks,
     notebook_id: Optional[str] = Form(None)
 ):
-    """Tạo podcast âm thanh hỗ trợ nhận cả Form Data lẫn JSON body."""
+    """Tạo podcast âm thanh hỗ trợ nhận cả Form Data lẫn JSON body kèm tùy biến chủ đề & phong cách."""
     sm = get_session_manager()
     target_id = notebook_id
-    if not target_id:
-        try:
-            body = await request.json()
-            target_id = body.get("notebook_id")
-        except Exception:
-            pass
+    focus_topic = None
+    style = "fun"
+
+    try:
+        body = await request.json()
+        if body and isinstance(body, dict):
+            target_id = target_id or body.get("notebook_id")
+            raw_focus = body.get("focus_topic")
+            if raw_focus and isinstance(raw_focus, str):
+                focus_topic = raw_focus.strip()
+            style = body.get("style") or "fun"
+    except Exception:
+        pass
 
     if not target_id:
         raise HTTPException(status_code=400, detail="Thiếu notebook_id")
@@ -596,7 +680,9 @@ async def generate_podcast(
         provider=notebook.get('provider') if notebook else None,
         model_name=notebook.get('model_name') if notebook else None,
         api_key=notebook.get('api_key') or notebook.get('gemini_api_key') if notebook else None,
-        base_url=notebook.get('base_url') if notebook else None
+        base_url=notebook.get('base_url') if notebook else None,
+        focus_topic=focus_topic,
+        style=style
     )
     return {"status": "processing"}
 
