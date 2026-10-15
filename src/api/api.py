@@ -26,6 +26,9 @@ from src.db.session_manager import SessionManager
 from src.learning.guide_generator import GuideGenerator
 from src.learning.podcast_generator import PodcastGenerator
 from src.learning.evaluator import Evaluator
+from src.learning.mindmap_generator import MindmapGenerator
+from src.learning.timeline_generator import TimelineOutlineGenerator
+from src.learning.doc_comparator import DocComparator
 
 app = FastAPI(title="NotebookLM Mini API", version="2.0.0")
 
@@ -134,6 +137,20 @@ class ChatRequest(BaseModel):
 
 class PodcastRequest(BaseModel):
     notebook_id: str
+
+class SrsReviewRequest(BaseModel):
+    card_index: int
+    rating: int # 1: Again, 2: Hard, 3: Good, 4: Easy
+
+class CompareDocsRequest(BaseModel):
+    filenames: List[str]
+    focus_topic: Optional[str] = ""
+
+class MindmapRequest(BaseModel):
+    focus_topic: Optional[str] = ""
+
+class TimelineRequest(BaseModel):
+    focus_topic: Optional[str] = ""
 
 # --- Settings & Model Discovery APIs ---
 @app.get("/api/settings")
@@ -360,6 +377,20 @@ def preview_document(notebook_id: str, filename: str):
 def get_messages(notebook_id: str):
     sm = get_session_manager()
     return sm.get_chat_history(notebook_id)
+
+@app.delete("/api/notebooks/{notebook_id}/messages/{message_id}")
+def delete_single_message(notebook_id: str, message_id: int):
+    """Xóa một tin nhắn cụ thể trong lịch sử chat."""
+    sm = get_session_manager()
+    sm.delete_message(notebook_id, message_id)
+    return {"status": "success", "message_id": message_id}
+
+@app.delete("/api/notebooks/{notebook_id}/messages")
+def clear_all_messages(notebook_id: str):
+    """Xóa toàn bộ lịch sử trò chuyện của sổ tay."""
+    sm = get_session_manager()
+    sm.clear_chat_history(notebook_id)
+    return {"status": "success", "notebook_id": notebook_id}
 
 @app.post("/api/chat")
 async def chat_endpoint(request: ChatRequest):
@@ -743,6 +774,205 @@ async def evaluate_knowledge(request: Request, notebook_id: Optional[str] = Form
                 "weaknesses": ["Nên đặt thêm câu hỏi tổng hợp"]
             }
         }
+
+# --- Spaced Repetition System (SRS / Anki) APIs ---
+@app.get("/api/notebooks/{notebook_id}/srs")
+def get_srs_status(notebook_id: str):
+    """Lấy dữ liệu tiến độ ghi nhớ lặp lại ngắt quãng của flashcards."""
+    sm = get_session_manager()
+    return sm.get_srs_progress(notebook_id)
+
+@app.post("/api/notebooks/{notebook_id}/srs/review")
+def review_srs_card(notebook_id: str, payload: SrsReviewRequest):
+    """Cập nhật đánh giá thẻ nhớ theo thuật toán SM-2."""
+    sm = get_session_manager()
+    res = sm.update_srs_progress(notebook_id, payload.card_index, payload.rating)
+    return {"status": "success", "card": res}
+
+# --- Mindmap / Knowledge Graph APIs ---
+@app.get("/api/notebooks/{notebook_id}/mindmap")
+def get_mindmap_endpoint(notebook_id: str):
+    """Lấy sơ đồ tư duy đã sinh."""
+    sm = get_session_manager()
+    sg = sm.get_study_guide(notebook_id)
+    return {"mindmap": sg.get("mindmap") if sg else None}
+
+@app.post("/api/notebooks/{notebook_id}/mindmap/generate")
+async def generate_mindmap_endpoint(notebook_id: str, request: Request):
+    """Tạo mới sơ đồ tư duy từ tài liệu bằng LLM."""
+    sm = get_session_manager()
+    notebook = sm.get_notebook(notebook_id)
+    if not notebook:
+        raise HTTPException(status_code=404, detail="Notebook not found")
+        
+    focus_topic = ""
+    try:
+        body = await request.json()
+        if body and isinstance(body, dict):
+            focus_topic = body.get("focus_topic", "")
+    except Exception:
+        pass
+
+    docs = sm.get_documents(notebook_id)
+    vs = get_vector_store()
+    all_text = ""
+    for d in docs:
+        chunks = vs.get_chunks_by_document(notebook_id, d["filename"])
+        all_text += f"\n--- {d['filename']} ---\n" + "\n".join(chunks[:12])
+        
+    if not all_text.strip():
+        sg = sm.get_study_guide(notebook_id)
+        if sg:
+            all_text = f"Tóm tắt: {sg.get('summary', '')}\nThuật ngữ: {sg.get('glossary', '')}"
+
+    llm = get_llm_engine()
+    generator = MindmapGenerator(llm, sm)
+    mindmap = generator.generate(
+        notebook_id=notebook_id,
+        context_text=all_text,
+        focus_topic=focus_topic,
+        is_private=notebook.get('is_private', True),
+        provider=notebook.get('provider'),
+        model_name=notebook.get('model_name'),
+        api_key=notebook.get('api_key') or notebook.get('gemini_api_key'),
+        base_url=notebook.get('base_url')
+    )
+    return {"status": "success", "mindmap": mindmap}
+
+# --- Timeline & Hierarchical Outline APIs ---
+@app.get("/api/notebooks/{notebook_id}/timeline-outline")
+def get_timeline_outline_endpoint(notebook_id: str):
+    """Lấy dòng thời gian & dàn ý bài học đã lưu."""
+    sm = get_session_manager()
+    sg = sm.get_study_guide(notebook_id)
+    return {"timeline_outline": sg.get("timeline_outline") if sg else None}
+
+@app.post("/api/notebooks/{notebook_id}/timeline-outline/generate")
+async def generate_timeline_outline_endpoint(notebook_id: str, request: Request):
+    """Trích xuất niên biểu Timeline & Dàn ý phân cấp bằng LLM."""
+    sm = get_session_manager()
+    notebook = sm.get_notebook(notebook_id)
+    if not notebook:
+        raise HTTPException(status_code=404, detail="Notebook not found")
+
+    focus_topic = ""
+    try:
+        body = await request.json()
+        if body and isinstance(body, dict):
+            focus_topic = body.get("focus_topic", "")
+    except Exception:
+        pass
+
+    docs = sm.get_documents(notebook_id)
+    vs = get_vector_store()
+    all_text = ""
+    for d in docs:
+        chunks = vs.get_chunks_by_document(notebook_id, d["filename"])
+        all_text += f"\n--- {d['filename']} ---\n" + "\n".join(chunks[:12])
+        
+    if not all_text.strip():
+        sg = sm.get_study_guide(notebook_id)
+        if sg:
+            all_text = f"Tóm tắt: {sg.get('summary', '')}\nFAQ: {sg.get('faq', '')}"
+
+    llm = get_llm_engine()
+    generator = TimelineOutlineGenerator(llm, sm)
+    data = generator.generate(
+        notebook_id=notebook_id,
+        context_text=all_text,
+        focus_topic=focus_topic,
+        is_private=notebook.get('is_private', True),
+        provider=notebook.get('provider'),
+        model_name=notebook.get('model_name'),
+        api_key=notebook.get('api_key') or notebook.get('gemini_api_key'),
+        base_url=notebook.get('base_url')
+    )
+    return {"status": "success", "timeline_outline": data}
+
+# --- Multi-Document Comparison API ---
+@app.post("/api/notebooks/{notebook_id}/documents/compare")
+async def compare_documents_endpoint(notebook_id: str, req: CompareDocsRequest):
+    """So sánh và đối chiếu nội dung giữa 2 hoặc nhiều tài liệu."""
+    sm = get_session_manager()
+    notebook = sm.get_notebook(notebook_id)
+    if not notebook:
+        raise HTTPException(status_code=404, detail="Notebook not found")
+        
+    if len(req.filenames) < 2:
+        raise HTTPException(status_code=400, detail="Vui lòng chọn ít nhất 2 tài liệu để so sánh.")
+
+    vs = get_vector_store()
+    docs_data = []
+    for fname in req.filenames:
+        chunks = vs.get_chunks_by_document(notebook_id, fname)
+        text = "\n".join(chunks[:20])
+        docs_data.append({"filename": fname, "text": text})
+
+    llm = get_llm_engine()
+    comparator = DocComparator(llm, sm)
+    comparison_markdown = comparator.compare(
+        notebook_id=notebook_id,
+        docs_data=docs_data,
+        focus_topic=req.focus_topic or "",
+        is_private=notebook.get('is_private', True),
+        provider=notebook.get('provider'),
+        model_name=notebook.get('model_name'),
+        api_key=notebook.get('api_key') or notebook.get('gemini_api_key'),
+        base_url=notebook.get('base_url')
+    )
+    return {"status": "success", "comparison": comparison_markdown, "filenames": req.filenames}
+
+# --- Voice Audio Transcription API ---
+@app.post("/api/audio/transcribe")
+async def transcribe_audio(file: UploadFile = File(...)):
+    """Chuyển đổi âm thanh ghi âm giọng nói thành văn bản."""
+    import tempfile
+    suffix = os.path.splitext(file.filename)[1] or ".webm"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = tmp.name
+
+    try:
+        import whisper
+        model = whisper.load_model("base")
+        result = model.transcribe(tmp_path, language="vi")
+        text = result.get("text", "").strip()
+        return {"status": "success", "text": text}
+    except Exception as e:
+        logger.error(f"Lỗi Whisper transcribe: {e}")
+        try:
+            import speech_recognition as sr
+            r = sr.Recognizer()
+            with sr.AudioFile(tmp_path) as source:
+                audio_data = r.record(source)
+                text = r.recognize_google(audio_data, language="vi-VN")
+                return {"status": "success", "text": text}
+        except Exception as e2:
+            raise HTTPException(status_code=500, detail=f"Không thể phiên âm giọng nói: {str(e)} / {str(e2)}")
+    finally:
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+
+# --- Notebook Export & Import APIs ---
+@app.get("/api/notebooks/{notebook_id}/export")
+def export_notebook_endpoint(notebook_id: str):
+    """Xuất trọn vẹn dữ liệu sổ tay thành file JSON."""
+    sm = get_session_manager()
+    data = sm.export_notebook_data(notebook_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="Notebook không tồn tại.")
+    return data
+
+@app.post("/api/notebooks/import")
+async def import_notebook_endpoint(payload: Dict[str, Any]):
+    """Nhập dữ liệu sổ tay từ file JSON đã xuất trước đó."""
+    sm = get_session_manager()
+    new_id = sm.import_notebook_data(payload)
+    return {"status": "success", "notebook_id": new_id}
 
 # --- Phục vụ Giao Diện React Frontend (SPA) ---
 FRONTEND_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "frontend", "dist")

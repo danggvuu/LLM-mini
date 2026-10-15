@@ -53,17 +53,18 @@ fi
 # 4. Kích hoạt môi trường ảo
 source .venv/bin/activate
 
-# 5. Đảm bảo frontend dist đã sẵn sàng
-if [ ! -d "frontend/dist" ]; then
-    if command_exists npm; then
-        echo "🏗 Đang biên dịch giao diện Frontend lần đầu..."
-        cd frontend
-        if [ ! -d "node_modules" ]; then
-            npm install
-        fi
-        npm run build
-        cd ..
+# 5. Đảm bảo frontend dist đã sẵn sàng và cập nhật mới nhất
+if command_exists npm; then
+    cd frontend
+    if [ ! -d "node_modules" ]; then
+        echo "📥 Đang cài đặt thư viện frontend..."
+        npm install
     fi
+    if [ ! -d "dist" ] || [ "package.json" -nt "dist/index.html" ] || [ "src" -nt "dist/index.html" ]; then
+        echo "🏗 Đang biên dịch giao diện Frontend..."
+        npm run build
+    fi
+    cd ..
 fi
 
 # 6. Khởi động hệ thống siêu tốc (1-2s)

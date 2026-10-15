@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { BookOpen, Plus, Search, Check, Settings, Trash2, Cpu, Cloud, Server, ExternalLink } from 'lucide-react';
+import { BookOpen, Plus, Search, Check, Settings, Trash2, Cpu, Cloud, Server, ExternalLink, Sun, Moon, Upload, FileJson } from 'lucide-react';
 import axios from 'axios';
 import SettingsModal from '../components/SettingsModal';
 
@@ -10,6 +10,40 @@ function Dashboard() {
   const [searchQuery, setSearchQuery] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+
+  // Theme state
+  const [theme, setTheme] = useState(() => localStorage.getItem('notebooklm_theme') || 'dark');
+  const toggleTheme = () => {
+    const next = theme === 'dark' ? 'light' : 'dark';
+    setTheme(next);
+    localStorage.setItem('notebooklm_theme', next);
+  };
+  const isDark = theme === 'dark';
+
+  // Import Notebook state
+  const importInputRef = useRef(null);
+  const [importing, setImporting] = useState(false);
+
+  const handleImportFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImporting(true);
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      const res = await axios.post('/api/notebooks/import', parsed);
+      if (res.data && res.data.notebook_id) {
+        alert("Nhập sổ tay thành công!");
+        fetchNotebooks();
+        navigate(`/notebook/${res.data.notebook_id}`);
+      }
+    } catch (err) {
+      alert("Lỗi nhập sổ tay: " + (err.response?.data?.detail || err.message));
+    } finally {
+      setImporting(false);
+      if (importInputRef.current) importInputRef.current.value = "";
+    }
+  };
 
   // Create Notebook Form State
   const [newTitle, setNewTitle] = useState('');
@@ -140,9 +174,22 @@ function Dashboard() {
   };
 
   return (
-    <div className="flex flex-col min-h-screen font-sans selection:bg-blue-500/30 w-full bg-[#121316] text-white">
+    <div className={`flex flex-col min-h-screen font-sans w-full transition-colors ${
+      isDark ? 'bg-[#121316] text-white selection:bg-blue-500/30' : 'bg-[#f8fafc] text-slate-900 selection:bg-blue-200'
+    }`}>
+      {/* Hidden file input for notebook import */}
+      <input
+        type="file"
+        ref={importInputRef}
+        onChange={handleImportFile}
+        accept=".json"
+        className="hidden"
+      />
+
       {/* Header */}
-      <header className="flex justify-between items-center px-6 py-4 border-b border-white/5 bg-[#14161a]">
+      <header className={`flex justify-between items-center px-6 py-4 border-b transition-colors ${
+        isDark ? 'border-white/5 bg-[#14161a]' : 'border-slate-200 bg-white'
+      }`}>
         <div className="flex items-center gap-3 cursor-pointer" onClick={() => navigate('/')}>
           <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center text-white font-bold shadow-md">
             <BookOpen size={18} />
@@ -150,9 +197,22 @@ function Dashboard() {
           <span className="font-semibold text-lg tracking-tight">NotebookLM Mini</span>
         </div>
         <div className="flex items-center gap-3">
+          {/* Theme Switcher */}
+          <button 
+            onClick={toggleTheme}
+            className={`w-9 h-9 rounded-xl flex items-center justify-center transition border ${
+              isDark ? 'border-white/10 bg-white/5 hover:bg-white/10 text-amber-400' : 'border-slate-200 bg-slate-100 hover:bg-slate-200 text-slate-700'
+            }`}
+            title={isDark ? "Chuyển sang giao diện Sáng" : "Chuyển sang giao diện Tối"}
+          >
+            {isDark ? <Sun size={17} /> : <Moon size={17} />}
+          </button>
+
           <button 
             onClick={() => setShowSettings(true)}
-            className="flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/10 px-3.5 py-1.5 rounded-xl text-sm font-medium transition text-gray-200"
+            className={`flex items-center gap-2 border px-3.5 py-1.5 rounded-xl text-sm font-medium transition ${
+              isDark ? 'border-white/10 bg-white/5 hover:bg-white/10 text-gray-200' : 'border-slate-200 bg-slate-100 hover:bg-slate-200 text-slate-700'
+            }`}
           >
             <Settings size={16} /> Cài đặt Model & API Key
           </button>
@@ -177,12 +237,29 @@ function Dashboard() {
                 placeholder="Tìm kiếm sổ ghi chú..." 
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
-                className="w-full bg-white/5 border border-white/10 rounded-full pl-9 pr-4 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                className={`w-full border rounded-full pl-9 pr-4 py-2 text-sm placeholder-gray-500 focus:outline-none focus:border-blue-500 ${
+                  isDark ? 'bg-white/5 border-white/10 text-white' : 'bg-white border-slate-200 text-slate-800'
+                }`}
               />
             </div>
+
+            {/* Import Notebook Button */}
+            <button 
+              onClick={() => importInputRef.current?.click()}
+              disabled={importing}
+              className={`flex items-center gap-1.5 px-4 py-2 rounded-full font-semibold text-xs border transition shadow shrink-0 ${
+                isDark ? 'bg-white/5 hover:bg-white/10 border-white/15 text-gray-200' : 'bg-white hover:bg-slate-100 border-slate-300 text-slate-700'
+              }`}
+              title="Nhập sổ tay từ file backup JSON"
+            >
+              <Upload size={15} />
+              <span>{importing ? "Đang nhập..." : "Nhập .json"}</span>
+            </button>
+
+            {/* Create Notebook Button */}
             <button 
               onClick={handleOpenCreateModal}
-              className="flex items-center gap-2 bg-white text-black px-5 py-2 rounded-full font-semibold text-sm hover:bg-gray-200 transition-colors shadow-lg shrink-0"
+              className="flex items-center gap-2 bg-blue-600 text-white hover:bg-blue-500 px-5 py-2 rounded-full font-semibold text-sm transition-colors shadow-lg shrink-0"
             >
               <Plus size={18} /> Tạo mới
             </button>

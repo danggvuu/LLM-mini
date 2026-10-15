@@ -83,10 +83,27 @@ class SessionManager:
                 )
             ''')
             
+            # 6. Bảng Flashcard Progress (Spaced Repetition System - SRS)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS flashcard_progress (
+                    notebook_id TEXT,
+                    card_index INTEGER,
+                    ease_factor REAL DEFAULT 2.5,
+                    interval_days INTEGER DEFAULT 0,
+                    repetitions INTEGER DEFAULT 0,
+                    next_review_date TEXT,
+                    last_rating INTEGER DEFAULT 0,
+                    PRIMARY KEY (notebook_id, card_index),
+                    FOREIGN KEY (notebook_id) REFERENCES notebooks (id)
+                )
+            ''')
+            
             # Schema Migration tự động nếu các cột chưa tồn tại
             migrations = [
                 ("study_guides", "quiz", "TEXT"),
                 ("study_guides", "flashcards", "TEXT"),
+                ("study_guides", "mindmap", "TEXT"),
+                ("study_guides", "timeline_outline", "TEXT"),
                 ("notebooks", "is_private", "BOOLEAN NOT NULL DEFAULT 1"),
                 ("notebooks", "gemini_api_key", "TEXT"),
                 ("notebooks", "provider", "TEXT DEFAULT 'ollama'"),
@@ -322,52 +339,85 @@ class SessionManager:
             return [{"id": r[0], "filename": r[1], "created_at": r[2]} for r in rows]
 
     # --- API Quản lý Tin nhắn ---
-    def save_message(self, notebook_id: str, role: str, content: str, citations: Optional[List[Dict]] = None):
+    def save_message(self, notebook_id: str, role: str, content: str, citations: Optional[List[Dict]] = None) -> int:
         citations_str = json.dumps(citations, ensure_ascii=False) if citations else None
         with self._get_conn() as conn:
-            conn.execute(
+            cursor = conn.execute(
                 "INSERT INTO messages (notebook_id, role, content, citations) VALUES (?, ?, ?, ?)",
                 (notebook_id, role, content, citations_str)
             )
             conn.commit()
+            return cursor.lastrowid
 
     def get_chat_history(self, notebook_id: str) -> List[Dict]:
         with self._get_conn() as conn:
             cursor = conn.execute(
-                "SELECT role, content, citations FROM messages WHERE notebook_id = ? ORDER BY created_at ASC",
+                "SELECT id, role, content, citations, created_at FROM messages WHERE notebook_id = ? ORDER BY created_at ASC",
                 (notebook_id,)
             )
             rows = cursor.fetchall()
             history = []
             for r in rows:
-                cites = json.loads(r[2]) if r[2] else []
+                cites = json.loads(r[3]) if r[3] else []
                 history.append({
-                    "role": r[0],
-                    "content": r[1],
-                    "citations": cites
+                    "id": r[0],
+                    "role": r[1],
+                    "content": r[2],
+                    "citations": cites,
+                    "created_at": r[4]
                 })
             return history
 
-    # --- API Study Guide ---
-    def save_study_guide(self, notebook_id: str, summary: str, faq: str, glossary: str, quiz: Any = None, flashcards: Any = None):
+    def delete_message(self, notebook_id: str, message_id: int):
+        with self._get_conn() as conn:
+            conn.execute("DELETE FROM messages WHERE notebook_id = ? AND id = ?", (notebook_id, message_id))
+            conn.commit()
+
+    def clear_chat_history(self, notebook_id: str):
+        with self._get_conn() as conn:
+            conn.execute("DELETE FROM messages WHERE notebook_id = ?", (notebook_id,))
+            conn.commit()
+
+    # --- API Study Guide & Tri thức mở rộng ---
+    def save_study_guide(
+        self, 
+        notebook_id: str, 
+        summary: str, 
+        faq: str, 
+        glossary: str, 
+        quiz: Any = None, 
+        flashcards: Any = None,
+        mindmap: Any = None,
+        timeline_outline: Any = None
+    ):
         # Hỗ trợ nhận cả string JSON lẫn object Python (dict/list)
         quiz_str = json.dumps(quiz, ensure_ascii=False) if isinstance(quiz, (list, dict)) else quiz
         flashcards_str = json.dumps(flashcards, ensure_ascii=False) if isinstance(flashcards, (list, dict)) else flashcards
+        mindmap_str = json.dumps(mindmap, ensure_ascii=False) if isinstance(mindmap, (list, dict)) else mindmap
+        timeline_str = json.dumps(timeline_outline, ensure_ascii=False) if isinstance(timeline_outline, (list, dict)) else timeline_outline
         
         with self._get_conn() as conn:
             conn.execute(
-                "INSERT OR REPLACE INTO study_guides (notebook_id, summary, faq, glossary, quiz, flashcards) VALUES (?, ?, ?, ?, ?, ?)",
-                (notebook_id, summary, faq, glossary, quiz_str, flashcards_str)
+                """INSERT OR REPLACE INTO study_guides 
+                   (notebook_id, summary, faq, glossary, quiz, flashcards, mindmap, timeline_outline) 
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (notebook_id, summary, faq, glossary, quiz_str, flashcards_str, mindmap_str, timeline_str)
             )
             conn.commit()
 
     def get_study_guide(self, notebook_id: str) -> Optional[Dict]:
         with self._get_conn() as conn:
-            cursor = conn.execute("SELECT summary, faq, glossary, quiz, flashcards FROM study_guides WHERE notebook_id = ?", (notebook_id,))
+            cursor = conn.execute(
+                "SELECT summary, faq, glossary, quiz, flashcards, mindmap, timeline_outline FROM study_guides WHERE notebook_id = ?", 
+                (notebook_id,)
+            )
             row = cursor.fetchone()
             if row:
                 quiz_data = None
                 flashcards_data = None
+                mindmap_data = None
+                timeline_data = None
+                
                 if row[3]:
                     try:
                         quiz_data = json.loads(row[3])
@@ -378,12 +428,190 @@ class SessionManager:
                         flashcards_data = json.loads(row[4])
                     except Exception:
                         flashcards_data = row[4]
+                if row[5]:
+                    try:
+                        mindmap_data = json.loads(row[5])
+                    except Exception:
+                        mindmap_data = row[5]
+                if row[6]:
+                    try:
+                        timeline_data = json.loads(row[6])
+                    except Exception:
+                        timeline_data = row[6]
                     
                 return {
                     "summary": row[0], 
                     "faq": row[1], 
                     "glossary": row[2],
                     "quiz": quiz_data,
-                    "flashcards": flashcards_data
+                    "flashcards": flashcards_data,
+                    "mindmap": mindmap_data,
+                    "timeline_outline": timeline_data
                 }
             return None
+
+    def save_mindmap(self, notebook_id: str, mindmap_data: Any):
+        mindmap_str = json.dumps(mindmap_data, ensure_ascii=False) if isinstance(mindmap_data, (list, dict)) else str(mindmap_data)
+        with self._get_conn() as conn:
+            conn.execute(
+                "INSERT INTO study_guides (notebook_id, mindmap) VALUES (?, ?) ON CONFLICT(notebook_id) DO UPDATE SET mindmap = ?",
+                (notebook_id, mindmap_str, mindmap_str)
+            )
+            conn.commit()
+
+    def save_timeline_outline(self, notebook_id: str, timeline_data: Any):
+        timeline_str = json.dumps(timeline_data, ensure_ascii=False) if isinstance(timeline_data, (list, dict)) else str(timeline_data)
+        with self._get_conn() as conn:
+            conn.execute(
+                "INSERT INTO study_guides (notebook_id, timeline_outline) VALUES (?, ?) ON CONFLICT(notebook_id) DO UPDATE SET timeline_outline = ?",
+                (notebook_id, timeline_str, timeline_str)
+            )
+            conn.commit()
+
+    # --- API Spaced Repetition System (SRS - Anki / SuperMemo-2) ---
+    def get_srs_progress(self, notebook_id: str) -> Dict[str, Any]:
+        with self._get_conn() as conn:
+            cursor = conn.execute(
+                "SELECT card_index, ease_factor, interval_days, repetitions, next_review_date, last_rating FROM flashcard_progress WHERE notebook_id = ?",
+                (notebook_id,)
+            )
+            rows = cursor.fetchall()
+            cards_progress = {}
+            for r in rows:
+                cards_progress[r[0]] = {
+                    "card_index": r[0],
+                    "ease_factor": r[1],
+                    "interval_days": r[2],
+                    "repetitions": r[3],
+                    "next_review_date": r[4],
+                    "last_rating": r[5]
+                }
+            return cards_progress
+
+    def update_srs_progress(self, notebook_id: str, card_index: int, rating: int) -> Dict[str, Any]:
+        """
+        Cập nhật thuật toán SM-2:
+        rating: 1 (Lại/Again), 2 (Khó/Hard), 3 (Tốt/Good), 4 (Dễ/Easy)
+        """
+        from datetime import datetime, timedelta, timezone
+        
+        with self._get_conn() as conn:
+            cursor = conn.execute(
+                "SELECT ease_factor, interval_days, repetitions FROM flashcard_progress WHERE notebook_id = ? AND card_index = ?",
+                (notebook_id, card_index)
+            )
+            row = cursor.fetchone()
+            
+            if row:
+                ease_factor, interval_days, reps = row[0], row[1], row[2]
+            else:
+                ease_factor, interval_days, reps = 2.5, 0, 0
+                
+            # Tính toán SuperMemo 2 rút gọn
+            if rating == 1: # Again
+                reps = 0
+                interval_days = 0
+                ease_factor = max(1.3, ease_factor - 0.2)
+                next_review = datetime.now(timezone.utc) + timedelta(minutes=1)
+            elif rating == 2: # Hard
+                reps = reps + 1
+                interval_days = 1 if interval_days <= 1 else int(interval_days * 1.2)
+                ease_factor = max(1.3, ease_factor - 0.15)
+                next_review = datetime.now(timezone.utc) + timedelta(days=interval_days)
+            elif rating == 3: # Good
+                reps = reps + 1
+                if reps == 1:
+                    interval_days = 1
+                elif reps == 2:
+                    interval_days = 6
+                else:
+                    interval_days = int(interval_days * ease_factor)
+                next_review = datetime.now(timezone.utc) + timedelta(days=interval_days)
+            else: # Easy (4)
+                reps = reps + 1
+                if reps == 1:
+                    interval_days = 3
+                else:
+                    interval_days = int(interval_days * ease_factor * 1.3)
+                ease_factor = ease_factor + 0.15
+                next_review = datetime.now(timezone.utc) + timedelta(days=interval_days)
+
+            next_review_str = next_review.isoformat()
+            
+            conn.execute(
+                """INSERT OR REPLACE INTO flashcard_progress 
+                   (notebook_id, card_index, ease_factor, interval_days, repetitions, next_review_date, last_rating)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (notebook_id, card_index, ease_factor, interval_days, reps, next_review_str, rating)
+            )
+            conn.commit()
+            
+            return {
+                "card_index": card_index,
+                "ease_factor": ease_factor,
+                "interval_days": interval_days,
+                "repetitions": reps,
+                "next_review_date": next_review_str,
+                "last_rating": rating
+            }
+
+    # --- API Xuất & Nhập Notebook (Export / Import) ---
+    def export_notebook_data(self, notebook_id: str) -> Optional[Dict[str, Any]]:
+        notebook = self.get_notebook(notebook_id)
+        if not notebook:
+            return None
+            
+        docs = self.get_documents(notebook_id)
+        messages = self.get_chat_history(notebook_id)
+        study_guide = self.get_study_guide(notebook_id)
+        srs = self.get_srs_progress(notebook_id)
+        
+        return {
+            "version": "1.0",
+            "notebook": notebook,
+            "documents": docs,
+            "messages": messages,
+            "study_guide": study_guide,
+            "srs_progress": srs,
+            "exported_at": datetime.now().isoformat()
+        }
+
+    def import_notebook_data(self, data: Dict[str, Any]) -> str:
+        import uuid
+        nb_info = data.get("notebook", {})
+        new_id = str(int(datetime.now().timestamp() * 1000))
+        title = nb_info.get("title", "Notebook đã nhập") + " (Bản sao)"
+        
+        self.create_notebook(
+            notebook_id=new_id,
+            title=title,
+            is_private=nb_info.get("is_private", True),
+            provider=nb_info.get("provider", "ollama"),
+            model_name=nb_info.get("model_name", ""),
+            api_key=nb_info.get("api_key", ""),
+            base_url=nb_info.get("base_url", "")
+        )
+        
+        # Import tài liệu
+        for doc in data.get("documents", []):
+            self.add_document(new_id, doc.get("filename", "unknown"))
+            
+        # Import tin nhắn
+        for msg in data.get("messages", []):
+            self.save_message(new_id, msg.get("role", "user"), msg.get("content", ""), msg.get("citations"))
+            
+        # Import study guide
+        sg = data.get("study_guide")
+        if sg:
+            self.save_study_guide(
+                new_id,
+                summary=sg.get("summary", ""),
+                faq=sg.get("faq", ""),
+                glossary=sg.get("glossary", ""),
+                quiz=sg.get("quiz"),
+                flashcards=sg.get("flashcards"),
+                mindmap=sg.get("mindmap"),
+                timeline_outline=sg.get("timeline_outline")
+            )
+            
+        return new_id
