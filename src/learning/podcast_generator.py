@@ -24,11 +24,18 @@ class PodcastGenerator:
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         focus_topic: Optional[str] = None,
-        style: Optional[str] = "fun"
+        style: Optional[str] = "fun",
+        custom_context: Optional[str] = None
     ) -> str:
-        """Sinh Podcast MP3 2 giọng đọc (MC Nam & MC Nữ) dựa trên Study Guide hoặc tài liệu."""
+        """Sinh Podcast MP3 2 giọng đọc (MC Nam & MC Nữ) dựa trên tài liệu được chọn hoặc Study Guide."""
         guide = self.db.get_study_guide(notebook_id)
-        summary = guide.get('summary', '') if guide else 'Tài liệu kiến thức tổng hợp.'
+        summary = ""
+        if custom_context and custom_context.strip():
+            summary = custom_context.strip()
+        elif guide and guide.get('summary'):
+            summary = f"{guide.get('summary', '')}\n\n{guide.get('glossary', '')}"
+        else:
+            summary = "Tài liệu kiến thức tổng hợp."
         
         style_instructions = {
             "fun": "Phong cách trò chuyện: Hài hước, sôi nổi, dí dỏm, sử dụng ngôn từ đời thường gần gũi, nhiều năng lượng.",
@@ -39,10 +46,10 @@ class PodcastGenerator:
         topic_clause = f"\nCHỦ ĐỀ TRỌNG TÂM: Tập trung thảo luận sâu về '{focus_topic.strip()}'.\n" if focus_topic and focus_topic.strip() else ""
 
         prompt = (
-            f"Dưới đây là tóm tắt tài liệu:\n{summary[:3500]}\n\n"
+            f"Dưới đây là nội dung tài liệu:\n{summary[:5000]}\n\n"
             f"{topic_clause}"
             f"{chosen_style}\n"
-            f"Hãy viết một kịch bản trò chuyện Podcast (khoảng 6-8 lượt thoại) giữa 2 người dẫn chương trình: "
+            f"Hãy viết một kịch bản trò chuyện Podcast (khoảng 6-10 lượt thoại) giữa 2 người dẫn chương trình: "
             f"MC Nam (A - Minh) và MC Nữ (B - My), thảo luận sinh động về nội dung trên.\n"
             f"Định dạng BẮT BUỘC trên từng dòng như sau, không dùng markdown đậm/nghiêng ở tên nhân vật:\n"
             f"A: [Lời thoại của A]\n"

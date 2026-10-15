@@ -4345,7 +4345,7 @@ export default Landing;
 # FILE: frontend/src/pages/Studio.jsx
 # ==============================================================================
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { 
   Send, Bot, User, FileText, ChevronRight, Paperclip, Loader, Headphones, 
@@ -4406,6 +4406,11 @@ function Studio() {
   const [showUrlInput, setShowUrlInput] = useState(false);
   const [urlInputValue, setUrlInputValue] = useState('');
   const [uploadingDocs, setUploadingDocs] = useState([]);
+
+  // Paste Raw Text Modal state
+  const [showPasteTextModal, setShowPasteTextModal] = useState(false);
+  const [pasteTitle, setPasteTitle] = useState('');
+  const [pasteContent, setPasteContent] = useState('');
 
   // Custom Quizlet & Study Guide generation state
   const [showGuideConfigModal, setShowGuideConfigModal] = useState(false);
@@ -4475,6 +4480,20 @@ function Studio() {
 
   // Citation highlight snippet in preview
   const [highlightSnippet, setHighlightSnippet] = useState(null);
+
+  // Suggested questions extracted from studyGuide.faq
+  const suggestedQuestions = useMemo(() => {
+    if (!studyGuide?.faq) return [];
+    const lines = studyGuide.faq.split('\n');
+    const questions = [];
+    for (const line of lines) {
+      const clean = line.replace(/^[0-9]+[.)]\s*/, '').replace(/^\*+\s*/, '').replace(/\*+/g, '').trim();
+      if (clean.endsWith('?') && clean.length > 8 && clean.length < 120) {
+        questions.push(clean);
+      }
+    }
+    return questions.slice(0, 4);
+  }, [studyGuide?.faq]);
 
   const messagesEndRef = useRef(null);
 
@@ -4724,7 +4743,8 @@ function Studio() {
         body: JSON.stringify({ 
           notebook_id: activeNotebook.id,
           focus_topic: podcastConfig.focus_topic,
-          style: podcastConfig.style
+          style: podcastConfig.style,
+          selected_documents: Array.from(selectedDocs)
         })
       });
       if (!res.ok) throw new Error("Lỗi khi gọi API tạo Podcast");
@@ -4882,7 +4902,8 @@ function Studio() {
   // --- Feature #13: Click Citation to Highlight in Preview ---
   const handleCitationClick = async (cit) => {
     setLoadingPreview(true);
-    setHighlightSnippet(cit.filename);
+    setHighlightSnippet(cit.snippet || null);
+    setPreviewDoc({ filename: cit.filename, loading: true });
     try {
       const res = await fetch(`/api/notebooks/${activeNotebook.id}/documents/preview?filename=${encodeURIComponent(cit.filename)}`);
       if (res.ok) {
@@ -5112,40 +5133,84 @@ function Studio() {
     }
   };
 
+  // Hỗ trợ tải lên NHIỀU FILE cùng lúc (Multi-file Upload)
   const handleFileUpload = async (e) => {
     if (!activeNotebook) return;
-    const file = e.target.files[0];
-    if (!file) return;
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
 
     setUploading(true);
-    setUploadingDocs(prev => [...prev, { filename: file.name }]);
+    setUploadingDocs(prev => [...prev, ...files.map(f => ({ filename: f.name }))]);
 
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('notebook_id', activeNotebook.id);
+    for (const file of files) {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('notebook_id', activeNotebook.id);
+
+      try {
+        const response = await fetch('/api/ingest/upload', {
+          method: 'POST',
+          body: formData,
+        });
+        if (!response.ok) throw new Error(`Upload failed: ${file.name}`);
+        await response.json();
+        setSelectedDocs(prev => new Set([...prev, file.name]));
+      } catch (err) {
+        console.error(err);
+        setMessages(prev => [...prev, { role: 'assistant', content: `❌ Lỗi khi tải tệp "${file.name}": ${err.message}`, citations: [] }]);
+      } finally {
+        setUploadingDocs(prev => prev.filter(d => d.filename !== file.name));
+      }
+    }
 
     try {
-      const response = await fetch('/api/ingest/upload', {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!response.ok) throw new Error('Upload failed');
-      await response.json();
-      
       const docRes = await fetch(`/api/notebooks/${activeNotebook.id}/documents`);
       if (docRes.ok) {
         const newDocs = await docRes.json();
         setDocuments(newDocs);
-        setSelectedDocs(prev => new Set([...prev, file.name]));
       }
     } catch (err) {
       console.error(err);
-      setMessages(prev => [...prev, { role: 'assistant', content: `❌ Lỗi khi tải tệp: ${err.message}`, citations: [] }]);
     } finally {
       setUploading(false);
-      setUploadingDocs(prev => prev.filter(d => d.filename !== file.name));
       e.target.value = null;
+    }
+  };
+
+  // Nạp văn bản dán trực tiếp (Paste Text)
+  const handlePasteTextSubmit = async () => {
+    if (!pasteContent.trim() || !activeNotebook) return;
+    const tempTitle = pasteTitle.trim() || `Ghi chú (${new Date().toLocaleTimeString('vi-VN')}).txt`;
+    setShowPasteTextModal(false);
+    setUploading(true);
+    setUploadingDocs(prev => [...prev, { filename: tempTitle }]);
+
+    try {
+      const res = await fetch('/api/ingest/text', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          notebook_id: activeNotebook.id,
+          title: tempTitle,
+          text: pasteContent
+        })
+      });
+      if (!res.ok) throw new Error(`Mã lỗi: ${res.status}`);
+      const data = await res.json();
+      setPasteTitle('');
+      setPasteContent('');
+
+      const docRes = await fetch(`/api/notebooks/${activeNotebook.id}/documents`);
+      if (docRes.ok) {
+        const newDocs = await docRes.json();
+        setDocuments(newDocs);
+        setSelectedDocs(prev => new Set([...prev, data.filename || tempTitle]));
+      }
+    } catch (e) {
+      alert("Lỗi khi nạp văn bản: " + e.message);
+    } finally {
+      setUploading(false);
+      setUploadingDocs(prev => prev.filter(d => d.filename !== tempTitle));
     }
   };
 
@@ -5492,17 +5557,25 @@ function Studio() {
         </div>
 
         <div className="pt-3 mt-auto border-t border-white/10 space-y-2">
-          <button 
-            onClick={() => setShowUrlInput(!showUrlInput)}
-            className="w-full bg-white/5 hover:bg-white/10 text-gray-200 py-2.5 rounded-xl flex justify-center items-center gap-2 font-medium text-xs transition border border-white/10"
-          >
-            <LinkIcon size={15} /> Thêm Link / YouTube
-          </button>
+          <div className="grid grid-cols-2 gap-2">
+            <button 
+              onClick={() => setShowUrlInput(!showUrlInput)}
+              className="bg-white/5 hover:bg-white/10 text-gray-200 py-2 rounded-xl flex justify-center items-center gap-1.5 font-medium text-xs transition border border-white/10"
+            >
+              <LinkIcon size={14} /> Link / YT
+            </button>
+            <button 
+              onClick={() => setShowPasteTextModal(true)}
+              className="bg-white/5 hover:bg-white/10 text-gray-200 py-2 rounded-xl flex justify-center items-center gap-1.5 font-medium text-xs transition border border-white/10"
+            >
+              <FileText size={14} /> Dán văn bản
+            </button>
+          </div>
           <button 
             onClick={() => document.getElementById('file-upload').click()}
             className="w-full bg-white text-black hover:bg-gray-200 py-2.5 rounded-xl flex justify-center items-center gap-2 font-semibold text-xs transition shadow-lg"
           >
-            <Plus size={15} /> Tải tệp lên
+            <Plus size={15} /> Tải tệp lên (Nhiều tệp)
           </button>
         </div>
       </div>
@@ -6043,6 +6116,27 @@ function Studio() {
               </button>
             </div>
           )}
+          {/* Suggested Questions Chips from FAQ */}
+          {suggestedQuestions.length > 0 && !loading && (
+            <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-hide pb-2 px-1 animate-fade-in">
+              <span className="text-[10px] text-gray-400 uppercase tracking-wider shrink-0 flex items-center gap-1 font-semibold">
+                <Sparkles size={11} className="text-yellow-400" /> Gợi ý:
+              </span>
+              {suggestedQuestions.map((q, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => {
+                    setInput(q);
+                    chatInputRef.current?.focus();
+                  }}
+                  className="px-2.5 py-1 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-blue-500/40 rounded-full text-[11px] text-gray-300 hover:text-white transition whitespace-nowrap shrink-0 shadow-sm cursor-pointer"
+                  title="Bấm để đưa câu hỏi vào khung chat"
+                >
+                  {q}
+                </button>
+              ))}
+            </div>
+          )}
 
           <div className="bg-[#181a20] border border-white/15 p-2 flex items-end gap-2 rounded-2xl relative group focus-within:border-blue-500/60 transition-all duration-300">
             
@@ -6084,9 +6178,10 @@ function Studio() {
             <input 
               type="file" 
               id="file-upload" 
+              multiple
               className="hidden" 
               onChange={handleFileUpload}
-              accept=".pdf,.docx,.txt,.md,.csv,.png,.jpg,.jpeg,.mp3,.wav,.m4a"
+              accept=".pdf,.docx,.txt,.md,.csv,.png,.jpg,.jpeg,.webp,.mp3,.wav,.m4a"
             />
 
             <textarea 
@@ -6205,6 +6300,12 @@ function Studio() {
                 <h4 className="font-semibold text-gray-300 mb-1">Câu hỏi thường gặp:</h4>
                 <p className="text-gray-400 whitespace-pre-wrap leading-relaxed max-h-36 overflow-y-auto scrollbar-hide">{studyGuide.faq}</p>
               </div>
+              {studyGuide.glossary && studyGuide.glossary !== "N/A" && (
+                <div className="pt-2 border-t border-white/10">
+                  <h4 className="font-semibold text-gray-300 mb-1">Thuật ngữ cốt lõi (Glossary):</h4>
+                  <p className="text-gray-400 whitespace-pre-wrap leading-relaxed max-h-32 overflow-y-auto scrollbar-hide">{studyGuide.glossary}</p>
+                </div>
+              )}
 
               <div className="pt-3 flex gap-2 border-t border-white/10">
                 <button 
@@ -6749,6 +6850,17 @@ function Studio() {
               <div>Ký tự trích xuất: <span className="font-mono text-green-400 font-bold">{previewDoc.character_count?.toLocaleString() || 0}</span></div>
             </div>
 
+            {/* Highlighted Citation Snippet if opened from a Citation click */}
+            {highlightSnippet && (
+              <div className="mx-5 mt-4 p-3.5 rounded-2xl bg-blue-500/10 border border-blue-500/30 text-xs text-blue-200 space-y-1">
+                <div className="font-bold text-blue-400 uppercase tracking-wider text-[10px] flex items-center justify-between">
+                  <span>✨ Đoạn trích dẫn được AI sử dụng:</span>
+                  <button onClick={() => setHighlightSnippet(null)} className="text-gray-400 hover:text-white">✕</button>
+                </div>
+                <p className="leading-relaxed italic text-gray-200">"{highlightSnippet}..."</p>
+              </div>
+            )}
+
             {/* Content body */}
             <div className="p-5 overflow-y-auto flex-1 font-mono text-xs text-gray-300 leading-relaxed whitespace-pre-wrap select-text bg-[#121316] scrollbar-hide">
               {loadingPreview ? (
@@ -6858,6 +6970,59 @@ function Studio() {
         onSelectModel={handleSwitchModel}
         initialTab={modelManagerInitialTab}
       />
+
+      {/* MODAL: PASTE RAW TEXT */}
+      {showPasteTextModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in font-sans">
+          <div className="bg-[#181a20] border border-white/15 w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden p-6 space-y-4">
+            <div className="flex justify-between items-center pb-3 border-b border-white/10">
+              <h3 className="font-bold text-base text-white flex items-center gap-2">
+                <FileText size={18} className="text-blue-400" /> Dán văn bản / Ghi chú trực tiếp
+              </h3>
+              <button onClick={() => setShowPasteTextModal(false)} className="text-gray-400 hover:text-white">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block font-semibold text-gray-300 mb-1">Tiêu đề nguồn (Tùy chọn):</label>
+                <input
+                  type="text"
+                  value={pasteTitle}
+                  onChange={e => setPasteTitle(e.target.value)}
+                  placeholder="VD: Ghi chú họp, Bài báo khoa học..."
+                  className="w-full bg-black/40 border border-white/15 rounded-xl px-3.5 py-2 text-white outline-none focus:border-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block font-semibold text-gray-300 mb-1">Nội dung văn bản:</label>
+                <textarea
+                  rows={8}
+                  value={pasteContent}
+                  onChange={e => setPasteContent(e.target.value)}
+                  placeholder="Dán nội dung văn bản hoặc Markdown vào đây..."
+                  className="w-full bg-black/40 border border-white/15 rounded-xl p-3.5 text-white outline-none focus:border-blue-500 resize-none"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-2 border-t border-white/10">
+              <button
+                onClick={() => setShowPasteTextModal(false)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-gray-400 hover:text-white"
+              >
+                Hủy
+              </button>
+              <button
+                onClick={handlePasteTextSubmit}
+                disabled={!pasteContent.trim()}
+                className="bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white px-5 py-2 rounded-xl text-xs font-semibold shadow-lg transition"
+              >
+                Nạp vào Sổ tay
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );
@@ -8971,6 +9136,11 @@ class ChatRequest(BaseModel):
     model_name: Optional[str] = None
     selected_documents: Optional[List[str]] = None
 
+class IngestTextRequest(BaseModel):
+    notebook_id: str
+    title: str
+    text: str
+
 class PodcastRequest(BaseModel):
     notebook_id: str
 
@@ -9458,9 +9628,11 @@ async def chat_endpoint(request: ChatRequest, raw_request: Request):
             for doc in results:
                 meta = doc.get('metadata', {})
                 fname = meta.get('filename') or meta.get('source_file') or meta.get('title') or meta.get('source_url') or 'Tài liệu'
+                snippet = (doc.get('content') or '')[:450]
                 citations.append({
                     "marker": f"[{len(citations)+1}]",
-                    "filename": fname
+                    "filename": fname,
+                    "snippet": snippet
                 })
             
             if citations:
@@ -9609,6 +9781,52 @@ async def upload_file(
     
     return {"status": "success", "chunks_indexed": len(chunks)}
 
+@app.post("/api/ingest/text")
+async def ingest_raw_text(background_tasks: BackgroundTasks, req: IngestTextRequest):
+    """Nạp dữ liệu trực tiếp từ văn bản/ghi chú người dùng dán vào (Copy-Paste Text)."""
+    if not req.text or not req.text.strip():
+        raise HTTPException(status_code=400, detail="Nội dung văn bản không được để trống.")
+    
+    sm = get_session_manager()
+    notebook = sm.get_notebook(req.notebook_id)
+    if not notebook:
+        raise HTTPException(status_code=404, detail="Notebook not found")
+
+    from src.ingestion.parsers.text_parser import TextParser
+    parser = TextParser()
+    doc_title = (req.title.strip() if req.title and req.title.strip() else f"Ghi chú văn bản ({len(req.text)} ký tự)")
+    if not doc_title.endswith(".txt") and not doc_title.endswith(".md"):
+        doc_title += ".txt"
+
+    tree = parser.parse(req.text, source_metadata={"filename": doc_title, "notebook_id": req.notebook_id})
+    chunker = AdaptiveChunker(embedder=get_embedder())
+    chunks = chunker.process_document(tree)
+
+    for chunk in chunks:
+        chunk["metadata"]["notebook_id"] = req.notebook_id
+        chunk["metadata"]["filename"] = doc_title
+
+    store = get_vector_store()
+    store.index_chunks(chunks)
+    sm.add_document(req.notebook_id, doc_title)
+
+    document_text = "\n\n".join([chunk["content"] for chunk in chunks])
+    provider, model_name, api_key, base_url, is_private = resolve_llm_config(notebook)
+    llm = get_llm_engine()
+    guide_gen = GuideGenerator(llm, sm)
+    background_tasks.add_task(
+        guide_gen.generate,
+        notebook_id=req.notebook_id,
+        document_text=document_text,
+        is_private=is_private,
+        provider=provider,
+        model_name=model_name,
+        api_key=api_key,
+        base_url=base_url
+    )
+
+    return {"status": "success", "filename": doc_title, "chunks_indexed": len(chunks)}
+
 # --- Study Guide APIs ---
 @app.get("/api/notebooks/{notebook_id}/study-guide")
 def get_study_guide(notebook_id: str):
@@ -9697,11 +9915,12 @@ async def generate_podcast(
     background_tasks: BackgroundTasks,
     notebook_id: Optional[str] = Form(None)
 ):
-    """Tạo podcast âm thanh hỗ trợ nhận cả Form Data lẫn JSON body kèm tùy biến chủ đề & phong cách."""
+    """Tạo podcast âm thanh hỗ trợ lọc theo tài liệu đã chọn (selected_documents), chủ đề & phong cách."""
     sm = get_session_manager()
     target_id = notebook_id
     focus_topic = None
     style = "fun"
+    selected_documents = None
 
     try:
         body = await request.json()
@@ -9711,6 +9930,7 @@ async def generate_podcast(
             if raw_focus and isinstance(raw_focus, str):
                 focus_topic = raw_focus.strip()
             style = body.get("style") or "fun"
+            selected_documents = body.get("selected_documents")
     except Exception:
         pass
 
@@ -9718,7 +9938,9 @@ async def generate_podcast(
         raise HTTPException(status_code=400, detail="Thiếu notebook_id")
 
     notebook = sm.get_notebook(target_id)
-    # Xóa file podcast cũ (nếu có) trước khi tạo mới để tránh polling nhầm file cũ
+    if not notebook:
+        raise HTTPException(status_code=404, detail="Notebook not found")
+
     for ext in [".mp3", ".wav"]:
         old_path = os.path.join("storage", "podcasts", f"{target_id}{ext}")
         if os.path.exists(old_path):
@@ -9726,6 +9948,21 @@ async def generate_podcast(
                 os.remove(old_path)
             except Exception:
                 pass
+
+    # Trích xuất ngữ cảnh từ các tài liệu được chọn (hoặc toàn bộ nếu chưa có study_guide)
+    custom_context = None
+    vs = get_vector_store()
+    docs = sm.get_documents(target_id)
+    if selected_documents and len(selected_documents) > 0:
+        docs = [d for d in docs if d["filename"] in selected_documents]
+    if docs:
+        collected = []
+        for d in docs:
+            c = vs.get_chunks_by_document(target_id, d["filename"], limit=10)
+            if c:
+                collected.append(f"--- {d['filename']} ---\n" + "\n".join(c))
+        if collected:
+            custom_context = "\n\n".join(collected)
 
     provider, model_name, api_key, base_url, is_private = resolve_llm_config(notebook)
     llm = get_llm_engine()
@@ -9740,7 +9977,8 @@ async def generate_podcast(
         api_key=api_key,
         base_url=base_url,
         focus_topic=focus_topic,
-        style=style
+        style=style,
+        custom_context=custom_context
     )
     return {"status": "processing"}
 
@@ -10022,18 +10260,46 @@ async def transcribe_audio(file: UploadFile = File(...)):
 # --- Notebook Export & Import APIs ---
 @app.get("/api/notebooks/{notebook_id}/export")
 def export_notebook_endpoint(notebook_id: str):
-    """Xuất trọn vẹn dữ liệu sổ tay thành file JSON."""
+    """Xuất trọn vẹn dữ liệu sổ tay kèm các phân đoạn văn bản (chunks) thành file JSON."""
     sm = get_session_manager()
     data = sm.export_notebook_data(notebook_id)
     if not data:
         raise HTTPException(status_code=404, detail="Notebook không tồn tại.")
+    
+    # Xuất kèm các chunks từ Qdrant để khi Import sang máy khác vẫn hỏi đáp RAG được ngay
+    vs = get_vector_store()
+    chunks_export = []
+    for doc in data.get("documents", []):
+        fname = doc.get("filename")
+        if fname:
+            doc_chunks = vs.get_chunks_by_document(notebook_id, fname, limit=200)
+            for c_text in doc_chunks:
+                chunks_export.append({
+                    "content": c_text,
+                    "metadata": {"filename": fname}
+                })
+    data["chunks"] = chunks_export
     return data
 
 @app.post("/api/notebooks/import")
 async def import_notebook_endpoint(payload: Dict[str, Any]):
-    """Nhập dữ liệu sổ tay từ file JSON đã xuất trước đó."""
+    """Nhập dữ liệu sổ tay từ file JSON và tự động tái lập chỉ mục Qdrant + BM25."""
     sm = get_session_manager()
     new_id = sm.import_notebook_data(payload)
+    
+    imported_chunks = payload.get("chunks", [])
+    if imported_chunks and isinstance(imported_chunks, list):
+        formatted_chunks = []
+        for ch in imported_chunks:
+            content = ch.get("content", "")
+            meta = dict(ch.get("metadata", {}))
+            meta["notebook_id"] = new_id
+            if content:
+                formatted_chunks.append({"content": content, "metadata": meta})
+        if formatted_chunks:
+            vs = get_vector_store()
+            vs.index_chunks(formatted_chunks)
+
     return {"status": "success", "notebook_id": new_id}
 
 # --- Phục vụ Giao Diện React Frontend (SPA) ---
@@ -13912,11 +14178,18 @@ class PodcastGenerator:
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         focus_topic: Optional[str] = None,
-        style: Optional[str] = "fun"
+        style: Optional[str] = "fun",
+        custom_context: Optional[str] = None
     ) -> str:
-        """Sinh Podcast MP3 2 giọng đọc (MC Nam & MC Nữ) dựa trên Study Guide hoặc tài liệu."""
+        """Sinh Podcast MP3 2 giọng đọc (MC Nam & MC Nữ) dựa trên tài liệu được chọn hoặc Study Guide."""
         guide = self.db.get_study_guide(notebook_id)
-        summary = guide.get('summary', '') if guide else 'Tài liệu kiến thức tổng hợp.'
+        summary = ""
+        if custom_context and custom_context.strip():
+            summary = custom_context.strip()
+        elif guide and guide.get('summary'):
+            summary = f"{guide.get('summary', '')}\n\n{guide.get('glossary', '')}"
+        else:
+            summary = "Tài liệu kiến thức tổng hợp."
         
         style_instructions = {
             "fun": "Phong cách trò chuyện: Hài hước, sôi nổi, dí dỏm, sử dụng ngôn từ đời thường gần gũi, nhiều năng lượng.",
@@ -13927,10 +14200,10 @@ class PodcastGenerator:
         topic_clause = f"\nCHỦ ĐỀ TRỌNG TÂM: Tập trung thảo luận sâu về '{focus_topic.strip()}'.\n" if focus_topic and focus_topic.strip() else ""
 
         prompt = (
-            f"Dưới đây là tóm tắt tài liệu:\n{summary[:3500]}\n\n"
+            f"Dưới đây là nội dung tài liệu:\n{summary[:5000]}\n\n"
             f"{topic_clause}"
             f"{chosen_style}\n"
-            f"Hãy viết một kịch bản trò chuyện Podcast (khoảng 6-8 lượt thoại) giữa 2 người dẫn chương trình: "
+            f"Hãy viết một kịch bản trò chuyện Podcast (khoảng 6-10 lượt thoại) giữa 2 người dẫn chương trình: "
             f"MC Nam (A - Minh) và MC Nữ (B - My), thảo luận sinh động về nội dung trên.\n"
             f"Định dạng BẮT BUỘC trên từng dòng như sau, không dùng markdown đậm/nghiêng ở tên nhân vật:\n"
             f"A: [Lời thoại của A]\n"

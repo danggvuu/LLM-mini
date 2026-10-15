@@ -136,6 +136,11 @@ class ChatRequest(BaseModel):
     model_name: Optional[str] = None
     selected_documents: Optional[List[str]] = None
 
+class IngestTextRequest(BaseModel):
+    notebook_id: str
+    title: str
+    text: str
+
 class PodcastRequest(BaseModel):
     notebook_id: str
 
@@ -623,9 +628,11 @@ async def chat_endpoint(request: ChatRequest, raw_request: Request):
             for doc in results:
                 meta = doc.get('metadata', {})
                 fname = meta.get('filename') or meta.get('source_file') or meta.get('title') or meta.get('source_url') or 'Tài liệu'
+                snippet = (doc.get('content') or '')[:450]
                 citations.append({
                     "marker": f"[{len(citations)+1}]",
-                    "filename": fname
+                    "filename": fname,
+                    "snippet": snippet
                 })
             
             if citations:
@@ -774,6 +781,52 @@ async def upload_file(
     
     return {"status": "success", "chunks_indexed": len(chunks)}
 
+@app.post("/api/ingest/text")
+async def ingest_raw_text(background_tasks: BackgroundTasks, req: IngestTextRequest):
+    """Nạp dữ liệu trực tiếp từ văn bản/ghi chú người dùng dán vào (Copy-Paste Text)."""
+    if not req.text or not req.text.strip():
+        raise HTTPException(status_code=400, detail="Nội dung văn bản không được để trống.")
+    
+    sm = get_session_manager()
+    notebook = sm.get_notebook(req.notebook_id)
+    if not notebook:
+        raise HTTPException(status_code=404, detail="Notebook not found")
+
+    from src.ingestion.parsers.text_parser import TextParser
+    parser = TextParser()
+    doc_title = (req.title.strip() if req.title and req.title.strip() else f"Ghi chú văn bản ({len(req.text)} ký tự)")
+    if not doc_title.endswith(".txt") and not doc_title.endswith(".md"):
+        doc_title += ".txt"
+
+    tree = parser.parse(req.text, source_metadata={"filename": doc_title, "notebook_id": req.notebook_id})
+    chunker = AdaptiveChunker(embedder=get_embedder())
+    chunks = chunker.process_document(tree)
+
+    for chunk in chunks:
+        chunk["metadata"]["notebook_id"] = req.notebook_id
+        chunk["metadata"]["filename"] = doc_title
+
+    store = get_vector_store()
+    store.index_chunks(chunks)
+    sm.add_document(req.notebook_id, doc_title)
+
+    document_text = "\n\n".join([chunk["content"] for chunk in chunks])
+    provider, model_name, api_key, base_url, is_private = resolve_llm_config(notebook)
+    llm = get_llm_engine()
+    guide_gen = GuideGenerator(llm, sm)
+    background_tasks.add_task(
+        guide_gen.generate,
+        notebook_id=req.notebook_id,
+        document_text=document_text,
+        is_private=is_private,
+        provider=provider,
+        model_name=model_name,
+        api_key=api_key,
+        base_url=base_url
+    )
+
+    return {"status": "success", "filename": doc_title, "chunks_indexed": len(chunks)}
+
 # --- Study Guide APIs ---
 @app.get("/api/notebooks/{notebook_id}/study-guide")
 def get_study_guide(notebook_id: str):
@@ -862,11 +915,12 @@ async def generate_podcast(
     background_tasks: BackgroundTasks,
     notebook_id: Optional[str] = Form(None)
 ):
-    """Tạo podcast âm thanh hỗ trợ nhận cả Form Data lẫn JSON body kèm tùy biến chủ đề & phong cách."""
+    """Tạo podcast âm thanh hỗ trợ lọc theo tài liệu đã chọn (selected_documents), chủ đề & phong cách."""
     sm = get_session_manager()
     target_id = notebook_id
     focus_topic = None
     style = "fun"
+    selected_documents = None
 
     try:
         body = await request.json()
@@ -876,6 +930,7 @@ async def generate_podcast(
             if raw_focus and isinstance(raw_focus, str):
                 focus_topic = raw_focus.strip()
             style = body.get("style") or "fun"
+            selected_documents = body.get("selected_documents")
     except Exception:
         pass
 
@@ -883,7 +938,9 @@ async def generate_podcast(
         raise HTTPException(status_code=400, detail="Thiếu notebook_id")
 
     notebook = sm.get_notebook(target_id)
-    # Xóa file podcast cũ (nếu có) trước khi tạo mới để tránh polling nhầm file cũ
+    if not notebook:
+        raise HTTPException(status_code=404, detail="Notebook not found")
+
     for ext in [".mp3", ".wav"]:
         old_path = os.path.join("storage", "podcasts", f"{target_id}{ext}")
         if os.path.exists(old_path):
@@ -891,6 +948,21 @@ async def generate_podcast(
                 os.remove(old_path)
             except Exception:
                 pass
+
+    # Trích xuất ngữ cảnh từ các tài liệu được chọn (hoặc toàn bộ nếu chưa có study_guide)
+    custom_context = None
+    vs = get_vector_store()
+    docs = sm.get_documents(target_id)
+    if selected_documents and len(selected_documents) > 0:
+        docs = [d for d in docs if d["filename"] in selected_documents]
+    if docs:
+        collected = []
+        for d in docs:
+            c = vs.get_chunks_by_document(target_id, d["filename"], limit=10)
+            if c:
+                collected.append(f"--- {d['filename']} ---\n" + "\n".join(c))
+        if collected:
+            custom_context = "\n\n".join(collected)
 
     provider, model_name, api_key, base_url, is_private = resolve_llm_config(notebook)
     llm = get_llm_engine()
@@ -905,7 +977,8 @@ async def generate_podcast(
         api_key=api_key,
         base_url=base_url,
         focus_topic=focus_topic,
-        style=style
+        style=style,
+        custom_context=custom_context
     )
     return {"status": "processing"}
 
@@ -1187,18 +1260,46 @@ async def transcribe_audio(file: UploadFile = File(...)):
 # --- Notebook Export & Import APIs ---
 @app.get("/api/notebooks/{notebook_id}/export")
 def export_notebook_endpoint(notebook_id: str):
-    """Xuất trọn vẹn dữ liệu sổ tay thành file JSON."""
+    """Xuất trọn vẹn dữ liệu sổ tay kèm các phân đoạn văn bản (chunks) thành file JSON."""
     sm = get_session_manager()
     data = sm.export_notebook_data(notebook_id)
     if not data:
         raise HTTPException(status_code=404, detail="Notebook không tồn tại.")
+    
+    # Xuất kèm các chunks từ Qdrant để khi Import sang máy khác vẫn hỏi đáp RAG được ngay
+    vs = get_vector_store()
+    chunks_export = []
+    for doc in data.get("documents", []):
+        fname = doc.get("filename")
+        if fname:
+            doc_chunks = vs.get_chunks_by_document(notebook_id, fname, limit=200)
+            for c_text in doc_chunks:
+                chunks_export.append({
+                    "content": c_text,
+                    "metadata": {"filename": fname}
+                })
+    data["chunks"] = chunks_export
     return data
 
 @app.post("/api/notebooks/import")
 async def import_notebook_endpoint(payload: Dict[str, Any]):
-    """Nhập dữ liệu sổ tay từ file JSON đã xuất trước đó."""
+    """Nhập dữ liệu sổ tay từ file JSON và tự động tái lập chỉ mục Qdrant + BM25."""
     sm = get_session_manager()
     new_id = sm.import_notebook_data(payload)
+    
+    imported_chunks = payload.get("chunks", [])
+    if imported_chunks and isinstance(imported_chunks, list):
+        formatted_chunks = []
+        for ch in imported_chunks:
+            content = ch.get("content", "")
+            meta = dict(ch.get("metadata", {}))
+            meta["notebook_id"] = new_id
+            if content:
+                formatted_chunks.append({"content": content, "metadata": meta})
+        if formatted_chunks:
+            vs = get_vector_store()
+            vs.index_chunks(formatted_chunks)
+
     return {"status": "success", "notebook_id": new_id}
 
 # --- Phục vụ Giao Diện React Frontend (SPA) ---

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { 
   Send, Bot, User, FileText, ChevronRight, Paperclip, Loader, Headphones, 
@@ -59,6 +59,11 @@ function Studio() {
   const [showUrlInput, setShowUrlInput] = useState(false);
   const [urlInputValue, setUrlInputValue] = useState('');
   const [uploadingDocs, setUploadingDocs] = useState([]);
+
+  // Paste Raw Text Modal state
+  const [showPasteTextModal, setShowPasteTextModal] = useState(false);
+  const [pasteTitle, setPasteTitle] = useState('');
+  const [pasteContent, setPasteContent] = useState('');
 
   // Custom Quizlet & Study Guide generation state
   const [showGuideConfigModal, setShowGuideConfigModal] = useState(false);
@@ -128,6 +133,20 @@ function Studio() {
 
   // Citation highlight snippet in preview
   const [highlightSnippet, setHighlightSnippet] = useState(null);
+
+  // Suggested questions extracted from studyGuide.faq
+  const suggestedQuestions = useMemo(() => {
+    if (!studyGuide?.faq) return [];
+    const lines = studyGuide.faq.split('\n');
+    const questions = [];
+    for (const line of lines) {
+      const clean = line.replace(/^[0-9]+[.)]\s*/, '').replace(/^\*+\s*/, '').replace(/\*+/g, '').trim();
+      if (clean.endsWith('?') && clean.length > 8 && clean.length < 120) {
+        questions.push(clean);
+      }
+    }
+    return questions.slice(0, 4);
+  }, [studyGuide?.faq]);
 
   const messagesEndRef = useRef(null);
 
@@ -377,7 +396,8 @@ function Studio() {
         body: JSON.stringify({ 
           notebook_id: activeNotebook.id,
           focus_topic: podcastConfig.focus_topic,
-          style: podcastConfig.style
+          style: podcastConfig.style,
+          selected_documents: Array.from(selectedDocs)
         })
       });
       if (!res.ok) throw new Error("Lỗi khi gọi API tạo Podcast");
@@ -535,7 +555,8 @@ function Studio() {
   // --- Feature #13: Click Citation to Highlight in Preview ---
   const handleCitationClick = async (cit) => {
     setLoadingPreview(true);
-    setHighlightSnippet(cit.filename);
+    setHighlightSnippet(cit.snippet || null);
+    setPreviewDoc({ filename: cit.filename, loading: true });
     try {
       const res = await fetch(`/api/notebooks/${activeNotebook.id}/documents/preview?filename=${encodeURIComponent(cit.filename)}`);
       if (res.ok) {
@@ -765,40 +786,84 @@ function Studio() {
     }
   };
 
+  // Hỗ trợ tải lên NHIỀU FILE cùng lúc (Multi-file Upload)
   const handleFileUpload = async (e) => {
     if (!activeNotebook) return;
-    const file = e.target.files[0];
-    if (!file) return;
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
 
     setUploading(true);
-    setUploadingDocs(prev => [...prev, { filename: file.name }]);
+    setUploadingDocs(prev => [...prev, ...files.map(f => ({ filename: f.name }))]);
 
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('notebook_id', activeNotebook.id);
+    for (const file of files) {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('notebook_id', activeNotebook.id);
+
+      try {
+        const response = await fetch('/api/ingest/upload', {
+          method: 'POST',
+          body: formData,
+        });
+        if (!response.ok) throw new Error(`Upload failed: ${file.name}`);
+        await response.json();
+        setSelectedDocs(prev => new Set([...prev, file.name]));
+      } catch (err) {
+        console.error(err);
+        setMessages(prev => [...prev, { role: 'assistant', content: `❌ Lỗi khi tải tệp "${file.name}": ${err.message}`, citations: [] }]);
+      } finally {
+        setUploadingDocs(prev => prev.filter(d => d.filename !== file.name));
+      }
+    }
 
     try {
-      const response = await fetch('/api/ingest/upload', {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!response.ok) throw new Error('Upload failed');
-      await response.json();
-      
       const docRes = await fetch(`/api/notebooks/${activeNotebook.id}/documents`);
       if (docRes.ok) {
         const newDocs = await docRes.json();
         setDocuments(newDocs);
-        setSelectedDocs(prev => new Set([...prev, file.name]));
       }
     } catch (err) {
       console.error(err);
-      setMessages(prev => [...prev, { role: 'assistant', content: `❌ Lỗi khi tải tệp: ${err.message}`, citations: [] }]);
     } finally {
       setUploading(false);
-      setUploadingDocs(prev => prev.filter(d => d.filename !== file.name));
       e.target.value = null;
+    }
+  };
+
+  // Nạp văn bản dán trực tiếp (Paste Text)
+  const handlePasteTextSubmit = async () => {
+    if (!pasteContent.trim() || !activeNotebook) return;
+    const tempTitle = pasteTitle.trim() || `Ghi chú (${new Date().toLocaleTimeString('vi-VN')}).txt`;
+    setShowPasteTextModal(false);
+    setUploading(true);
+    setUploadingDocs(prev => [...prev, { filename: tempTitle }]);
+
+    try {
+      const res = await fetch('/api/ingest/text', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          notebook_id: activeNotebook.id,
+          title: tempTitle,
+          text: pasteContent
+        })
+      });
+      if (!res.ok) throw new Error(`Mã lỗi: ${res.status}`);
+      const data = await res.json();
+      setPasteTitle('');
+      setPasteContent('');
+
+      const docRes = await fetch(`/api/notebooks/${activeNotebook.id}/documents`);
+      if (docRes.ok) {
+        const newDocs = await docRes.json();
+        setDocuments(newDocs);
+        setSelectedDocs(prev => new Set([...prev, data.filename || tempTitle]));
+      }
+    } catch (e) {
+      alert("Lỗi khi nạp văn bản: " + e.message);
+    } finally {
+      setUploading(false);
+      setUploadingDocs(prev => prev.filter(d => d.filename !== tempTitle));
     }
   };
 
@@ -1145,17 +1210,25 @@ function Studio() {
         </div>
 
         <div className="pt-3 mt-auto border-t border-white/10 space-y-2">
-          <button 
-            onClick={() => setShowUrlInput(!showUrlInput)}
-            className="w-full bg-white/5 hover:bg-white/10 text-gray-200 py-2.5 rounded-xl flex justify-center items-center gap-2 font-medium text-xs transition border border-white/10"
-          >
-            <LinkIcon size={15} /> Thêm Link / YouTube
-          </button>
+          <div className="grid grid-cols-2 gap-2">
+            <button 
+              onClick={() => setShowUrlInput(!showUrlInput)}
+              className="bg-white/5 hover:bg-white/10 text-gray-200 py-2 rounded-xl flex justify-center items-center gap-1.5 font-medium text-xs transition border border-white/10"
+            >
+              <LinkIcon size={14} /> Link / YT
+            </button>
+            <button 
+              onClick={() => setShowPasteTextModal(true)}
+              className="bg-white/5 hover:bg-white/10 text-gray-200 py-2 rounded-xl flex justify-center items-center gap-1.5 font-medium text-xs transition border border-white/10"
+            >
+              <FileText size={14} /> Dán văn bản
+            </button>
+          </div>
           <button 
             onClick={() => document.getElementById('file-upload').click()}
             className="w-full bg-white text-black hover:bg-gray-200 py-2.5 rounded-xl flex justify-center items-center gap-2 font-semibold text-xs transition shadow-lg"
           >
-            <Plus size={15} /> Tải tệp lên
+            <Plus size={15} /> Tải tệp lên (Nhiều tệp)
           </button>
         </div>
       </div>
@@ -1696,6 +1769,27 @@ function Studio() {
               </button>
             </div>
           )}
+          {/* Suggested Questions Chips from FAQ */}
+          {suggestedQuestions.length > 0 && !loading && (
+            <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-hide pb-2 px-1 animate-fade-in">
+              <span className="text-[10px] text-gray-400 uppercase tracking-wider shrink-0 flex items-center gap-1 font-semibold">
+                <Sparkles size={11} className="text-yellow-400" /> Gợi ý:
+              </span>
+              {suggestedQuestions.map((q, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => {
+                    setInput(q);
+                    chatInputRef.current?.focus();
+                  }}
+                  className="px-2.5 py-1 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-blue-500/40 rounded-full text-[11px] text-gray-300 hover:text-white transition whitespace-nowrap shrink-0 shadow-sm cursor-pointer"
+                  title="Bấm để đưa câu hỏi vào khung chat"
+                >
+                  {q}
+                </button>
+              ))}
+            </div>
+          )}
 
           <div className="bg-[#181a20] border border-white/15 p-2 flex items-end gap-2 rounded-2xl relative group focus-within:border-blue-500/60 transition-all duration-300">
             
@@ -1737,9 +1831,10 @@ function Studio() {
             <input 
               type="file" 
               id="file-upload" 
+              multiple
               className="hidden" 
               onChange={handleFileUpload}
-              accept=".pdf,.docx,.txt,.md,.csv,.png,.jpg,.jpeg,.mp3,.wav,.m4a"
+              accept=".pdf,.docx,.txt,.md,.csv,.png,.jpg,.jpeg,.webp,.mp3,.wav,.m4a"
             />
 
             <textarea 
@@ -1858,6 +1953,12 @@ function Studio() {
                 <h4 className="font-semibold text-gray-300 mb-1">Câu hỏi thường gặp:</h4>
                 <p className="text-gray-400 whitespace-pre-wrap leading-relaxed max-h-36 overflow-y-auto scrollbar-hide">{studyGuide.faq}</p>
               </div>
+              {studyGuide.glossary && studyGuide.glossary !== "N/A" && (
+                <div className="pt-2 border-t border-white/10">
+                  <h4 className="font-semibold text-gray-300 mb-1">Thuật ngữ cốt lõi (Glossary):</h4>
+                  <p className="text-gray-400 whitespace-pre-wrap leading-relaxed max-h-32 overflow-y-auto scrollbar-hide">{studyGuide.glossary}</p>
+                </div>
+              )}
 
               <div className="pt-3 flex gap-2 border-t border-white/10">
                 <button 
@@ -2402,6 +2503,17 @@ function Studio() {
               <div>Ký tự trích xuất: <span className="font-mono text-green-400 font-bold">{previewDoc.character_count?.toLocaleString() || 0}</span></div>
             </div>
 
+            {/* Highlighted Citation Snippet if opened from a Citation click */}
+            {highlightSnippet && (
+              <div className="mx-5 mt-4 p-3.5 rounded-2xl bg-blue-500/10 border border-blue-500/30 text-xs text-blue-200 space-y-1">
+                <div className="font-bold text-blue-400 uppercase tracking-wider text-[10px] flex items-center justify-between">
+                  <span>✨ Đoạn trích dẫn được AI sử dụng:</span>
+                  <button onClick={() => setHighlightSnippet(null)} className="text-gray-400 hover:text-white">✕</button>
+                </div>
+                <p className="leading-relaxed italic text-gray-200">"{highlightSnippet}..."</p>
+              </div>
+            )}
+
             {/* Content body */}
             <div className="p-5 overflow-y-auto flex-1 font-mono text-xs text-gray-300 leading-relaxed whitespace-pre-wrap select-text bg-[#121316] scrollbar-hide">
               {loadingPreview ? (
@@ -2511,6 +2623,59 @@ function Studio() {
         onSelectModel={handleSwitchModel}
         initialTab={modelManagerInitialTab}
       />
+
+      {/* MODAL: PASTE RAW TEXT */}
+      {showPasteTextModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in font-sans">
+          <div className="bg-[#181a20] border border-white/15 w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden p-6 space-y-4">
+            <div className="flex justify-between items-center pb-3 border-b border-white/10">
+              <h3 className="font-bold text-base text-white flex items-center gap-2">
+                <FileText size={18} className="text-blue-400" /> Dán văn bản / Ghi chú trực tiếp
+              </h3>
+              <button onClick={() => setShowPasteTextModal(false)} className="text-gray-400 hover:text-white">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block font-semibold text-gray-300 mb-1">Tiêu đề nguồn (Tùy chọn):</label>
+                <input
+                  type="text"
+                  value={pasteTitle}
+                  onChange={e => setPasteTitle(e.target.value)}
+                  placeholder="VD: Ghi chú họp, Bài báo khoa học..."
+                  className="w-full bg-black/40 border border-white/15 rounded-xl px-3.5 py-2 text-white outline-none focus:border-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block font-semibold text-gray-300 mb-1">Nội dung văn bản:</label>
+                <textarea
+                  rows={8}
+                  value={pasteContent}
+                  onChange={e => setPasteContent(e.target.value)}
+                  placeholder="Dán nội dung văn bản hoặc Markdown vào đây..."
+                  className="w-full bg-black/40 border border-white/15 rounded-xl p-3.5 text-white outline-none focus:border-blue-500 resize-none"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-2 border-t border-white/10">
+              <button
+                onClick={() => setShowPasteTextModal(false)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-gray-400 hover:text-white"
+              >
+                Hủy
+              </button>
+              <button
+                onClick={handlePasteTextSubmit}
+                disabled={!pasteContent.trim()}
+                className="bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white px-5 py-2 rounded-xl text-xs font-semibold shadow-lg transition"
+              >
+                Nạp vào Sổ tay
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );
