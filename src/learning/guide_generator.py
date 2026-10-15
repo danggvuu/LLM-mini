@@ -142,6 +142,8 @@ class GuideGenerator:
                 system_prompt="Bạn là chuyên gia từ điển học.",
                 **llm_kwargs
             )).strip()
+            if not glossary or glossary.startswith("⚠️"):
+                glossary = ""
 
             # 4. Sinh Quiz
             quiz_prompt = (

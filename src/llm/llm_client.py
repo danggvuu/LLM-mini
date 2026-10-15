@@ -433,9 +433,15 @@ class LLMEngine:
             yield f"⚠️ Đã có lỗi xảy ra khi gọi {actual_provider}: {str(e)}"
             return
 
-    def build_rag_prompt(self, query: str, context: str, chat_history: Optional[List[Dict[str, Any]]] = None) -> str:
+    def build_rag_prompt(
+        self, 
+        query: str, 
+        context: str, 
+        chat_history: Optional[List[Dict[str, Any]]] = None,
+        document_names: Optional[List[str]] = None
+    ) -> str:
         """
-        Tạo Prompt hoàn chỉnh cho RAG kèm lịch sử hội thoại và chống ảo giác (Anti-Hallucination Guardrails).
+        Tạo Prompt hoàn chỉnh cho RAG kèm danh sách tài liệu, lịch sử hội thoại và hướng dẫn Grounding thông minh.
         """
         history_block = ""
         if chat_history:
@@ -452,21 +458,36 @@ class LLMEngine:
                     + "\n\n"
                 )
 
+        docs_header = ""
+        if document_names and len(document_names) > 0:
+            doc_items = "\n".join([f"  • {name}" for name in document_names])
+            docs_header = f"CÁC TÀI LIỆU HIỆN CÓ TRONG SỔ TAY:\n{doc_items}\n\n"
+
         return (
-            f"Bạn là NotebookLM Mini, một trợ lý học tập và nghiên cứu trung thực, khoa học.\n"
-            f"Dưới đây là các tài liệu thông tin ĐƯỢC CUNG CẤP TỪ SỔ TAY:\n"
+            f"Bạn là NotebookLM Mini, một trợ lý học tập và nghiên cứu AI thông minh, chuẩn xác, đáng tin cậy.\n\n"
+            f"{docs_header}"
+            f"CÁC ĐOẠN TRÍCH TỪ TÀI LIỆU NGUỒN CỦA SỔ TAY:\n"
             f"==================================================\n"
             f"{context}\n"
             f"==================================================\n\n"
             f"{history_block}"
-            f"NGUYÊN TẮC BẮT BUỘC ĐỂ TRÁNH ẢO GIÁC (ZERO-HALLUCINATION RULES):\n"
-            f"1. CHỈ TRẢ LỜI DỰA TRÊN THÔNG TIN CÓ TRONG CÁC ĐOẠN TRÍCH [Source X] Ở TRÊN.\n"
-            f"2. NẾU TÀI LIỆU KHÔNG CHỨA THÔNG TIN ĐỂ TRẢ LỜI CÂU HỎI:\n"
-            f"   - Hãy nói thẳng thắn và rõ ràng: 'Tài liệu bạn cung cấp không đề cập đến thông tin này.'\n"
-            f"   - TUYỆT ĐỐI KHÔNG TỰ BỊA RA TÊN, SỐ LIỆU, ĐỊA ĐIỂM, HOẶC THỜI GIAN.\n"
-            f"3. NẾU TÀI LIỆU CHỈ NÓI MỘT PHẦN, hãy trả lời phần có trong tài liệu và nêu rõ phần còn lại tài liệu không nói.\n"
-            f"4. BẮT BUỘC TRÍCH DẪN NGUỒN: Cuối mỗi luận điểm hoặc sự kiện, hãy đặt nhãn trích dẫn tương ứng (ví dụ: [Source 1], [Source 2]).\n"
-            f"5. Trả lời bằng Tiếng Việt tự nhiên, súc tích, mạch lạc.\n\n"
-            f"Câu hỏi hiện tại của người dùng: {query}\n"
+            f"QUY TẮC PHÂN TÍCH VÀ TRẢ LỜI (NOTEBOOKLM RAG GROUNDING):\n"
+            f"1. HIỂU ĐÚNG ĐẠI TỪ CỦA NGƯỜI DÙNG:\n"
+            f"   - Khi người dùng dùng các từ như: 'file', 'tệp', 'tài liệu', 'văn bản', 'trong này', 'sổ tay', 'bài này':\n"
+            f"     Người dùng đang ám chỉ CHÍNH CÁC TÀI LIỆU NGUỒN [Source X] được nạp vào sổ tay ở trên!\n"
+            f"   - TUYỆT ĐỐI KHÔNG coi 'file' là một từ khóa hay đối tượng riêng biệt cần tìm trong văn bản!\n"
+            f"2. ĐỐI VỚI CÂU HỎI TỔNG QUAN / TÓM TẮT (Ví dụ: 'trong file có gì?', 'tài liệu nói về gì?', 'tóm tắt nội dung', 'cho biết nội dung'):\n"
+            f"   - Đây là câu hỏi tổng hợp kiến thức cốt lõi của sổ tay. Bạn PHẢI TỔNG HỢP VÀ TRẢ LỜI NGAY LẬP TỨC một cách chi tiết và có cấu trúc rõ ràng.\n"
+            f"   - Hãy điểm qua từng tài liệu: Nêu rõ tên tài liệu, chủ đề trọng tâm, các phần nội dung chính, yêu cầu hoặc kết luận nổi bật dựa trên các đoạn trích [Source X].\n"
+            f"   - Trình bày dạng danh sách gạch đầu dòng rõ ràng, dễ đọc, và gắn nhãn [Source X] tương ứng.\n"
+            f"   - TUYỆT ĐỐI KHÔNG từ chối trả lời hoặc nói rằng tài liệu không đề cập đến 'file'!\n"
+            f"3. ĐỐI VỚI CÂU HỎI CHI TIẾT:\n"
+            f"   - Bám sát sự thật có trong các đoạn trích [Source X]. Không tự bịa đặt số liệu hay tên riêng.\n"
+            f"   - Gắn nhãn trích dẫn [Source 1], [Source 2]... ở cuối mỗi thông tin hoặc luận điểm lấy từ nguồn.\n"
+            f"4. KHI NÀO MỚI NÓI 'Tài liệu không đề cập...':\n"
+            f"   - CHỈ từ chối khi người dùng hỏi một kiến thức/sự kiện cụ thể HOÀN TOÀN KHÔNG CÓ trong tài liệu và KHÔNG PHẢI là câu hỏi tổng quan về tài liệu (ví dụ: tài liệu là đề thi hay tin tuyển dụng nhưng người dùng hỏi công thức làm bánh pizza, hỏi tỷ số bóng đá hôm nay).\n"
+            f"5. NGÔN NGỮ VÀ VĂN PHONG:\n"
+            f"   - Bắt buộc trả lời bằng TIẾNG VIỆT tự nhiên, cấu trúc danh sách gạch đầu dòng rõ ràng, mạch lạc (trừ khi người dùng chủ động hỏi bằng ngôn ngữ khác).\n\n"
+            f"Câu hỏi của người dùng: {query}\n"
             f"Trả lời:"
         )

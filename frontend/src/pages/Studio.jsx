@@ -1992,7 +1992,7 @@ function Studio() {
                   </div>
                 </div>
               )}
-              {studyGuide.glossary && studyGuide.glossary !== "N/A" && (
+              {studyGuide.glossary && studyGuide.glossary !== "N/A" && !studyGuide.glossary.startsWith("⚠️") && (
                 <div className="pt-2 border-t border-white/10">
                   <h4 className="font-semibold text-gray-300 mb-1">Thuật ngữ cốt lõi (Glossary):</h4>
                   <div className="text-gray-300 leading-relaxed max-h-32 overflow-y-auto scrollbar-hide text-xs">

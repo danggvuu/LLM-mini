@@ -9650,7 +9650,7 @@ function Studio() {
                   </div>
                 </div>
               )}
-              {studyGuide.glossary && studyGuide.glossary !== "N/A" && (
+              {studyGuide.glossary && studyGuide.glossary !== "N/A" && !studyGuide.glossary.startsWith("⚠️") && (
                 <div className="pt-2 border-t border-white/10">
                   <h4 className="font-semibold text-gray-300 mb-1">Thuật ngữ cốt lõi (Glossary):</h4>
                   <div className="text-gray-300 leading-relaxed max-h-32 overflow-y-auto scrollbar-hide text-xs">
@@ -13272,10 +13272,23 @@ async def chat_endpoint(request: ChatRequest, raw_request: Request):
             if citations:
                 yield f"data: {json.dumps({'type': 'citations', 'citations': citations})}\n\n"
 
-            # 2. Xây dựng Prompt (hỗ trợ ngữ cảnh lịch sử đa lượt)
+            # 2. Xây dựng Prompt (hỗ trợ ngữ cảnh lịch sử đa lượt và danh sách tài liệu)
             llm = get_llm_engine()
-            rag_prompt = llm.build_rag_prompt(request.query, context_str, chat_history=prior_history)
-            system_prompt = "Bạn là NotebookLM Mini, một trợ lý học tập và nghiên cứu thông minh. Hãy trả lời câu hỏi dựa trên tài liệu được cung cấp một cách chi tiết và trung thực."
+            doc_list = sm.get_documents(request.notebook_id)
+            active_doc_names = [d["filename"] for d in doc_list]
+            if request.selected_documents and len(request.selected_documents) > 0:
+                active_doc_names = [name for name in active_doc_names if name in request.selected_documents]
+
+            rag_prompt = llm.build_rag_prompt(
+                request.query, 
+                context_str, 
+                chat_history=prior_history,
+                document_names=active_doc_names
+            )
+            system_prompt = (
+                "Bạn là NotebookLM Mini, một trợ lý học tập và nghiên cứu AI thông minh, chuẩn xác. "
+                "Hãy đọc hiểu sâu sắc tài liệu người dùng và trả lời có cấu trúc mạch lạc, khoa học."
+            )
             
             display_model = model_name or ""
             yield f"data: {json.dumps({'type': 'status', 'message': f'{provider.upper()} ({display_model}) đang suy nghĩ...'})}\n\n"
@@ -17603,6 +17616,8 @@ class GuideGenerator:
                 system_prompt="Bạn là chuyên gia từ điển học.",
                 **llm_kwargs
             )).strip()
+            if not glossary or glossary.startswith("⚠️"):
+                glossary = ""
 
             # 4. Sinh Quiz
             quiz_prompt = (
@@ -18594,9 +18609,15 @@ class LLMEngine:
             yield f"⚠️ Đã có lỗi xảy ra khi gọi {actual_provider}: {str(e)}"
             return
 
-    def build_rag_prompt(self, query: str, context: str, chat_history: Optional[List[Dict[str, Any]]] = None) -> str:
+    def build_rag_prompt(
+        self, 
+        query: str, 
+        context: str, 
+        chat_history: Optional[List[Dict[str, Any]]] = None,
+        document_names: Optional[List[str]] = None
+    ) -> str:
         """
-        Tạo Prompt hoàn chỉnh cho RAG kèm lịch sử hội thoại và chống ảo giác (Anti-Hallucination Guardrails).
+        Tạo Prompt hoàn chỉnh cho RAG kèm danh sách tài liệu, lịch sử hội thoại và hướng dẫn Grounding thông minh.
         """
         history_block = ""
         if chat_history:
@@ -18613,22 +18634,37 @@ class LLMEngine:
                     + "\n\n"
                 )
 
+        docs_header = ""
+        if document_names and len(document_names) > 0:
+            doc_items = "\n".join([f"  • {name}" for name in document_names])
+            docs_header = f"CÁC TÀI LIỆU HIỆN CÓ TRONG SỔ TAY:\n{doc_items}\n\n"
+
         return (
-            f"Bạn là NotebookLM Mini, một trợ lý học tập và nghiên cứu trung thực, khoa học.\n"
-            f"Dưới đây là các tài liệu thông tin ĐƯỢC CUNG CẤP TỪ SỔ TAY:\n"
+            f"Bạn là NotebookLM Mini, một trợ lý học tập và nghiên cứu AI thông minh, chuẩn xác, đáng tin cậy.\n\n"
+            f"{docs_header}"
+            f"CÁC ĐOẠN TRÍCH TỪ TÀI LIỆU NGUỒN CỦA SỔ TAY:\n"
             f"==================================================\n"
             f"{context}\n"
             f"==================================================\n\n"
             f"{history_block}"
-            f"NGUYÊN TẮC BẮT BUỘC ĐỂ TRÁNH ẢO GIÁC (ZERO-HALLUCINATION RULES):\n"
-            f"1. CHỈ TRẢ LỜI DỰA TRÊN THÔNG TIN CÓ TRONG CÁC ĐOẠN TRÍCH [Source X] Ở TRÊN.\n"
-            f"2. NẾU TÀI LIỆU KHÔNG CHỨA THÔNG TIN ĐỂ TRẢ LỜI CÂU HỎI:\n"
-            f"   - Hãy nói thẳng thắn và rõ ràng: 'Tài liệu bạn cung cấp không đề cập đến thông tin này.'\n"
-            f"   - TUYỆT ĐỐI KHÔNG TỰ BỊA RA TÊN, SỐ LIỆU, ĐỊA ĐIỂM, HOẶC THỜI GIAN.\n"
-            f"3. NẾU TÀI LIỆU CHỈ NÓI MỘT PHẦN, hãy trả lời phần có trong tài liệu và nêu rõ phần còn lại tài liệu không nói.\n"
-            f"4. BẮT BUỘC TRÍCH DẪN NGUỒN: Cuối mỗi luận điểm hoặc sự kiện, hãy đặt nhãn trích dẫn tương ứng (ví dụ: [Source 1], [Source 2]).\n"
-            f"5. Trả lời bằng Tiếng Việt tự nhiên, súc tích, mạch lạc.\n\n"
-            f"Câu hỏi hiện tại của người dùng: {query}\n"
+            f"QUY TẮC PHÂN TÍCH VÀ TRẢ LỜI (NOTEBOOKLM RAG GROUNDING):\n"
+            f"1. HIỂU ĐÚNG ĐẠI TỪ CỦA NGƯỜI DÙNG:\n"
+            f"   - Khi người dùng dùng các từ như: 'file', 'tệp', 'tài liệu', 'văn bản', 'trong này', 'sổ tay', 'bài này':\n"
+            f"     Người dùng đang ám chỉ CHÍNH CÁC TÀI LIỆU NGUỒN [Source X] được nạp vào sổ tay ở trên!\n"
+            f"   - TUYỆT ĐỐI KHÔNG coi 'file' là một từ khóa hay đối tượng riêng biệt cần tìm trong văn bản!\n"
+            f"2. ĐỐI VỚI CÂU HỎI TỔNG QUAN / TÓM TẮT (Ví dụ: 'trong file có gì?', 'tài liệu nói về gì?', 'tóm tắt nội dung', 'cho biết nội dung'):\n"
+            f"   - Đây là câu hỏi tổng hợp kiến thức cốt lõi của sổ tay. Bạn PHẢI TỔNG HỢP VÀ TRẢ LỜI NGAY LẬP TỨC một cách chi tiết và có cấu trúc rõ ràng.\n"
+            f"   - Hãy điểm qua từng tài liệu: Nêu rõ tên tài liệu, chủ đề trọng tâm, các phần nội dung chính, yêu cầu hoặc kết luận nổi bật dựa trên các đoạn trích [Source X].\n"
+            f"   - Trình bày dạng danh sách gạch đầu dòng rõ ràng, dễ đọc, và gắn nhãn [Source X] tương ứng.\n"
+            f"   - TUYỆT ĐỐI KHÔNG từ chối trả lời hoặc nói rằng tài liệu không đề cập đến 'file'!\n"
+            f"3. ĐỐI VỚI CÂU HỎI CHI TIẾT:\n"
+            f"   - Bám sát sự thật có trong các đoạn trích [Source X]. Không tự bịa đặt số liệu hay tên riêng.\n"
+            f"   - Gắn nhãn trích dẫn [Source 1], [Source 2]... ở cuối mỗi thông tin hoặc luận điểm lấy từ nguồn.\n"
+            f"4. KHI NÀO MỚI NÓI 'Tài liệu không đề cập...':\n"
+            f"   - CHỈ từ chối khi người dùng hỏi một kiến thức/sự kiện cụ thể HOÀN TOÀN KHÔNG CÓ trong tài liệu và KHÔNG PHẢI là câu hỏi tổng quan về tài liệu (ví dụ: tài liệu là đề thi hay tin tuyển dụng nhưng người dùng hỏi công thức làm bánh pizza, hỏi tỷ số bóng đá hôm nay).\n"
+            f"5. NGÔN NGỮ VÀ VĂN PHONG:\n"
+            f"   - Bắt buộc trả lời bằng TIẾNG VIỆT tự nhiên, cấu trúc danh sách gạch đầu dòng rõ ràng, mạch lạc (trừ khi người dùng chủ động hỏi bằng ngôn ngữ khác).\n\n"
+            f"Câu hỏi của người dùng: {query}\n"
             f"Trả lời:"
         )
 
@@ -19477,6 +19513,22 @@ from ..utils.config import settings
 
 logger = logging.getLogger(__name__)
 
+def is_overview_query(q: str) -> bool:
+    q_clean = q.lower().strip()
+    patterns = [
+        "trong file", "file có gì", "tài liệu có gì", "tài liệu nói về gì", "tài liệu nói gì",
+        "nội dung file", "nội dung tài liệu", "tóm tắt", "tổng quan", "sổ tay có gì", "file này là gì",
+        "tài liệu này là gì", "nói về điều gì", "giới thiệu", "what is in the file", "what is in the document",
+        "what are the documents about", "overview", "summarize", "summary", "tóm lược", "chủ đề chính",
+        "nội dung chính", "file có những gì", "tài liệu có những gì", "trong này có gì", "có những gì"
+    ]
+    if any(p in q_clean for p in patterns):
+        return True
+    words = q_clean.replace("?", "").replace(".", "").split()
+    if len(words) <= 5 and any(w in words for w in ["file", "tệp", "tài liệu", "đây"]):
+        return True
+    return False
+
 class SearchEngine:
     """
     Công cụ truy xuất dữ liệu thông minh kết hợp Hybrid Search (Vector + BM25)
@@ -19498,11 +19550,16 @@ class SearchEngine:
         Tìm kiếm các đoạn văn bản liên quan qua Hybrid Search và định dạng Context cho LLM.
         Nếu selected_documents được truyền vào, chỉ lấy các đoạn thuộc về những tài liệu đó.
         """
+        # Nếu là câu hỏi tổng quan (Overview Query), mở rộng từ khóa tìm kiếm
+        search_query = query
+        if is_overview_query(query):
+            search_query = f"{query} tóm tắt tổng quan nội dung chính giới thiệu overview summary"
+
         results = []
         try:
             # 1. Thử tìm kiếm kết hợp Hybrid (Qdrant + BM25)
             results = self.hybrid_searcher.search(
-                query=query, 
+                query=search_query, 
                 k=top_k * 3, 
                 notebook_id=notebook_id
             )
@@ -19512,7 +19569,7 @@ class SearchEngine:
         # Nếu Hybrid không trả về kết quả hoặc lỗi, fallback sang Vector Search thuần
         if not results:
             try:
-                results = self.vector_store.search(query, limit=top_k * 2, notebook_id=notebook_id)
+                results = self.vector_store.search(search_query, limit=top_k * 2, notebook_id=notebook_id)
             except Exception as e:
                 logger.error(f"Lỗi Vector Store Search: {e}")
                 results = []
@@ -19536,11 +19593,35 @@ class SearchEngine:
         # 2. Rerank nếu có từ 3 kết quả trở lên
         try:
             if len(results) > top_k:
-                results = self.reranker.rerank(query, results, top_k=top_k)
-            else:
-                results = results[:top_k]
+                results = self.reranker.rerank(query, results, top_k=top_k * 2)
         except Exception as e:
             logger.warning(f"Reranker bỏ qua: {e}")
+
+        # Đảm bảo tính đa dạng tài liệu (Document Diversity)
+        distinct_docs = {}
+        for r in results:
+            fname = r.get("metadata", {}).get("filename") or r.get("metadata", {}).get("source_file") or "unknown"
+            if fname not in distinct_docs:
+                distinct_docs[fname] = []
+            distinct_docs[fname].append(r)
+            
+        if len(distinct_docs) > 1:
+            diverse_results = []
+            # Lấy trước 1-2 chunks chất lượng nhất từ mỗi tài liệu
+            for fname, doc_chunks in distinct_docs.items():
+                if doc_chunks:
+                    diverse_results.append(doc_chunks[0])
+                    if len(doc_chunks) > 1 and len(diverse_results) < top_k:
+                        diverse_results.append(doc_chunks[1])
+            # Sau đó lấp đầy các vị trí còn lại theo điểm số cao nhất
+            seen_ids = {id(r) for r in diverse_results}
+            max_limit = max(top_k, len(distinct_docs) * 2)
+            for r in results:
+                if id(r) not in seen_ids and len(diverse_results) < max_limit:
+                    diverse_results.append(r)
+                    seen_ids.add(id(r))
+            results = diverse_results[:max_limit]
+        else:
             results = results[:top_k]
 
         # 3. Tạo ngữ cảnh định dạng cho LLM

@@ -638,10 +638,23 @@ async def chat_endpoint(request: ChatRequest, raw_request: Request):
             if citations:
                 yield f"data: {json.dumps({'type': 'citations', 'citations': citations})}\n\n"
 
-            # 2. Xây dựng Prompt (hỗ trợ ngữ cảnh lịch sử đa lượt)
+            # 2. Xây dựng Prompt (hỗ trợ ngữ cảnh lịch sử đa lượt và danh sách tài liệu)
             llm = get_llm_engine()
-            rag_prompt = llm.build_rag_prompt(request.query, context_str, chat_history=prior_history)
-            system_prompt = "Bạn là NotebookLM Mini, một trợ lý học tập và nghiên cứu thông minh. Hãy trả lời câu hỏi dựa trên tài liệu được cung cấp một cách chi tiết và trung thực."
+            doc_list = sm.get_documents(request.notebook_id)
+            active_doc_names = [d["filename"] for d in doc_list]
+            if request.selected_documents and len(request.selected_documents) > 0:
+                active_doc_names = [name for name in active_doc_names if name in request.selected_documents]
+
+            rag_prompt = llm.build_rag_prompt(
+                request.query, 
+                context_str, 
+                chat_history=prior_history,
+                document_names=active_doc_names
+            )
+            system_prompt = (
+                "Bạn là NotebookLM Mini, một trợ lý học tập và nghiên cứu AI thông minh, chuẩn xác. "
+                "Hãy đọc hiểu sâu sắc tài liệu người dùng và trả lời có cấu trúc mạch lạc, khoa học."
+            )
             
             display_model = model_name or ""
             yield f"data: {json.dumps({'type': 'status', 'message': f'{provider.upper()} ({display_model}) đang suy nghĩ...'})}\n\n"
