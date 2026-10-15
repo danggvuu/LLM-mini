@@ -12,7 +12,10 @@ logger = logging.getLogger(__name__)
 
 @lru_cache(maxsize=1)
 def _load_cross_encoder():
-    """Lazy-load the Cross-Encoder model."""
+    """Lazy-load the Cross-Encoder model only if enabled and cached locally."""
+    if not getattr(settings, "enable_reranker", False):
+        return None
+
     try:
         from sentence_transformers import CrossEncoder
         import torch
@@ -24,17 +27,18 @@ def _load_cross_encoder():
     if settings.low_vram_mode:
         model_name = "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
         
-    logger.info(f"Loading Cross-Encoder model: {model_name} ...")
     try:
+        # local_files_only=True ensures we never block a real-time request to download 2GB from the web
         model = CrossEncoder(
             model_name,
             device=settings.hf_device,
+            local_files_only=True,
             model_kwargs={"torch_dtype": torch.float16 if settings.hf_device != "cpu" else torch.float32}
         )
-        logger.info("Cross-Encoder loaded successfully.")
+        logger.info("Cross-Encoder loaded successfully from local cache.")
         return model
     except Exception as exc:
-        logger.error(f"Failed to load Cross-Encoder: {exc}")
+        logger.info("Cross-Encoder không có sẵn offline, sử dụng kết quả Reciprocal Rank Fusion (RRF) siêu tốc.")
         return None
 
 class CrossEncoderReranker:

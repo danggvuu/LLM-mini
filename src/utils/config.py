@@ -70,6 +70,7 @@ class Settings(BaseSettings):
     low_vram_mode: bool = Field(default=False, description="Use lightweight models for retrieval to save VRAM for LLM")
 
     # --- NEW: Hybrid Search & Reranking ---
+    enable_reranker: bool = False
     hybrid_initial_k: int = Field(default=15, ge=1, le=100)
     hybrid_rerank_k: int = Field(default=5, ge=1, le=50)
     reranker_model: str = "BAAI/bge-reranker-v2-m3"

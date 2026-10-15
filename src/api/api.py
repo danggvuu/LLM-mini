@@ -586,7 +586,7 @@ def clear_all_messages(notebook_id: str):
     return {"status": "success", "notebook_id": notebook_id}
 
 @app.post("/api/chat")
-async def chat_endpoint(request: ChatRequest):
+async def chat_endpoint(request: ChatRequest, raw_request: Request):
     """Xử lý câu hỏi của người dùng và stream câu trả lời."""
     sm = get_session_manager()
     notebook = sm.get_notebook(request.notebook_id)
@@ -602,7 +602,7 @@ async def chat_endpoint(request: ChatRequest):
     # Lưu tin nhắn người dùng
     sm.save_message(request.notebook_id, "user", request.query)
     
-    def stream_and_save():
+    async def stream_and_save():
         full_response = ""
         citations = []
         
@@ -638,7 +638,7 @@ async def chat_endpoint(request: ChatRequest):
             display_model = model_name or ""
             yield f"data: {json.dumps({'type': 'status', 'message': f'{provider.upper()} ({display_model}) đang suy nghĩ...'})}\n\n"
 
-            # 3. Stream phản hồi từ LLM
+            # 3. Stream phản hồi từ LLM (hỗ trợ hủy nếu người dùng bấm Dừng)
             for chunk in llm.generate(
                 prompt=rag_prompt, 
                 system_prompt=system_prompt, 
@@ -648,6 +648,9 @@ async def chat_endpoint(request: ChatRequest):
                 api_key=api_key,
                 base_url=base_url
             ):
+                if await raw_request.is_disconnected():
+                    logger.info("Client ngắt kết nối (Stop response). Dừng sinh văn bản.")
+                    break
                 full_response += chunk
                 yield f"data: {json.dumps({'type': 'chunk', 'text': chunk})}\n\n"
                 

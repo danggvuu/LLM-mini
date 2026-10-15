@@ -5,7 +5,8 @@ import {
   RefreshCw, BookOpen, Brain, Layers, X, Check, XCircle, Trash2, 
   Link as LinkIcon, Plus, ArrowLeft, Settings, Cpu, Cloud, Award, Sparkles,
   Copy, Download, Eye, SlidersHorizontal, FileDown, Sun, Moon, Mic, MicOff,
-  Search, HelpCircle, Network, Scale, Clock, Share2, Flame, ArrowUp, ArrowDown
+  Search, HelpCircle, Network, Scale, Clock, Share2, Flame, ArrowUp, ArrowDown,
+  Square
 } from 'lucide-react';
 import SettingsModal from '../components/SettingsModal';
 import QuizletModal from '../components/QuizletModal';
@@ -103,6 +104,7 @@ function Studio() {
   const [isRecording, setIsRecording] = useState(false);
   const recognitionRef = useRef(null);
   const chatInputRef = useRef(null);
+  const abortControllerRef = useRef(null);
 
   // Mindmap state
   const [showMindmapModal, setShowMindmapModal] = useState(false);
@@ -131,8 +133,12 @@ function Studio() {
   // Global Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e) => {
-      // Escape closes open modals
+      // Escape closes open modals or stops generation
       if (e.key === 'Escape') {
+        if (loading) {
+          handleStopGenerating();
+          return;
+        }
         setShowModelPicker(false);
         setShowChatSearch(false);
         setShowSettings(false);
@@ -784,6 +790,12 @@ function Studio() {
   const handleSend = async () => {
     if (!input.trim() || !activeNotebook) return;
     
+    // Hủy bỏ request trước đó nếu còn đang chạy
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
+
     const userMsg = input.trim();
     setInput('');
     setMessages(prev => [...prev, { role: 'user', content: userMsg }]);
@@ -795,6 +807,7 @@ function Studio() {
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: abortControllerRef.current.signal,
         body: JSON.stringify({ 
           query: userMsg, 
           notebook_id: activeNotebook.id,
@@ -855,6 +868,10 @@ function Studio() {
         }
       }
     } catch (err) {
+      if (err.name === 'AbortError') {
+        console.log("Đã dừng tạo phản hồi.");
+        return;
+      }
       console.error(err);
       setMessages(prev => {
         const newMessages = [...prev];
@@ -867,7 +884,32 @@ function Studio() {
       });
     } finally {
       setLoading(false);
+      abortControllerRef.current = null;
     }
+  };
+
+  // Tính năng: Dừng câu trả lời ngay lập tức
+  const handleStopGenerating = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    setLoading(false);
+    setMessages(prev => {
+      if (prev.length === 0) return prev;
+      const lastIndex = prev.length - 1;
+      const lastMsg = prev[lastIndex];
+      if (lastMsg && lastMsg.role === 'assistant') {
+        const newMessages = [...prev];
+        newMessages[lastIndex] = {
+          ...lastMsg,
+          content: (lastMsg.content || '') + (lastMsg.content ? ' _(Đã dừng câu trả lời)_' : '_(Đã dừng câu trả lời)_'),
+          status: null
+        };
+        return newMessages;
+      }
+      return prev;
+    });
   };
 
   const handleEvaluate = async () => {
@@ -1592,6 +1634,22 @@ function Studio() {
             </div>
           )}
 
+          {/* Floating Stop Generating Indicator */}
+          {loading && (
+            <div className="flex justify-center pb-2 animate-fade-in">
+              <button
+                type="button"
+                onClick={handleStopGenerating}
+                className="flex items-center gap-2 px-4 py-1.5 rounded-full bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-300 hover:text-white text-xs font-medium shadow-lg transition backdrop-blur-sm cursor-pointer"
+                title="Bấm hoặc nhấn Escape để dừng ngay lập tức"
+              >
+                <Square size={12} className="fill-current text-red-400" />
+                <span>Dừng tạo câu trả lời</span>
+                <span className="text-[10px] bg-black/40 px-1.5 py-0.5 rounded text-gray-300 font-mono">Esc</span>
+              </button>
+            </div>
+          )}
+
           <div className="bg-[#181a20] border border-white/15 p-2 flex items-end gap-2 rounded-2xl relative group focus-within:border-blue-500/60 transition-all duration-300">
             
             <div className="relative">
@@ -1645,7 +1703,6 @@ function Studio() {
               onChange={e => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               rows={1}
-              disabled={loading}
             />
 
             {/* Voice Input Microphone Button */}
@@ -1662,17 +1719,30 @@ function Studio() {
               {isRecording ? <MicOff size={17} /> : <Mic size={17} />}
             </button>
 
-            <button 
-              className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 transition-all duration-300 ${
-                input.trim() && !loading 
-                  ? 'bg-blue-600 text-white hover:bg-blue-500 shadow-lg' 
-                  : 'bg-white/5 text-gray-500 cursor-not-allowed'
-              }`}
-              onClick={handleSend} 
-              disabled={!input.trim() || loading}
-            >
-              <Send size={16} className={input.trim() && !loading ? 'translate-x-0.5 -translate-y-0.5' : ''} />
-            </button>
+            {loading ? (
+              <button 
+                type="button"
+                className="w-10 h-10 rounded-xl bg-red-600/90 hover:bg-red-500 text-white flex items-center justify-center flex-shrink-0 transition-all duration-300 shadow-lg shadow-red-500/30 group cursor-pointer"
+                onClick={handleStopGenerating} 
+                title="Dừng tạo câu trả lời (Esc)"
+              >
+                <Square size={15} className="fill-current group-hover:scale-110 transition-transform" />
+              </button>
+            ) : (
+              <button 
+                type="button"
+                className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 transition-all duration-300 ${
+                  input.trim()
+                    ? 'bg-blue-600 text-white hover:bg-blue-500 shadow-lg cursor-pointer' 
+                    : 'bg-white/5 text-gray-500 cursor-not-allowed'
+                }`}
+                onClick={handleSend} 
+                disabled={!input.trim()}
+                title="Gửi câu hỏi (Enter)"
+              >
+                <Send size={16} className={input.trim() ? 'translate-x-0.5 -translate-y-0.5' : ''} />
+              </button>
+            )}
           </div>
           <div className="text-center mt-2 text-[11px] text-gray-500">
             NotebookLM Mini • Nhấn Ctrl+Enter để gửi • Ctrl+K đổi mô hình AI • Ctrl+F tìm kiếm
