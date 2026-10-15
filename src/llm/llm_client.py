@@ -433,16 +433,32 @@ class LLMEngine:
             yield f"⚠️ Đã có lỗi xảy ra khi gọi {actual_provider}: {str(e)}"
             return
 
-    def build_rag_prompt(self, query: str, context: str) -> str:
+    def build_rag_prompt(self, query: str, context: str, chat_history: Optional[List[Dict[str, Any]]] = None) -> str:
         """
-        Tạo Prompt hoàn chỉnh cho RAG với các ràng buộc chống ảo giác (Anti-Hallucination Guardrails).
+        Tạo Prompt hoàn chỉnh cho RAG kèm lịch sử hội thoại và chống ảo giác (Anti-Hallucination Guardrails).
         """
+        history_block = ""
+        if chat_history:
+            formatted_turns = []
+            for m in chat_history[-6:]:
+                role_label = "Người dùng" if m.get("role") == "user" else "Trợ lý"
+                content_snip = (m.get("content") or "")[:600]
+                if content_snip.strip():
+                    formatted_turns.append(f"- {role_label}: {content_snip}")
+            if formatted_turns:
+                history_block = (
+                    "LỊCH SỬ HỘI THOẠI GẦN ĐÂY (Dùng để hiểu ngữ cảnh nếu câu hỏi mang tính nối tiếp):\n"
+                    + "\n".join(formatted_turns)
+                    + "\n\n"
+                )
+
         return (
             f"Bạn là NotebookLM Mini, một trợ lý học tập và nghiên cứu trung thực, khoa học.\n"
             f"Dưới đây là các tài liệu thông tin ĐƯỢC CUNG CẤP TỪ SỔ TAY:\n"
             f"==================================================\n"
             f"{context}\n"
             f"==================================================\n\n"
+            f"{history_block}"
             f"NGUYÊN TẮC BẮT BUỘC ĐỂ TRÁNH ẢO GIÁC (ZERO-HALLUCINATION RULES):\n"
             f"1. CHỈ TRẢ LỜI DỰA TRÊN THÔNG TIN CÓ TRONG CÁC ĐOẠN TRÍCH [Source X] Ở TRÊN.\n"
             f"2. NẾU TÀI LIỆU KHÔNG CHỨA THÔNG TIN ĐỂ TRẢ LỜI CÂU HỎI:\n"
@@ -451,6 +467,6 @@ class LLMEngine:
             f"3. NẾU TÀI LIỆU CHỈ NÓI MỘT PHẦN, hãy trả lời phần có trong tài liệu và nêu rõ phần còn lại tài liệu không nói.\n"
             f"4. BẮT BUỘC TRÍCH DẪN NGUỒN: Cuối mỗi luận điểm hoặc sự kiện, hãy đặt nhãn trích dẫn tương ứng (ví dụ: [Source 1], [Source 2]).\n"
             f"5. Trả lời bằng Tiếng Việt tự nhiên, súc tích, mạch lạc.\n\n"
-            f"Câu hỏi của người dùng: {query}\n"
+            f"Câu hỏi hiện tại của người dùng: {query}\n"
             f"Trả lời:"
         )

@@ -368,6 +368,7 @@ function Studio() {
     if (!activeNotebook) return;
     setPodcastGenerating(true);
     setShowPodcastModal(false);
+    setAudioUrl(null);
     try {
       const res = await fetch('/api/podcast/generate', {
         method: 'POST',
@@ -380,11 +381,28 @@ function Studio() {
       });
       if (!res.ok) throw new Error("Lỗi khi gọi API tạo Podcast");
       
-      // Đợi hoàn tất và nạp file audio
-      setTimeout(() => {
-        setAudioUrl(`/api/podcast/audio/${activeNotebook.id}?t=${Date.now()}`);
-        setPodcastGenerating(false);
-      }, 5000);
+      // Polling kiểm tra file audio mỗi 2.5s (tối đa 25 lần ~ 60 giây)
+      let attempts = 0;
+      const pollAudio = setInterval(async () => {
+        attempts += 1;
+        try {
+          const checkRes = await fetch(`/api/podcast/audio/${activeNotebook.id}`, { method: 'HEAD' });
+          if (checkRes.ok) {
+            clearInterval(pollAudio);
+            setAudioUrl(`/api/podcast/audio/${activeNotebook.id}?t=${Date.now()}`);
+            setPodcastGenerating(false);
+          } else if (attempts >= 25) {
+            clearInterval(pollAudio);
+            setPodcastGenerating(false);
+            alert("Quá thời gian tạo Podcast, vui lòng thử lại.");
+          }
+        } catch {
+          if (attempts >= 25) {
+            clearInterval(pollAudio);
+            setPodcastGenerating(false);
+          }
+        }
+      }, 2500);
     } catch (e) {
       console.error(e);
       alert("Lỗi tạo podcast: " + e.message);
@@ -857,6 +875,13 @@ function Studio() {
                     ...newMessages[lastIndex],
                     status: data.message
                   };
+                } else if (data.type === 'saved') {
+                  if (lastIndex >= 1 && data.user_msg_id) {
+                    newMessages[lastIndex - 1] = { ...newMessages[lastIndex - 1], id: data.user_msg_id };
+                  }
+                  if (data.assistant_msg_id) {
+                    newMessages[lastIndex] = { ...newMessages[lastIndex], id: data.assistant_msg_id };
+                  }
                 }
                 
                 return newMessages;
@@ -1237,18 +1262,21 @@ function Studio() {
                   {customSavedModels.length > 0 && (
                     <>
                       <div className="text-[10px] text-purple-400 px-2 pt-2 font-medium">Model tùy chỉnh đã lưu:</div>
-                      {customSavedModels.map((cm, idx) => (
-                        <button
-                          key={idx}
-                          onClick={() => handleSwitchModel(cm.provider, cm.model, cm.base_url, cm.api_key)}
-                          className={`w-full text-left text-xs px-2.5 py-1.5 rounded-lg hover:bg-white/10 transition flex items-center justify-between ${
-                            currentModel === cm.model ? 'bg-purple-500/20 text-purple-300 font-semibold' : 'text-gray-300'
-                          }`}
-                        >
-                          <span className="truncate">{cm.name || cm.model}</span>
-                          <span className="text-[9px] uppercase bg-white/10 px-1 rounded text-gray-400">{cm.provider}</span>
-                        </button>
-                      ))}
+                      {customSavedModels.map((cm, idx) => {
+                        const targetModel = cm.model_name || cm.model;
+                        return (
+                          <button
+                            key={cm.id || idx}
+                            onClick={() => handleSwitchModel(cm.provider, targetModel, cm.base_url, cm.api_key)}
+                            className={`w-full text-left text-xs px-2.5 py-1.5 rounded-lg hover:bg-white/10 transition flex items-center justify-between ${
+                              currentModel === targetModel ? 'bg-purple-500/20 text-purple-300 font-semibold' : 'text-gray-300'
+                            }`}
+                          >
+                            <span className="truncate">{cm.name || targetModel}</span>
+                            <span className="text-[9px] uppercase bg-white/10 px-1 rounded text-gray-400">{cm.provider}</span>
+                          </button>
+                        );
+                      })}
                     </>
                   )}
 

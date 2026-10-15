@@ -1,6 +1,4 @@
 import os
-import re
-import uuid
 import logging
 import asyncio
 from typing import Optional, List, Tuple
@@ -28,10 +26,9 @@ class PodcastGenerator:
         focus_topic: Optional[str] = None,
         style: Optional[str] = "fun"
     ) -> str:
-        """Sinh Podcast MP3 dựa trên Study Guide hoặc tài liệu có tùy biến chủ đề & phong cách."""
+        """Sinh Podcast MP3 2 giọng đọc (MC Nam & MC Nữ) dựa trên Study Guide hoặc tài liệu."""
         guide = self.db.get_study_guide(notebook_id)
         summary = guide.get('summary', '') if guide else 'Tài liệu kiến thức tổng hợp.'
-        faq = guide.get('faq', '') if guide else ''
         
         style_instructions = {
             "fun": "Phong cách trò chuyện: Hài hước, sôi nổi, dí dỏm, sử dụng ngôn từ đời thường gần gũi, nhiều năng lượng.",
@@ -41,14 +38,13 @@ class PodcastGenerator:
         chosen_style = style_instructions.get(style, style_instructions["fun"])
         topic_clause = f"\nCHỦ ĐỀ TRỌNG TÂM: Tập trung thảo luận sâu về '{focus_topic.strip()}'.\n" if focus_topic and focus_topic.strip() else ""
 
-        # 1. Sinh kịch bản bằng LLM
         prompt = (
-            f"Dưới đây là tóm tắt tài liệu:\n{summary[:3000]}\n\n"
+            f"Dưới đây là tóm tắt tài liệu:\n{summary[:3500]}\n\n"
             f"{topic_clause}"
             f"{chosen_style}\n"
-            f"Hãy viết một kịch bản trò chuyện Podcast ngắn (khoảng 4-6 lượt thoại) giữa 2 người: "
-            f"MC Nam (A) và MC Nữ (B), thảo luận sinh động về nội dung trên.\n"
-            f"Định dạng BẮT BUỘC như sau, không thêm lời chào ngoài kịch bản:\n"
+            f"Hãy viết một kịch bản trò chuyện Podcast (khoảng 6-8 lượt thoại) giữa 2 người dẫn chương trình: "
+            f"MC Nam (A - Minh) và MC Nữ (B - My), thảo luận sinh động về nội dung trên.\n"
+            f"Định dạng BẮT BUỘC trên từng dòng như sau, không dùng markdown đậm/nghiêng ở tên nhân vật:\n"
             f"A: [Lời thoại của A]\n"
             f"B: [Lời thoại của B]\n"
         )
@@ -56,7 +52,7 @@ class PodcastGenerator:
         logger.info(f"Đang sinh kịch bản Podcast cho notebook {notebook_id} (Focus: '{focus_topic}', Style: '{style}')...")
         script_raw = "".join(self.llm.generate(
             prompt, 
-            system_prompt="Bạn là biên kịch Podcast chuyên nghiệp, giàu kiến thức và biết cách dẫn dắt câu chuyện cuốn hút.",
+            system_prompt="Bạn là biên kịch Podcast chuyên nghiệp. Chỉ xuất ra các dòng thoại bắt đầu bằng 'A:' hoặc 'B:'.",
             is_private=is_private,
             gemini_api_key=api_key or gemini_api_key,
             provider=provider,
@@ -65,78 +61,81 @@ class PodcastGenerator:
             base_url=base_url
         ))
         
-        # 2. Parse kịch bản
         dialogues = []
         for line in script_raw.split('\n'):
-            line = line.strip()
-            if line.startswith(('A:', 'Host A:', 'Nam:')):
-                dialogues.append(('A', line.split(':', 1)[1].strip()))
-            elif line.startswith(('B:', 'Host B:', 'Nữ:')):
-                dialogues.append(('B', line.split(':', 1)[1].strip()))
+            clean_line = line.strip().lstrip('*').lstrip('-').strip()
+            if clean_line.startswith(('A:', 'Host A:', 'Nam:', 'Minh:')):
+                text_part = clean_line.split(':', 1)[1].strip().strip('*')
+                if text_part:
+                    dialogues.append(('A', text_part))
+            elif clean_line.startswith(('B:', 'Host B:', 'Nữ:', 'My:')):
+                text_part = clean_line.split(':', 1)[1].strip().strip('*')
+                if text_part:
+                    dialogues.append(('B', text_part))
                 
         if not dialogues:
             dialogues = [
-                ('A', 'Chào các bạn, chào mừng đến với buổi thảo luận tài liệu hôm nay!'),
-                ('B', 'Chào anh! Tài liệu hôm nay có rất nhiều điểm thú vị đáng chú ý.')
+                ('A', 'Chào các bạn thính giả, chào mừng đến với buổi phân tích tài liệu trên NotebookLM Mini hôm nay!'),
+                ('B', 'Chào anh Minh và các bạn! Chủ đề trong sổ tay hôm nay có rất nhiều điểm thú vị đáng chú ý.'),
+                ('A', f'Đúng vậy! Điểm cốt lõi đầu tiên mà tài liệu đề cập là: {summary[:250]}'),
+                ('B', 'Thật sự rất súc tích và hữu ích. Các bạn có thể xem thêm ở phần Sơ đồ tư duy hoặc Thẻ ghi nhớ để ôn tập kỹ hơn nhé!')
             ]
             
         output_file = os.path.join(self.output_dir, f"{notebook_id}.mp3")
         
-        # 3. Tạo âm thanh
         try:
-            # Thử dùng edge-tts nếu có internet
-            self._generate_with_edge_tts(dialogues, output_file)
+            self._generate_with_edge_tts_multi_voice(dialogues, output_file)
         except Exception as e:
             logger.warning(f"edge-tts không khả dụng: {e}, chuyển sang phương thức dự phòng...")
             try:
                 self._generate_offline(dialogues, output_file)
             except Exception as ex:
-                logger.error(f"Tạo audio thất bại: {ex}. Tạo file âm thanh im lặng/mẫu...")
+                logger.error(f"Tạo audio thất bại: {ex}. Tạo file âm thanh mẫu...")
                 self._create_dummy_audio(output_file)
                 
         return output_file
 
-    def _generate_with_edge_tts(self, dialogues: List[Tuple[str, str]], output_file: str):
-        """Sử dụng edge-tts trực tiếp để tạo audio tiếng Việt chất lượng cao."""
+    def _generate_with_edge_tts_multi_voice(self, dialogues: List[Tuple[str, str]], output_file: str):
+        """Sử dụng edge-tts ghép trực tiếp luồng âm thanh 2 giọng Nam & Nữ chuẩn xác."""
         import edge_tts
         
         voice_a = "vi-VN-NamMinhNeural"
         voice_b = "vi-VN-HoaiMyNeural"
-        
-        combined_text = ""
-        for speaker, text in dialogues:
-            combined_text += f"{text} ... "
 
-        async def _speak():
-            communicate = edge_tts.Communicate(combined_text, voice_a)
-            await communicate.save(output_file)
+        async def _synthesize_all():
+            with open(output_file, "wb") as out_f:
+                for speaker, text in dialogues:
+                    if not text.strip():
+                        continue
+                    voice = voice_a if speaker == 'A' else voice_b
+                    communicate = edge_tts.Communicate(text, voice)
+                    async for chunk in communicate.stream():
+                        if chunk["type"] == "audio":
+                            out_f.write(chunk["data"])
 
         try:
             loop = asyncio.get_event_loop()
             if loop.is_running():
-                # Chạy trong luồng mới nếu loop đang chạy
                 from concurrent.futures import ThreadPoolExecutor
                 with ThreadPoolExecutor() as pool:
-                    pool.submit(lambda: asyncio.run(_speak())).result()
+                    pool.submit(lambda: asyncio.run(_synthesize_all())).result()
             else:
-                loop.run_until_complete(_speak())
+                loop.run_until_complete(_synthesize_all())
         except Exception:
-            asyncio.run(_speak())
+            asyncio.run(_synthesize_all())
 
     def _generate_offline(self, dialogues: List[Tuple[str, str]], output_file: str):
-        """Sử dụng pyttsx3 cho chế độ Offline."""
         import pyttsx3
         engine = pyttsx3.init()
-        full_text = " ".join([text for _, text in dialogues])
+        full_text = " ... ".join([text for _, text in dialogues])
         engine.save_to_file(full_text, output_file)
         engine.runAndWait()
 
     def _create_dummy_audio(self, output_file: str):
-        """Tạo file wav/mp3 mẫu cơ bản nếu không có thư viện TTS trên máy."""
         import wave
         import struct
+        import shutil
         wav_path = output_file.replace(".mp3", ".wav")
-        # Sinh 2 giây âm thanh nhẹ 440Hz
         with wave.open(wav_path, 'w') as f:
             f.setnchannels(1)
             f.setsampwidth(2)
@@ -146,5 +145,4 @@ class PodcastGenerator:
                 data = struct.pack('<h', value)
                 f.writeframesraw(data)
         if os.path.exists(wav_path) and not os.path.exists(output_file):
-            import shutil
             shutil.copy(wav_path, output_file)

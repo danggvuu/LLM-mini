@@ -599,8 +599,9 @@ async def chat_endpoint(request: ChatRequest, raw_request: Request):
         override_model=request.model_name
     )
 
-    # Lưu tin nhắn người dùng
-    sm.save_message(request.notebook_id, "user", request.query)
+    # Lấy lịch sử hội thoại trước khi lưu câu hỏi mới để làm ngữ cảnh nối tiếp
+    prior_history = sm.get_chat_history(request.notebook_id)[-6:]
+    user_msg_id = sm.save_message(request.notebook_id, "user", request.query)
     
     async def stream_and_save():
         full_response = ""
@@ -630,9 +631,9 @@ async def chat_endpoint(request: ChatRequest, raw_request: Request):
             if citations:
                 yield f"data: {json.dumps({'type': 'citations', 'citations': citations})}\n\n"
 
-            # 2. Xây dựng Prompt
+            # 2. Xây dựng Prompt (hỗ trợ ngữ cảnh lịch sử đa lượt)
             llm = get_llm_engine()
-            rag_prompt = llm.build_rag_prompt(request.query, context_str)
+            rag_prompt = llm.build_rag_prompt(request.query, context_str, chat_history=prior_history)
             system_prompt = "Bạn là NotebookLM Mini, một trợ lý học tập và nghiên cứu thông minh. Hãy trả lời câu hỏi dựa trên tài liệu được cung cấp một cách chi tiết và trung thực."
             
             display_model = model_name or ""
@@ -659,9 +660,11 @@ async def chat_endpoint(request: ChatRequest, raw_request: Request):
         except Exception as e:
             err_msg = f"Lỗi hệ thống: {str(e)}"
             logger.error(err_msg)
+            full_response += err_msg
             yield f"data: {json.dumps({'type': 'chunk', 'text': err_msg})}\n\n"
         finally:
-            sm.save_message(request.notebook_id, "assistant", full_response, citations=citations)
+            asst_msg_id = sm.save_message(request.notebook_id, "assistant", full_response, citations=citations)
+            yield f"data: {json.dumps({'type': 'saved', 'user_msg_id': user_msg_id, 'assistant_msg_id': asst_msg_id})}\n\n"
 
     return StreamingResponse(
         stream_and_save(),
@@ -874,8 +877,16 @@ async def generate_podcast(
         raise HTTPException(status_code=400, detail="Thiếu notebook_id")
 
     notebook = sm.get_notebook(target_id)
-    is_private = notebook.get('is_private', True) if notebook else True
-    
+    # Xóa file podcast cũ (nếu có) trước khi tạo mới để tránh polling nhầm file cũ
+    for ext in [".mp3", ".wav"]:
+        old_path = os.path.join("storage", "podcasts", f"{target_id}{ext}")
+        if os.path.exists(old_path):
+            try:
+                os.remove(old_path)
+            except Exception:
+                pass
+
+    provider, model_name, api_key, base_url, is_private = resolve_llm_config(notebook)
     llm = get_llm_engine()
     generator = PodcastGenerator(llm, sm)
     
@@ -883,10 +894,10 @@ async def generate_podcast(
         generator.generate_podcast, 
         notebook_id=target_id,
         is_private=is_private,
-        provider=notebook.get('provider') if notebook else None,
-        model_name=notebook.get('model_name') if notebook else None,
-        api_key=notebook.get('api_key') or notebook.get('gemini_api_key') if notebook else None,
-        base_url=notebook.get('base_url') if notebook else None,
+        provider=provider,
+        model_name=model_name,
+        api_key=api_key,
+        base_url=base_url,
         focus_topic=focus_topic,
         style=style
     )
@@ -896,12 +907,12 @@ async def generate_podcast(
 def get_podcast_audio(notebook_id: str):
     """Phục vụ file âm thanh Podcast đã tạo."""
     audio_path = os.path.join("storage", "podcasts", f"{notebook_id}.mp3")
-    if not os.path.exists(audio_path):
-        wav_path = os.path.join("storage", "podcasts", f"{notebook_id}.wav")
-        if os.path.exists(wav_path):
-            return FileResponse(wav_path, media_type="audio/wav")
-        raise HTTPException(status_code=404, detail="Chưa có file Podcast cho sổ tay này.")
-    return FileResponse(audio_path, media_type="audio/mpeg")
+    if os.path.exists(audio_path) and os.path.getsize(audio_path) > 100:
+        return FileResponse(audio_path, media_type="audio/mpeg")
+    wav_path = os.path.join("storage", "podcasts", f"{notebook_id}.wav")
+    if os.path.exists(wav_path) and os.path.getsize(wav_path) > 100:
+        return FileResponse(wav_path, media_type="audio/wav")
+    raise HTTPException(status_code=404, detail="Chưa có file Podcast cho sổ tay này.")
 
 # --- Evaluator API ---
 @app.post("/api/evaluate")
@@ -923,17 +934,18 @@ async def evaluate_knowledge(request: Request, notebook_id: Optional[str] = Form
     if not notebook:
         raise HTTPException(status_code=404, detail="Notebook not found")
         
+    provider, model_name, api_key, base_url, is_private = resolve_llm_config(notebook)
     llm = get_llm_engine()
     evaluator = Evaluator(llm, sm)
     
     try:
         metrics = evaluator.evaluate_knowledge(
             notebook_id=target_id, 
-            is_private=notebook.get('is_private', True),
-            provider=notebook.get('provider'),
-            model_name=notebook.get('model_name'),
-            api_key=notebook.get('api_key') or notebook.get('gemini_api_key'),
-            base_url=notebook.get('base_url')
+            is_private=is_private,
+            provider=provider,
+            model_name=model_name,
+            api_key=api_key,
+            base_url=base_url
         )
         return {"status": "success", "metrics": metrics}
     except Exception as e:

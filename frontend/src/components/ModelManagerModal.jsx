@@ -172,7 +172,9 @@ export default function ModelManagerModal({
 
     const newModel = {
       id: Date.now().toString(),
+      name: trimmed,
       provider: customProvider,
+      model: trimmed,
       model_name: trimmed,
       base_url: customBaseUrl.trim() || undefined,
       api_key: customApiKey.trim() || undefined,

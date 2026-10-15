@@ -67,7 +67,17 @@ class YouTubeParser:
 
         # Lấy transcript ưu tiên Tiếng Việt (vi), sau đó Tiếng Anh (en)
         try:
-            transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=['vi', 'en'])
+            if hasattr(YouTubeTranscriptApi, "get_transcript"):
+                transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=['vi', 'en'])
+            else:
+                ytt = YouTubeTranscriptApi()
+                raw_t = ytt.fetch(video_id, languages=['vi', 'en'])
+                transcript = []
+                for item in raw_t:
+                    t_text = getattr(item, 'text', None) or (item.get('text', '') if isinstance(item, dict) else str(item))
+                    t_start = getattr(item, 'start', None) or (item.get('start', 0.0) if isinstance(item, dict) else 0.0)
+                    t_dur = getattr(item, 'duration', None) or (item.get('duration', 0.0) if isinstance(item, dict) else 0.0)
+                    transcript.append({'text': t_text, 'start': float(t_start), 'duration': float(t_dur)})
         except Exception as e:
             raise RuntimeError(f"Không thể lấy phụ đề cho video {video_id}. Lỗi: {str(e)}")
 

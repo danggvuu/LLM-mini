@@ -65,6 +65,7 @@ class VectorStoreManager:
         for i, chunk in enumerate(chunks):
             point_id = str(uuid.uuid4())
             cleaned_payload = {
+                "chunk_id": point_id,
                 "content": str(chunk["content"]),
                 **_clean_meta(chunk.get("metadata", {}))
             }
