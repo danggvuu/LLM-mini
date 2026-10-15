@@ -103,6 +103,7 @@ function Studio() {
   // Voice recording state
   const [isRecording, setIsRecording] = useState(false);
   const recognitionRef = useRef(null);
+  const voiceBaseTextRef = useRef('');
   const chatInputRef = useRef(null);
   const abortControllerRef = useRef(null);
 
@@ -476,12 +477,16 @@ function Studio() {
   const handleVoiceToggle = () => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      alert("Trình duyệt hiện tại chưa hỗ trợ nhận diện giọng nói trực tiếp. Vui lòng dùng Chrome hoặc Safari.");
+      alert("Trình duyệt hiện tại chưa hỗ trợ nhận diện giọng nói trực tiếp. Vui lòng dùng Chrome, Edge hoặc Cốc Cốc.");
       return;
     }
 
     if (isRecording) {
-      recognitionRef.current?.stop();
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch (_) {}
+      }
       setIsRecording(false);
       return;
     }
@@ -492,14 +497,25 @@ function Studio() {
       recognition.continuous = false;
       recognition.interimResults = true;
 
+      // Lưu lại văn bản hiện có trước khi ghi âm để không bị ghi đè hoặc lặp
+      voiceBaseTextRef.current = input.trim();
+
       recognition.onstart = () => setIsRecording(true);
       recognition.onresult = (event) => {
-        let transcript = '';
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          transcript += event.results[i][0].transcript;
+        let finalStr = '';
+        let interimStr = '';
+        for (let i = 0; i < event.results.length; ++i) {
+          const item = event.results[i];
+          if (item.isFinal) {
+            finalStr += item[0]?.transcript || '';
+          } else {
+            interimStr += item[0]?.transcript || '';
+          }
         }
-        if (transcript) {
-          setInput(prev => (prev ? prev + ' ' : '') + transcript);
+        const spoken = (finalStr + interimStr).trim();
+        if (spoken) {
+          const base = voiceBaseTextRef.current;
+          setInput(base ? `${base} ${spoken}` : spoken);
         }
       };
       recognition.onerror = (e) => {
@@ -1148,26 +1164,26 @@ function Studio() {
       <div className="flex-1 flex flex-col h-full border-r border-white/5 p-4 max-w-4xl mx-auto relative z-10">
         
         {/* Chat Header */}
-        <div className="flex items-center justify-between pb-3.5 border-b border-white/10 mb-4">
-          <div className="flex items-center gap-3">
-            <h2 className="text-lg font-bold flex items-center gap-2 text-white">
-              <FileText className="text-blue-500" size={20}/>
-              {activeNotebook.title}
+        <div className="flex items-center justify-between pb-3.5 border-b border-white/10 mb-4 gap-2 flex-nowrap min-h-[44px]">
+          <div className="flex items-center gap-2.5 shrink-0 min-w-0">
+            <h2 className="text-sm sm:text-base font-bold flex items-center gap-2 text-white truncate max-w-[140px] sm:max-w-[200px]" title={activeNotebook.title}>
+              <FileText className="text-blue-500 shrink-0" size={18}/>
+              <span className="truncate">{activeNotebook.title}</span>
             </h2>
 
             {/* Quick Model Selector Chip */}
-            <div className="relative">
+            <div className="relative shrink-0">
               <button 
                 onClick={() => setShowModelPicker(!showModelPicker)}
-                className={`flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full border transition cursor-pointer ${
+                className={`h-8 flex items-center gap-1.5 text-xs font-semibold px-2.5 rounded-xl border transition cursor-pointer shadow-sm hover:brightness-110 ${
                   currentProvider === 'ollama' 
                     ? 'bg-green-500/10 text-green-400 border-green-500/30 hover:bg-green-500/20' 
                     : 'bg-blue-500/10 text-blue-400 border-blue-500/30 hover:bg-blue-500/20'
                 }`}
                 title="Bấm để đổi mô hình AI"
               >
-                {currentProvider === 'ollama' ? <Cpu size={12} /> : <Cloud size={12} />}
-                <span>{currentProvider.toUpperCase()}: {currentModel}</span>
+                {currentProvider === 'ollama' ? <Cpu size={13} className="shrink-0" /> : <Cloud size={13} className="shrink-0" />}
+                <span className="font-mono text-xs max-w-[120px] sm:max-w-[180px] truncate">{currentProvider.toUpperCase()}: {currentModel}</span>
                 <span className="text-[10px] opacity-60">▾</span>
               </button>
 
@@ -1366,21 +1382,21 @@ function Studio() {
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5 flex-wrap">
+          <div className="flex items-center gap-1.5 flex-nowrap shrink-0 overflow-x-auto scrollbar-hide py-0.5">
             {/* Mobile Column Switchers */}
             <button
               onClick={() => setMobileActiveTab('docs')}
-              className="lg:hidden text-xs px-2.5 py-1.5 rounded-lg border border-white/10 bg-white/5 text-gray-300 hover:text-white"
+              className="lg:hidden h-8 w-8 rounded-xl border border-white/10 bg-white/5 text-gray-300 hover:text-white flex items-center justify-center shrink-0"
               title="Mở danh sách tài liệu"
             >
-              <FileText size={13} />
+              <FileText size={14} />
             </button>
             <button
               onClick={() => setMobileActiveTab('studio')}
-              className="lg:hidden text-xs px-2.5 py-1.5 rounded-lg border border-white/10 bg-white/5 text-gray-300 hover:text-white"
+              className="lg:hidden h-8 w-8 rounded-xl border border-white/10 bg-white/5 text-gray-300 hover:text-white flex items-center justify-center shrink-0"
               title="Mở cẩm nang & công cụ học"
             >
-              <BookOpen size={13} />
+              <BookOpen size={14} />
             </button>
 
             {/* Chat Search Toggle Button */}
@@ -1389,7 +1405,7 @@ function Studio() {
                 setShowChatSearch(prev => !prev);
                 setChatSearchQuery('');
               }}
-              className={`text-xs px-2.5 py-1.5 rounded-lg border transition flex items-center gap-1 font-medium ${
+              className={`h-8 text-xs px-2.5 rounded-xl border transition flex items-center gap-1.5 font-medium shrink-0 ${
                 showChatSearch 
                   ? 'border-blue-500 bg-blue-500/20 text-blue-300' 
                   : 'border-white/10 bg-white/5 text-gray-300 hover:text-white hover:bg-white/10'
@@ -1397,55 +1413,58 @@ function Studio() {
               title="Tìm kiếm trong lịch sử chat (Ctrl + F)"
             >
               <Search size={13} />
-              <span className="hidden sm:inline">Tìm</span>
+              <span className="hidden xl:inline">Tìm</span>
             </button>
 
             {/* Clear Chat Button */}
             <button 
               onClick={handleClearAllMessages}
               disabled={messages.length === 0}
-              className="text-xs px-2.5 py-1.5 rounded-lg border border-white/10 bg-white/5 text-gray-400 hover:text-red-400 hover:bg-red-500/10 transition flex items-center gap-1 font-medium disabled:opacity-30"
+              className="h-8 text-xs px-2.5 rounded-xl border border-white/10 bg-white/5 text-gray-400 hover:text-red-400 hover:bg-red-500/10 transition flex items-center gap-1.5 font-medium disabled:opacity-30 shrink-0"
               title="Xóa toàn bộ hội thoại chat"
             >
               <Trash2 size={13} />
-              <span className="hidden sm:inline">Xóa chat</span>
+              <span className="hidden xl:inline">Xóa chat</span>
             </button>
 
             {/* Share & Export Notebook Modal */}
             <button 
               onClick={() => setShowShareModal(true)}
-              className="text-xs px-2.5 py-1.5 rounded-lg border border-white/10 bg-white/5 text-gray-300 hover:text-white hover:bg-white/10 transition flex items-center gap-1 font-medium"
+              className="h-8 text-xs px-2.5 rounded-xl border border-white/10 bg-white/5 text-gray-300 hover:text-white hover:bg-white/10 transition flex items-center gap-1.5 font-medium shrink-0"
               title="Chia sẻ & Xuất dữ liệu sổ tay"
             >
               <Share2 size={13} />
-              <span className="hidden sm:inline">Chia sẻ</span>
+              <span className="hidden xl:inline">Chia sẻ</span>
             </button>
 
             {/* Export Chat to Markdown */}
             <button 
               onClick={handleExportChat}
-              className="text-xs px-2.5 py-1.5 rounded-lg border border-white/10 bg-white/5 text-gray-300 hover:text-white hover:bg-white/10 transition flex items-center gap-1 font-medium"
+              className="h-8 text-xs px-2.5 rounded-xl border border-white/10 bg-white/5 text-gray-300 hover:text-white hover:bg-white/10 transition flex items-center gap-1.5 font-medium shrink-0"
               title="Xuất toàn bộ đoạn chat ra file Markdown (.md)"
             >
               <FileDown size={13} />
-              <span className="hidden sm:inline">Xuất .md</span>
+              <span className="hidden xl:inline">Xuất .md</span>
             </button>
 
             {/* AI Evaluation */}
             <button 
               onClick={handleEvaluate}
               disabled={evaluating}
-              className="text-xs px-2.5 py-1.5 rounded-lg border border-yellow-500/40 bg-yellow-500/10 text-yellow-400 hover:bg-yellow-500/20 transition disabled:opacity-50 flex items-center gap-1 font-medium"
+              className="h-8 text-xs px-2.5 rounded-xl border border-yellow-500/40 bg-yellow-500/10 text-yellow-400 hover:bg-yellow-500/20 transition disabled:opacity-50 flex items-center gap-1.5 font-medium shrink-0"
               title="Đánh giá mức độ hiểu bài và chất lượng câu hỏi"
             >
               {evaluating ? <Loader size={13} className="animate-spin" /> : <Award size={13} />}
-              <span className="hidden sm:inline">{evaluating ? "Đang chấm..." : "Đánh giá"}</span>
+              <span className="hidden xl:inline">{evaluating ? "Đang chấm..." : "Đánh giá"}</span>
             </button>
+
+            {/* Divider */}
+            <div className="w-[1px] h-5 bg-white/10 my-auto shrink-0 mx-0.5" />
 
             {/* Theme Toggle (Dark / Light) */}
             <button 
               onClick={toggleTheme}
-              className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-amber-400 hover:bg-white/5 transition"
+              className="h-8 w-8 rounded-xl flex items-center justify-center text-gray-400 hover:text-amber-400 hover:bg-white/10 border border-transparent hover:border-white/10 transition shrink-0"
               title={isDark ? "Chuyển sang Giao diện Sáng (Light Theme)" : "Chuyển sang Giao diện Tối (Dark Theme)"}
             >
               {isDark ? <Sun size={15} /> : <Moon size={15} />}
@@ -1454,7 +1473,7 @@ function Studio() {
             {/* Shortcuts Help */}
             <button 
               onClick={() => setShowShortcutsModal(true)}
-              className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-white hover:bg-white/5 transition"
+              className="h-8 w-8 rounded-xl flex items-center justify-center text-gray-400 hover:text-white hover:bg-white/10 border border-transparent hover:border-white/10 transition shrink-0"
               title="Phím tắt nhanh (Shortcuts)"
             >
               <HelpCircle size={15} />
@@ -1463,7 +1482,7 @@ function Studio() {
             {/* Global Settings */}
             <button 
               onClick={() => setShowSettings(true)}
-              className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-white hover:bg-white/5 transition"
+              className="h-8 w-8 rounded-xl flex items-center justify-center text-gray-400 hover:text-white hover:bg-white/10 border border-transparent hover:border-white/10 transition shrink-0"
               title="Cài đặt mô hình AI"
             >
               <Settings size={15} />
@@ -1472,7 +1491,7 @@ function Studio() {
             {/* Delete Notebook */}
             <button 
               onClick={deleteNotebook}
-              className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-red-400 hover:bg-white/5 transition"
+              className="h-8 w-8 rounded-xl flex items-center justify-center text-gray-400 hover:text-red-400 hover:bg-red-500/10 border border-transparent hover:border-red-500/20 transition shrink-0"
               title="Xóa sổ tay này"
             >
               <Trash2 size={15} />
