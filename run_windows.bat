@@ -1,76 +1,52 @@
 @echo off
-title NotebookLM-Mini 1-Click Run cho Windows
-set PYTHONUTF8=1
-set PYTHONIOENCODING=utf-8
+:: ==============================================================================
+:: Google NotebookLM Mini - 1-Click Launcher (Windows)
+:: Double-click this file to start the application.
+:: ==============================================================================
 
-echo ==============================================================================
-echo [*] Khoi dong NotebookLM-Mini cho Windows...
-echo ==============================================================================
-
+title NotebookLM Mini Launcher
+chcp 65001 >nul
 cd /d "%~dp0"
 
-:: 1. Kiem tra Python
-python --version >nul 2>&1
-if %ERRORLEVEL% neq 0 (
-    echo [X] Loi: Khong tim thay Python! Vui long cai dat Python tu trang chu: https://www.python.org/downloads/
-    pause
-    exit /b
+echo.
+echo ========================================================================
+echo          🚀 GOOGLE NOTEBOOKLM MINI - KHỞI ĐỘNG 1-CLICK (WINDOWS)         
+echo ========================================================================
+echo.
+
+:: 1. Kích hoạt môi trường Python ảo (.venv)
+if exist ".venv\Scripts\activate.bat" (
+    echo [1/3] Đang kích hoạt môi trường ảo Python (.venv)...
+    call .venv\Scripts\activate.bat
+) else if exist "venv\Scripts\activate.bat" (
+    echo [1/3] Đang kích hoạt môi trường ảo Python (venv)...
+    call venv\Scripts\activate.bat
+) else (
+    echo [1/3] Dùng Python hệ thống...
 )
 
-:: 2. Kiem tra Node.js
-node --version >nul 2>&1
-if %ERRORLEVEL% neq 0 (
-    echo [X] Loi: Khong tim thay Node.js! Vui long cai dat Node.js: https://nodejs.org/
-    pause
-    exit /b
+:: 2. Kiểm tra bản build Frontend React
+if not exist "frontend\dist\index.html" (
+    echo [2/3] Chưa tìm thấy bản build Frontend. Đang biên dịch React...
+    cd frontend
+    call npm run build
+    cd ..
+) else (
+    echo [2/3] Bản build Frontend đã sẵn sàng.
 )
 
-:: 2.5 Kiem tra ffmpeg
-ffmpeg -version >nul 2>&1
-if %ERRORLEVEL% neq 0 (
-    echo [!] Canh bao: Khong tim thay ffmpeg! Tinh nang doc file am thanh se khong hoat dong.
-    echo [!] Ban co the cai dat ffmpeg hoac bo qua canh bao nay.
-)
+echo.
+echo ------------------------------------------------------------------------
+echo   🌐 Ứng dụng sẵn sàng tại: http://localhost:8000
+echo   💡 Đang tự động mở trình duyệt...
+echo   🛑 Nhấn Ctrl + C để tắt máy chủ khi dùng xong.
+echo ------------------------------------------------------------------------
+echo.
 
-:: 3. Kiem tra va cai dat uv
-uv --version >nul 2>&1
-if %ERRORLEVEL% neq 0 (
-    echo [i] Dang cai dat cong cu uv...
-    python -m pip install uv
-)
+:: Mở trình duyệt sau 2 giây
+start "" http://localhost:8000
 
-:: 4. Tao moi truong ao
-if not exist ".venv" (
-    echo [i] Dang tao moi truong ao Python...
-    uv venv
-)
-call .venv\Scripts\activate.bat
+:: 3. Khởi chạy máy chủ FastAPI Backend
+python -m uvicorn src.api.api:app --host 0.0.0.0 --port 8000 --reload
 
-:: 5. Cai dat thu vien Backend
-echo [i] Dang cai dat thu vien Backend...
-uv pip install -r requirements.txt
-
-:: 6. Quet phan cung
-echo [i] Dang quet cau hinh may tinh...
-python src\utils\hardware_profiler.py
-
-:: 7. Cai thu vien Node.js
-echo [i] Dang kiem tra thu vien Frontend...
-cd frontend
-if not exist "node_modules" (
-    echo [i] Dang cai dat Node Modules...
-    call npm install
-)
-cd ..
-
-:: 8. Khoi dong server
-echo [*] Bat dau chay he thong...
-
-start "NotebookLM Backend" cmd /c "call .venv\Scripts\activate.bat && uvicorn src.api.api:app --host 127.0.0.1 --port 8000"
-start "NotebookLM Frontend" cmd /c "cd frontend && npm run dev"
-
-timeout /t 4 /nobreak >nul
-start "" "http://localhost:5173"
-
-echo [*] Thanh cong! Phim tat cua so nay de thoat.
 pause

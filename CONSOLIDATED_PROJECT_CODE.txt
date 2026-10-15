@@ -7839,6 +7839,7 @@ function Studio() {
         setShowShortcutsModal(false);
         setShowShareModal(false);
         setShowModelManagerModal(false);
+        setShowPasteTextModal(false);
         return;
       }
 
@@ -8378,6 +8379,7 @@ function Studio() {
   };
 
   const handlePreviewDocument = async (filename) => {
+    setHighlightSnippet(null);
     setLoadingPreview(true);
     setPreviewDoc({ filename, loading: true });
     try {
@@ -11899,83 +11901,49 @@ pyttsx3>=2.90
 # ==============================================================================
 
 #!/bin/bash
-
 # ==============================================================================
-# NotebookLM-Mini 1-Click Run Script for macOS
+# Google NotebookLM Mini - 1-Click Launcher (macOS)
+# Double-click this file from Finder to run the application immediately.
 # ==============================================================================
 
-# Exit immediately if a command exits with a non-zero status
-set -e
-
-echo "🚀 Khởi động NotebookLM-Mini cho macOS..."
-
-# Di chuyển đến thư mục chứa script
 cd "$(dirname "$0")"
 
-# Hàm kiểm tra command có tồn tại
-command_exists() {
-    command -v "$1" >/dev/null 2>&1
-}
+echo ""
+echo "========================================================================"
+echo "          🚀 GOOGLE NOTEBOOKLM MINI - KHỞI ĐỘNG 1-CLICK (macOS)         "
+echo "========================================================================"
+echo ""
 
-# 1. Kiểm tra Python
-if ! command_exists python3; then
-    echo "❌ Lỗi: Không tìm thấy Python3. Vui lòng cài đặt Python (https://www.python.org/downloads/mac-osx/)"
-    exit 1
-fi
-
-# 1.5 Cài đặt các công cụ hệ thống cần thiết qua Homebrew
-if command_exists brew; then
-    if ! command_exists ffmpeg; then
-        echo "📦 Đang cài đặt ffmpeg (để xử lý âm thanh)..."
-        brew install ffmpeg
-    fi
-    if ! command_exists tesseract; then
-        echo "📦 Đang cài đặt Tesseract OCR (để nhận diện chữ trong ảnh)..."
-        brew install tesseract tesseract-lang
-    fi
+# 1. Kích hoạt môi trường Python ảo (.venv)
+if [ -d ".venv" ]; then
+    echo "📦 Đang kích hoạt môi trường ảo Python (.venv)..."
+    source .venv/bin/activate
+elif [ -d "venv" ]; then
+    echo "📦 Đang kích hoạt môi trường ảo Python (venv)..."
+    source venv/bin/activate
 else
-    echo "⚠️ Cảnh báo: Homebrew chưa được cài đặt, bỏ qua tự động cài ffmpeg và tesseract."
+    echo "⚠️ Không tìm thấy thư mục .venv, dùng Python hệ thống..."
 fi
 
-# 2. Kiểm tra và cài đặt uv (Trình quản lý package siêu tốc)
-if ! command_exists uv; then
-    echo "📦 Đang cài đặt uv (Công cụ quản lý môi trường siêu tốc)..."
-    curl -LsSf https://astral.sh/uv/install.sh | sh
-    export PATH="$HOME/.local/bin:$PATH"
+# 2. Kiểm tra bản build Frontend React
+if [ ! -d "frontend/dist" ] || [ ! -f "frontend/dist/index.html" ]; then
+    echo "⚙️ Chưa tìm thấy bản build Frontend. Đang biên dịch React..."
+    (cd frontend && npm run build)
 fi
 
-# 3. Khởi tạo môi trường ảo (nếu chưa có)
-if [ ! -d ".venv" ]; then
-    echo "🛠 Đang tạo môi trường ảo..."
-    uv venv
-fi
+echo ""
+echo "------------------------------------------------------------------------"
+echo "  🌐 Ứng dụng đã sẵn sàng tại: http://localhost:8000"
+echo "  💡 Bạn có thể mở trình duyệt và truy cập địa chỉ trên."
+echo "  🛑 Nhấn Ctrl + C để tắt máy chủ khi dùng xong."
+echo "------------------------------------------------------------------------"
+echo ""
 
-# 4. Kích hoạt môi trường ảo
-source .venv/bin/activate
+# Tự động mở trình duyệt sau 1.5 giây
+(sleep 1.5 && open "http://localhost:8000") &
 
-# 5. Đảm bảo frontend dist đã sẵn sàng và cập nhật mới nhất
-if command_exists npm; then
-    cd frontend
-    if [ ! -d "node_modules" ]; then
-        echo "📥 Đang cài đặt thư viện frontend..."
-        npm install
-    fi
-    if [ ! -d "dist" ] || [ "package.json" -nt "dist/index.html" ] || [ "src" -nt "dist/index.html" ]; then
-        echo "🏗 Đang biên dịch giao diện Frontend..."
-        npm run build
-    fi
-    cd ..
-fi
-
-# 6. Khởi động hệ thống siêu tốc (1-2s)
-echo "✨ Khởi động NotebookLM Mini thành công!"
-echo "-> Đang mở trình duyệt tại: http://localhost:8000"
-
-# Mở trình duyệt sau 1.5s
-(sleep 1.5 && open http://localhost:8000) &
-
-# Chạy Backend FastAPI (auto-reload khi có thay đổi)
-uvicorn src.api.api:app --host 127.0.0.1 --port 8000 --reload
+# 3. Khởi chạy máy chủ FastAPI Backend
+python3 -m uvicorn src.api.api:app --host 0.0.0.0 --port 8000 --reload
 
 
 
@@ -11984,80 +11952,56 @@ uvicorn src.api.api:app --host 127.0.0.1 --port 8000 --reload
 # ==============================================================================
 
 @echo off
-title NotebookLM-Mini 1-Click Run cho Windows
-set PYTHONUTF8=1
-set PYTHONIOENCODING=utf-8
+:: ==============================================================================
+:: Google NotebookLM Mini - 1-Click Launcher (Windows)
+:: Double-click this file to start the application.
+:: ==============================================================================
 
-echo ==============================================================================
-echo [*] Khoi dong NotebookLM-Mini cho Windows...
-echo ==============================================================================
-
+title NotebookLM Mini Launcher
+chcp 65001 >nul
 cd /d "%~dp0"
 
-:: 1. Kiem tra Python
-python --version >nul 2>&1
-if %ERRORLEVEL% neq 0 (
-    echo [X] Loi: Khong tim thay Python! Vui long cai dat Python tu trang chu: https://www.python.org/downloads/
-    pause
-    exit /b
+echo.
+echo ========================================================================
+echo          🚀 GOOGLE NOTEBOOKLM MINI - KHỞI ĐỘNG 1-CLICK (WINDOWS)         
+echo ========================================================================
+echo.
+
+:: 1. Kích hoạt môi trường Python ảo (.venv)
+if exist ".venv\Scripts\activate.bat" (
+    echo [1/3] Đang kích hoạt môi trường ảo Python (.venv)...
+    call .venv\Scripts\activate.bat
+) else if exist "venv\Scripts\activate.bat" (
+    echo [1/3] Đang kích hoạt môi trường ảo Python (venv)...
+    call venv\Scripts\activate.bat
+) else (
+    echo [1/3] Dùng Python hệ thống...
 )
 
-:: 2. Kiem tra Node.js
-node --version >nul 2>&1
-if %ERRORLEVEL% neq 0 (
-    echo [X] Loi: Khong tim thay Node.js! Vui long cai dat Node.js: https://nodejs.org/
-    pause
-    exit /b
+:: 2. Kiểm tra bản build Frontend React
+if not exist "frontend\dist\index.html" (
+    echo [2/3] Chưa tìm thấy bản build Frontend. Đang biên dịch React...
+    cd frontend
+    call npm run build
+    cd ..
+) else (
+    echo [2/3] Bản build Frontend đã sẵn sàng.
 )
 
-:: 2.5 Kiem tra ffmpeg
-ffmpeg -version >nul 2>&1
-if %ERRORLEVEL% neq 0 (
-    echo [!] Canh bao: Khong tim thay ffmpeg! Tinh nang doc file am thanh se khong hoat dong.
-    echo [!] Ban co the cai dat ffmpeg hoac bo qua canh bao nay.
-)
+echo.
+echo ------------------------------------------------------------------------
+echo   🌐 Ứng dụng sẵn sàng tại: http://localhost:8000
+echo   💡 Đang tự động mở trình duyệt...
+echo   🛑 Nhấn Ctrl + C để tắt máy chủ khi dùng xong.
+echo ------------------------------------------------------------------------
+echo.
 
-:: 3. Kiem tra va cai dat uv
-uv --version >nul 2>&1
-if %ERRORLEVEL% neq 0 (
-    echo [i] Dang cai dat cong cu uv...
-    python -m pip install uv
-)
+:: Mở trình duyệt sau 2 giây
+start "" http://localhost:8000
 
-:: 4. Tao moi truong ao
-if not exist ".venv" (
-    echo [i] Dang tao moi truong ao Python...
-    uv venv
-)
-call .venv\Scripts\activate.bat
+:: 3. Khởi chạy máy chủ FastAPI Backend
+python -m uvicorn src.api.api:app --host 0.0.0.0 --port 8000 --reload
 
-:: 5. Cai dat thu vien Backend
-echo [i] Dang cai dat thu vien Backend...
-uv pip install -r requirements.txt
-
-:: 6. Quet phan cung
-echo [i] Dang quet cau hinh may tinh...
-python src\utils\hardware_profiler.py
-
-:: 7. Cai thu vien Node.js
-echo [i] Dang kiem tra thu vien Frontend...
-cd frontend
-if not exist "node_modules" (
-    echo [i] Dang cai dat Node Modules...
-    call npm install
-)
-cd ..
-
-:: 8. Khoi dong server
-echo [*] Bat dau chay he thong...
-
-start "NotebookLM Backend" cmd /c "call .venv\Scripts\activate.bat && uvicorn src.api.api:app --host 127.0.0.1 --port 8000"
-start "NotebookLM Frontend" cmd /c "cd frontend && npm run dev"
-
-timeout /t 4 /nobreak >nul
-start "" "http://localhost:5173"
-
-echo [*] Thanh cong! Phim tat cua so nay de thoat.
 pause
 
 
@@ -14598,6 +14542,27 @@ class SessionManager:
                 timeline_outline=sg.get("timeline_outline")
             )
             
+        # Import tiến độ học thẻ nhớ SRS (nếu có)
+        srs_data = data.get("srs_progress", {})
+        if isinstance(srs_data, dict) and srs_data:
+            with self._get_conn() as conn:
+                for c_idx, c_info in srs_data.items():
+                    conn.execute(
+                        """INSERT OR REPLACE INTO flashcard_progress 
+                           (notebook_id, card_index, ease_factor, interval_days, repetitions, next_review_date, last_rating)
+                           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            new_id,
+                            int(c_info.get("card_index", c_idx)),
+                            float(c_info.get("ease_factor", 2.5)),
+                            int(c_info.get("interval_days", 0)),
+                            int(c_info.get("repetitions", 0)),
+                            c_info.get("next_review_date", ""),
+                            int(c_info.get("last_rating", 0))
+                        )
+                    )
+                conn.commit()
+
         return new_id
 
 

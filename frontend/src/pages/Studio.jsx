@@ -181,6 +181,7 @@ function Studio() {
         setShowShortcutsModal(false);
         setShowShareModal(false);
         setShowModelManagerModal(false);
+        setShowPasteTextModal(false);
         return;
       }
 
@@ -720,6 +721,7 @@ function Studio() {
   };
 
   const handlePreviewDocument = async (filename) => {
+    setHighlightSnippet(null);
     setLoadingPreview(true);
     setPreviewDoc({ filename, loading: true });
     try {

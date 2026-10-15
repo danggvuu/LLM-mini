@@ -623,4 +623,25 @@ class SessionManager:
                 timeline_outline=sg.get("timeline_outline")
             )
             
+        # Import tiến độ học thẻ nhớ SRS (nếu có)
+        srs_data = data.get("srs_progress", {})
+        if isinstance(srs_data, dict) and srs_data:
+            with self._get_conn() as conn:
+                for c_idx, c_info in srs_data.items():
+                    conn.execute(
+                        """INSERT OR REPLACE INTO flashcard_progress 
+                           (notebook_id, card_index, ease_factor, interval_days, repetitions, next_review_date, last_rating)
+                           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            new_id,
+                            int(c_info.get("card_index", c_idx)),
+                            float(c_info.get("ease_factor", 2.5)),
+                            int(c_info.get("interval_days", 0)),
+                            int(c_info.get("repetitions", 0)),
+                            c_info.get("next_review_date", ""),
+                            int(c_info.get("last_rating", 0))
+                        )
+                    )
+                conn.commit()
+
         return new_id
