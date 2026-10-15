@@ -96,24 +96,34 @@ class LLMEngine:
         except Exception as e:
             result["router9"]["error"] = str(e)
 
-        # 2. Quét Ollama
-        try:
-            res = requests.get(f"{ollama_url.rstrip('/')}/api/tags", timeout=1.5)
-            if res.status_code == 200:
-                data = res.json()
-                models = []
-                for m in data.get("models", []):
-                    size_gb = round(m.get("size", 0) / (1024 ** 3), 2)
-                    models.append({
-                        "name": m.get("name"),
-                        "model": m.get("model"),
-                        "size_gb": size_gb,
-                        "details": m.get("details", {})
-                    })
-                result["ollama"]["available"] = True
-                result["ollama"]["models"] = models
-        except Exception as e:
-            result["ollama"]["error"] = str(e)
+        # 2. Quét Ollama (thử cả localhost và 127.0.0.1 để tránh lỗi phân giải trên macOS)
+        ollama_candidates = [ollama_url]
+        if "localhost" in ollama_url:
+            ollama_candidates.append("http://127.0.0.1:11434")
+        elif "127.0.0.1" in ollama_url:
+            ollama_candidates.append("http://localhost:11434")
+
+        for o_url in ollama_candidates:
+            try:
+                res = requests.get(f"{o_url.rstrip('/')}/api/tags", timeout=1.5)
+                if res.status_code == 200:
+                    data = res.json()
+                    models = []
+                    for m in data.get("models", []):
+                        size_gb = round(m.get("size", 0) / (1024 ** 3), 2)
+                        models.append({
+                            "name": m.get("name"),
+                            "model": m.get("model"),
+                            "size_gb": size_gb,
+                            "details": m.get("details", {})
+                        })
+                    result["ollama"]["available"] = True
+                    result["ollama"]["models"] = models
+                    result["ollama"]["active_url"] = o_url
+                    result["ollama"]["error"] = None
+                    break
+            except Exception as e:
+                result["ollama"]["error"] = str(e)
 
         # 3. Quét LM Studio / OpenAI-compatible local
         try:
@@ -126,7 +136,48 @@ class LLMEngine:
         except Exception as e:
             result["lm_studio"]["error"] = str(e)
 
+        # 4. Quét GGUF trong thư mục models/
+        models_dir = os.path.join(os.getcwd(), "models")
+        if os.path.exists(models_dir):
+            ggufs = [f for f in os.listdir(models_dir) if f.endswith(".gguf")]
+            if ggufs:
+                result["gguf_local"] = {
+                    "available": True,
+                    "models": ggufs
+                }
+
         return result
+
+    @staticmethod
+    def pull_ollama_model(model_name: str, base_url: str = "http://127.0.0.1:11434"):
+        """Tải mô hình Ollama và yield từng bước tiến trình JSON."""
+        candidate_urls = [base_url, "http://127.0.0.1:11434", "http://localhost:11434"]
+        target_url = None
+        for cand in candidate_urls:
+            try:
+                r = requests.get(f"{cand.rstrip('/')}/api/tags", timeout=1.0)
+                if r.status_code == 200:
+                    target_url = cand.rstrip('/')
+                    break
+            except Exception:
+                continue
+        if not target_url:
+            target_url = "http://127.0.0.1:11434"
+
+        try:
+            with requests.post(f"{target_url}/api/pull", json={"name": model_name, "stream": True}, stream=True, timeout=1800) as resp:
+                if resp.status_code != 200:
+                    yield {"status": "error", "message": f"Ollama lỗi {resp.status_code}: {resp.text}"}
+                    return
+                for line in resp.iter_lines(decode_unicode=True):
+                    if line:
+                        try:
+                            data = json.loads(line)
+                            yield data
+                        except Exception:
+                            pass
+        except Exception as e:
+            yield {"status": "error", "message": str(e)}
 
     @classmethod
     def test_connection(cls, provider: str, model_name: str = "", api_key: str = "", base_url: str = "") -> Dict[str, Any]:
@@ -134,6 +185,11 @@ class LLMEngine:
         start_time = time.time()
         provider = (provider or "ollama").lower()
         test_prompt = "Trả lời đúng 1 chữ: OK"
+
+        # Nếu provider là ollama mà url bị dính port khác
+        if provider == "ollama":
+            if not base_url or "20128" in base_url or "1234" in base_url or "openai" in base_url:
+                base_url = "http://127.0.0.1:11434"
 
         try:
             engine = cls()
@@ -197,6 +253,16 @@ class LLMEngine:
         # 1. Xử lý Ollama Local
         if actual_provider == "ollama":
             url = (base_url or self.default_ollama_url).rstrip("/")
+            # Phải đảm bảo url không bị dính port của 9Router (20128) hay LM Studio (1234)
+            if "20128" in url or "1234" in url or "openrouter" in url or "api.openai" in url:
+                url = "http://127.0.0.1:11434"
+
+            candidate_urls = [url]
+            if "localhost" in url:
+                candidate_urls.append(url.replace("localhost", "127.0.0.1"))
+            elif "127.0.0.1" in url:
+                candidate_urls.append(url.replace("127.0.0.1", "localhost"))
+
             model = actual_model or "qwen2.5:3b"
             payload = {
                 "model": model,
@@ -206,29 +272,48 @@ class LLMEngine:
                 ],
                 "stream": True
             }
-            try:
-                with requests.post(f"{url}/api/chat", json=payload, stream=True, timeout=60) as resp:
-                    if resp.status_code != 200:
-                        yield f"⚠️ Ollama trả về lỗi {resp.status_code}: {resp.text}"
-                        return
-                    for line in resp.iter_lines():
-                        if line:
-                            data = json.loads(line)
-                            msg = data.get("message", {})
-                            if "content" in msg:
-                                yield msg["content"]
+
+            resp = None
+            last_err = None
+            for cand_url in candidate_urls:
+                try:
+                    resp = requests.post(f"{cand_url}/api/chat", json=payload, stream=True, timeout=(10, 180))
+                    if resp.status_code == 200:
+                        url = cand_url
+                        break
+                    else:
+                        last_err = f"Ollama trả về mã lỗi {resp.status_code}: {resp.text}"
+                except requests.exceptions.ConnectionError as ce:
+                    last_err = ce
+                    continue
+                except Exception as e:
+                    last_err = e
+                    break
+
+            if resp is None or resp.status_code != 200:
+                if isinstance(last_err, requests.exceptions.ConnectionError) or (resp is None and "Connection refused" in str(last_err)):
+                    yield (
+                        f"⚠️ **Không thể kết nối tới Ollama tại `{url}`!**\n\n"
+                        "1. Hãy chắc chắn ứng dụng **Ollama** đã được bật trên máy tính của bạn.\n"
+                        "2. Mở ứng dụng Ollama hoặc chạy lệnh trong terminal: `ollama run " + model + "`.\n"
+                        "3. Bạn có thể bấm nút **Gợi ý & Tải Model** hoặc chuyển sang 9Router Gateway ở góc trên."
+                    )
+                    return
+                yield f"⚠️ Lỗi kết nối Ollama: {str(last_err)}"
                 return
-            except requests.exceptions.ConnectionError:
-                yield (
-                    f"⚠️ **Không thể kết nối tới Ollama tại `{url}`!**\n\n"
-                    "1. Hãy chắc chắn bạn đã cài đặt và khởi động Ollama trên máy tính.\n"
-                    "2. Kiểm tra lệnh `ollama run qwen2.5:3b` hoặc mở ứng dụng Ollama trong thanh taskbar/menu bar.\n"
-                    "3. Bạn có thể chọn mô hình khác trong mục Cài đặt."
-                )
+
+            try:
+                for line in resp.iter_lines(decode_unicode=True):
+                    if line:
+                        data = json.loads(line)
+                        msg = data.get("message", {})
+                        if "content" in msg:
+                            yield msg["content"]
                 return
             except Exception as e:
-                yield f"⚠️ Lỗi Ollama: {str(e)}"
+                yield f"⚠️ Lỗi đọc luồng stream từ Ollama: {str(e)}"
                 return
+
 
         # 2. Xử lý Google Gemini
         if actual_provider == "gemini":

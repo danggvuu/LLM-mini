@@ -134,6 +134,7 @@ class ChatRequest(BaseModel):
     notebook_id: str
     provider: Optional[str] = None
     model_name: Optional[str] = None
+    selected_documents: Optional[List[str]] = None
 
 class PodcastRequest(BaseModel):
     notebook_id: str
@@ -148,9 +149,91 @@ class CompareDocsRequest(BaseModel):
 
 class MindmapRequest(BaseModel):
     focus_topic: Optional[str] = ""
+    selected_documents: Optional[List[str]] = None
 
 class TimelineRequest(BaseModel):
     focus_topic: Optional[str] = ""
+    selected_documents: Optional[List[str]] = None
+
+class PullModelRequest(BaseModel):
+    model_name: str
+    base_url: Optional[str] = None
+
+def resolve_llm_config(notebook: dict, override_provider: str = None, override_model: str = None) -> tuple:
+    """
+    Chuẩn hóa cấu hình LLM (provider, model_name, api_key, base_url, is_private)
+    đảm bảo không bị chéo cấu hình giữa các provider (ví dụ Ollama bị lẫn URL của 9Router).
+    """
+    sm = get_session_manager()
+    global_settings = sm.get_app_settings()
+
+    provider = (override_provider or notebook.get('provider') or global_settings.get('default_provider', 'ollama')).lower()
+    model_name = override_model or notebook.get('model_name')
+    
+    if not model_name or str(model_name).strip() == "":
+        if provider == "ollama":
+            model_name = global_settings.get("default_model", "qwen2.5:3b")
+        elif provider == "9router":
+            model_name = global_settings.get("router9_model", "kr/claude-sonnet-4.5")
+        elif provider == "gemini":
+            model_name = global_settings.get("gemini_model", "gemini-2.5-flash")
+        elif provider == "openai":
+            model_name = global_settings.get("openai_model", "gpt-4o-mini")
+        elif provider == "groq":
+            model_name = global_settings.get("groq_model", "llama-3.3-70b-versatile")
+        elif provider == "openrouter":
+            model_name = global_settings.get("openrouter_model", "deepseek/deepseek-r1")
+        else:
+            model_name = "default"
+
+    nb_url = notebook.get('base_url', '') or ''
+    nb_provider = (notebook.get('provider', '') or '').lower()
+
+    if provider == "ollama":
+        if nb_url and ("11434" in nb_url or "ollama" in nb_url) and "20128" not in nb_url and "1234" not in nb_url:
+            base_url = nb_url
+        else:
+            base_url = global_settings.get("ollama_base_url") or "http://127.0.0.1:11434"
+    elif provider == "9router":
+        if nb_url and ("20128" in nb_url or "router" in nb_url):
+            base_url = nb_url
+        else:
+            base_url = global_settings.get("router9_base_url") or "http://localhost:20128/v1"
+    elif provider in ["lm_studio", "local_ai"]:
+        if nb_url and ("1234" in nb_url or "8080" in nb_url):
+            base_url = nb_url
+        else:
+            base_url = global_settings.get("lm_studio_base_url") or "http://localhost:1234/v1"
+    elif provider == "gemini":
+        base_url = ""
+    elif provider == "openai":
+        base_url = "https://api.openai.com/v1"
+    elif provider == "groq":
+        base_url = "https://api.groq.com/openai/v1"
+    elif provider == "openrouter":
+        base_url = "https://openrouter.ai/api/v1"
+    else:
+        base_url = nb_url or global_settings.get("custom_base_url") or ""
+
+    nb_key = notebook.get('api_key') or notebook.get('gemini_api_key') or ''
+    if provider == "9router":
+        api_key = nb_key if (nb_provider == "9router" and nb_key) else global_settings.get("router9_api_key", "")
+    elif provider == "gemini":
+        api_key = nb_key if (nb_provider == "gemini" and nb_key) else global_settings.get("gemini_api_key", "")
+    elif provider == "openai":
+        api_key = nb_key if (nb_provider == "openai" and nb_key) else global_settings.get("openai_api_key", "")
+    elif provider == "groq":
+        api_key = nb_key if (nb_provider == "groq" and nb_key) else global_settings.get("groq_api_key", "")
+    elif provider == "openrouter":
+        api_key = nb_key if (nb_provider == "openrouter" and nb_key) else global_settings.get("openrouter_api_key", "")
+    elif provider == "custom":
+        api_key = nb_key or global_settings.get("custom_api_key", "")
+    else:
+        api_key = ""
+
+    is_private = provider in ["ollama", "lm_studio", "local_ai"]
+
+    return provider, model_name, api_key, base_url, is_private
 
 # --- Settings & Model Discovery APIs ---
 @app.get("/api/settings")
@@ -173,7 +256,7 @@ def get_local_models():
     """Tự động quét danh sách mô hình Local đang chạy trên máy (Ollama, LM Studio, 9Router)."""
     sm = get_session_manager()
     settings = sm.get_app_settings()
-    ollama_url = settings.get("ollama_base_url", "http://localhost:11434")
+    ollama_url = settings.get("ollama_base_url", "http://127.0.0.1:11434")
     lm_studio_url = settings.get("lm_studio_base_url", "http://localhost:1234/v1")
     router9_url = settings.get("router9_base_url", "http://localhost:20128/v1")
     return LLMEngine.get_available_local_models(
@@ -181,6 +264,111 @@ def get_local_models():
         lm_studio_url=lm_studio_url,
         router9_url=router9_url
     )
+
+@app.get("/api/llm/recommendations")
+def get_model_recommendations():
+    """Gợi ý danh sách các mô hình tối ưu cho máy tính cá nhân (đặc biệt macOS Apple Silicon)."""
+    sm = get_session_manager()
+    settings = sm.get_app_settings()
+    ollama_url = settings.get("ollama_base_url", "http://127.0.0.1:11434")
+    local_data = LLMEngine.get_available_local_models(ollama_url=ollama_url)
+    installed_names = [m.get("name") for m in local_data.get("ollama", {}).get("models", [])]
+    installed_set = set(installed_names)
+    for n in installed_names:
+        if ":" in n:
+            installed_set.add(n.split(":")[0])
+        else:
+            installed_set.add(f"{n}:latest")
+
+    recommendations = [
+        {
+            "name": "qwen2.5:3b",
+            "displayName": "Qwen 2.5 (3B)",
+            "provider": "ollama",
+            "size": "1.9 GB",
+            "min_ram": "8 GB",
+            "rating": "★★★★★",
+            "badge": "Khuyên dùng - Tiếng Việt tốt nhất",
+            "badge_color": "emerald",
+            "description": "Mô hình 3B xuất sắc nhất cho tiếng Việt. Tốc độ cực nhanh trên Apple Silicon, dịch và phân tích tài liệu ngữ cảnh cao.",
+            "installed": "qwen2.5:3b" in installed_set or "qwen2.5" in installed_set
+        },
+        {
+            "name": "llama3.2:3b",
+            "displayName": "Llama 3.2 (3B)",
+            "provider": "ollama",
+            "size": "2.0 GB",
+            "min_ram": "8 GB",
+            "rating": "★★★★☆",
+            "badge": "Meta AI - Siêu nhanh",
+            "badge_color": "blue",
+            "description": "Mô hình gọn nhẹ của Meta, tối ưu tuyệt vời cho máy cá nhân. Đa năng, hỏi đáp và tóm tắt rất mượt.",
+            "installed": "llama3.2:3b" in installed_set or "llama3.2:latest" in installed_set or "llama3.2" in installed_set
+        },
+        {
+            "name": "deepseek-r1:1.5b",
+            "displayName": "DeepSeek R1 (1.5B)",
+            "provider": "ollama",
+            "size": "1.1 GB",
+            "min_ram": "8 GB",
+            "rating": "★★★★☆",
+            "badge": "Reasoning - Suy luận logic",
+            "badge_color": "purple",
+            "description": "Mô hình suy luận sâu từng bước (Chain-of-Thought) siêu nhẹ. Thích hợp cho toán học, lập trình và suy luận logic.",
+            "installed": "deepseek-r1:1.5b" in installed_set or "deepseek-r1" in installed_set
+        },
+        {
+            "name": "deepseek-r1:7b",
+            "displayName": "DeepSeek R1 (7B)",
+            "provider": "ollama",
+            "size": "4.7 GB",
+            "min_ram": "16 GB",
+            "rating": "★★★★★",
+            "badge": "Chuyên gia suy luận (16GB RAM+)",
+            "badge_color": "violet",
+            "description": "Bản suy luận 7B đầy đủ sức mạnh của DeepSeek. Khả năng giải quyết tài liệu khó và câu hỏi phức tạp (cần máy 16GB RAM trở lên).",
+            "installed": "deepseek-r1:7b" in installed_set
+        },
+        {
+            "name": "gemma2:2b",
+            "displayName": "Gemma 2 (2B)",
+            "provider": "ollama",
+            "size": "1.6 GB",
+            "min_ram": "8 GB",
+            "rating": "★★★★☆",
+            "badge": "Google AI - Siêu nhẹ",
+            "badge_color": "amber",
+            "description": "Mô hình nhỏ gọn của Google. Tốn cực ít RAM, chạy mượt mà ngay cả khi máy tính đang mở nhiều ứng dụng.",
+            "installed": "gemma2:2b" in installed_set or "gemma2:latest" in installed_set or "gemma2" in installed_set
+        }
+    ]
+
+    return {
+        "status": "success",
+        "ollama_available": local_data.get("ollama", {}).get("available", False),
+        "installed_count": len(installed_names),
+        "recommendations": recommendations
+    }
+
+@app.post("/api/llm/ollama/pull")
+async def pull_ollama_endpoint(request: Request):
+    """Tải model Ollama và stream tiến trình về frontend qua Server-Sent Events (SSE)."""
+    body = await request.json()
+    model_name = (body.get("model_name") or body.get("name") or "").strip()
+    if not model_name:
+        raise HTTPException(status_code=400, detail="Thiếu tên model cần tải.")
+
+    sm = get_session_manager()
+    settings = sm.get_app_settings()
+    ollama_url = settings.get("ollama_base_url", "http://127.0.0.1:11434")
+
+    def event_stream():
+        yield f"data: {json.dumps({'status': 'pulling manifest', 'message': f'Bắt đầu tải {model_name}...' })}\n\n"
+        for progress in LLMEngine.pull_ollama_model(model_name, base_url=ollama_url):
+            yield f"data: {json.dumps(progress)}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
 
 @app.post("/api/llm/test-connection")
 def test_connection_endpoint(req: TestConnectionRequest):
@@ -293,13 +481,18 @@ def update_notebook_settings(notebook_id: str, data: NotebookUpdate):
     if not nb:
         raise HTTPException(status_code=404, detail="Notebook not found")
 
+    new_base_url = data.base_url
+    if data.provider and data.provider != nb.get('provider') and new_base_url is None:
+        # Nếu đổi sang provider khác mà không truyền URL mới, xóa URL cũ để tránh dính chéo URL
+        new_base_url = ""
+
     sm.update_notebook_settings(
         notebook_id=notebook_id,
         title=data.title,
         provider=data.provider,
         model_name=data.model_name,
         api_key=data.api_key,
-        base_url=data.base_url,
+        base_url=new_base_url,
         is_private=data.is_private
     )
     return {"status": "success", "notebook": sm.get_notebook(notebook_id)}
@@ -400,48 +593,11 @@ async def chat_endpoint(request: ChatRequest):
     if not notebook:
         raise HTTPException(status_code=404, detail="Notebook not found")
         
-    global_settings = sm.get_app_settings()
-    
-    # Xác định cấu hình model cho notebook
-    provider = request.provider or notebook.get('provider') or global_settings.get('default_provider', 'ollama')
-    model_name = request.model_name or notebook.get('model_name')
-    if not model_name:
-        if provider == "ollama":
-            model_name = global_settings.get("default_model", "qwen2.5:3b")
-        elif provider == "gemini":
-            model_name = global_settings.get("gemini_model", "gemini-2.5-flash")
-        elif provider == "openai":
-            model_name = global_settings.get("openai_model", "gpt-4o-mini")
-        elif provider == "groq":
-            model_name = global_settings.get("groq_model", "llama-3.3-70b-versatile")
-        elif provider == "openrouter":
-            model_name = global_settings.get("openrouter_model", "deepseek/deepseek-r1")
-        elif provider == "9router":
-            model_name = global_settings.get("router9_model", "claude-3-5-sonnet")
-
-    api_key = notebook.get('api_key') or notebook.get('gemini_api_key')
-    if not api_key:
-        if provider == "gemini":
-            api_key = global_settings.get("gemini_api_key")
-        elif provider == "openai":
-            api_key = global_settings.get("openai_api_key")
-        elif provider == "groq":
-            api_key = global_settings.get("groq_api_key")
-        elif provider == "openrouter":
-            api_key = global_settings.get("openrouter_api_key")
-        elif provider == "9router":
-            api_key = global_settings.get("router9_api_key")
-
-    base_url = notebook.get('base_url')
-    if not base_url:
-        if provider == "ollama":
-            base_url = global_settings.get("ollama_base_url", "http://localhost:11434")
-        elif provider in ["lm_studio", "local_ai"]:
-            base_url = global_settings.get("lm_studio_base_url", "http://localhost:1234/v1")
-        elif provider == "9router":
-            base_url = global_settings.get("router9_base_url", "http://localhost:20128/v1")
-
-    is_private = notebook.get('is_private', True)
+    provider, model_name, api_key, base_url, is_private = resolve_llm_config(
+        notebook,
+        override_provider=request.provider,
+        override_model=request.model_name
+    )
 
     # Lưu tin nhắn người dùng
     sm.save_message(request.notebook_id, "user", request.query)
@@ -453,9 +609,13 @@ async def chat_endpoint(request: ChatRequest):
         try:
             yield f"data: {json.dumps({'type': 'status', 'message': 'Đang tìm kiếm thông tin bằng Hybrid Search...'})}\n\n"
             
-            # 1. Truy xuất dữ liệu (Retrieval qua SearchEngine)
+            # 1. Truy xuất dữ liệu (Retrieval qua SearchEngine có hỗ trợ chọn lọc tài liệu)
             engine = get_search_engine()
-            context_str, results = engine.retrieve(request.query, notebook_id=request.notebook_id)
+            context_str, results = engine.retrieve(
+                request.query, 
+                notebook_id=request.notebook_id,
+                selected_documents=request.selected_documents
+            )
             
             yield f"data: {json.dumps({'type': 'status', 'message': 'Đang đọc và phân tích ngữ cảnh...'})}\n\n"
             
@@ -531,17 +691,18 @@ async def ingest_url(background_tasks: BackgroundTasks, notebook_id: str = Form(
     notebook = sm.get_notebook(notebook_id)
 
     # Sinh Study Guide ngầm
+    provider, model_name, api_key, base_url, is_private = resolve_llm_config(notebook)
     llm = get_llm_engine()
     guide_gen = GuideGenerator(llm, sm)
     background_tasks.add_task(
         guide_gen.generate, 
         notebook_id=notebook_id, 
         document_text=document_text, 
-        is_private=notebook.get('is_private', True) if notebook else True,
-        provider=notebook.get('provider') if notebook else None,
-        model_name=notebook.get('model_name') if notebook else None,
-        api_key=notebook.get('api_key') or notebook.get('gemini_api_key') if notebook else None,
-        base_url=notebook.get('base_url') if notebook else None
+        is_private=is_private,
+        provider=provider,
+        model_name=model_name,
+        api_key=api_key,
+        base_url=base_url
     )
     
     return {"status": "success", "chunks_indexed": len(chunks)}
@@ -585,17 +746,18 @@ async def upload_file(
     notebook = sm.get_notebook(notebook_id)
 
     # Sinh Study Guide ngầm
+    provider, model_name, api_key, base_url, is_private = resolve_llm_config(notebook)
     llm = get_llm_engine()
     guide_gen = GuideGenerator(llm, sm)
     background_tasks.add_task(
         guide_gen.generate, 
         notebook_id=notebook_id, 
         document_text=document_text, 
-        is_private=notebook.get('is_private', True) if notebook else True,
-        provider=notebook.get('provider') if notebook else None,
-        model_name=notebook.get('model_name') if notebook else None,
-        api_key=notebook.get('api_key') or notebook.get('gemini_api_key') if notebook else None,
-        base_url=notebook.get('base_url') if notebook else None
+        is_private=is_private,
+        provider=provider,
+        model_name=model_name,
+        api_key=api_key,
+        base_url=base_url
     )
     
     return {"status": "success", "chunks_indexed": len(chunks)}
@@ -640,15 +802,25 @@ async def regenerate_study_guide(
             raw_focus = body.get("focus_topic")
             if raw_focus and isinstance(raw_focus, str):
                 focus_topic = raw_focus.strip()
+            selected_documents = body.get("selected_documents")
     except Exception:
-        pass
+        selected_documents = None
 
-    # Lấy dữ liệu chunks từ Qdrant
+    # Lấy dữ liệu chunks từ Qdrant hoặc get_chunks_by_document
     store = get_vector_store()
-    search_query = focus_topic if focus_topic else "tổng quan tài liệu kiến thức cốt lõi"
-    chunk_limit = max(25, (quiz_count + flashcards_count) * 2)
-    results = store.search(query=search_query, limit=chunk_limit, notebook_id=notebook_id)
-    document_text = "\n\n".join([r["content"] for r in results]) if results else "Tài liệu học tập"
+    if selected_documents and len(selected_documents) > 0:
+        chunks = []
+        for fn in selected_documents:
+            c = store.get_chunks_by_document(notebook_id, fn, limit=15)
+            chunks.extend(c)
+        document_text = "\n\n".join(chunks) if chunks else "Tài liệu học tập"
+    else:
+        search_query = focus_topic if focus_topic else "tổng quan tài liệu kiến thức cốt lõi"
+        chunk_limit = max(25, (quiz_count + flashcards_count) * 2)
+        results = store.search(query=search_query, limit=chunk_limit, notebook_id=notebook_id)
+        document_text = "\n\n".join([r["content"] for r in results]) if results else "Tài liệu học tập"
+
+    provider, model_name, api_key, base_url, is_private = resolve_llm_config(notebook)
 
     llm = get_llm_engine()
     guide_gen = GuideGenerator(llm, sm)
@@ -656,11 +828,11 @@ async def regenerate_study_guide(
         guide_gen.generate,
         notebook_id=notebook_id,
         document_text=document_text,
-        is_private=notebook.get('is_private', True),
-        provider=notebook.get('provider'),
-        model_name=notebook.get('model_name'),
-        api_key=notebook.get('api_key') or notebook.get('gemini_api_key'),
-        base_url=notebook.get('base_url'),
+        is_private=is_private,
+        provider=provider,
+        model_name=model_name,
+        api_key=api_key,
+        base_url=base_url,
         quiz_count=quiz_count,
         flashcards_count=flashcards_count,
         difficulty=difficulty,
@@ -806,38 +978,52 @@ async def generate_mindmap_endpoint(notebook_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Notebook not found")
         
     focus_topic = ""
+    selected_documents = None
     try:
         body = await request.json()
         if body and isinstance(body, dict):
             focus_topic = body.get("focus_topic", "")
+            selected_documents = body.get("selected_documents")
     except Exception:
         pass
 
-    docs = sm.get_documents(notebook_id)
-    vs = get_vector_store()
-    all_text = ""
-    for d in docs:
-        chunks = vs.get_chunks_by_document(notebook_id, d["filename"])
-        all_text += f"\n--- {d['filename']} ---\n" + "\n".join(chunks[:12])
-        
-    if not all_text.strip():
-        sg = sm.get_study_guide(notebook_id)
-        if sg:
-            all_text = f"Tóm tắt: {sg.get('summary', '')}\nThuật ngữ: {sg.get('glossary', '')}"
+    try:
+        docs = sm.get_documents(notebook_id)
+        if selected_documents and len(selected_documents) > 0:
+            docs = [d for d in docs if d["filename"] in selected_documents]
 
-    llm = get_llm_engine()
-    generator = MindmapGenerator(llm, sm)
-    mindmap = generator.generate(
-        notebook_id=notebook_id,
-        context_text=all_text,
-        focus_topic=focus_topic,
-        is_private=notebook.get('is_private', True),
-        provider=notebook.get('provider'),
-        model_name=notebook.get('model_name'),
-        api_key=notebook.get('api_key') or notebook.get('gemini_api_key'),
-        base_url=notebook.get('base_url')
-    )
-    return {"status": "success", "mindmap": mindmap}
+        vs = get_vector_store()
+        all_text = ""
+        for d in docs:
+            chunks = vs.get_chunks_by_document(notebook_id, d["filename"])
+            all_text += f"\n--- {d['filename']} ---\n" + "\n".join(chunks[:12])
+            
+        if not all_text.strip():
+            sg = sm.get_study_guide(notebook_id)
+            if sg:
+                all_text = f"Tóm tắt: {sg.get('summary', '')}\nThuật ngữ: {sg.get('glossary', '')}"
+
+        if not all_text.strip():
+            all_text = "Tài liệu học tập tổng quan."
+
+        provider, model_name, api_key, base_url, is_private = resolve_llm_config(notebook)
+
+        llm = get_llm_engine()
+        generator = MindmapGenerator(llm, sm)
+        mindmap = generator.generate(
+            notebook_id=notebook_id,
+            context_text=all_text,
+            focus_topic=focus_topic,
+            is_private=is_private,
+            provider=provider,
+            model_name=model_name,
+            api_key=api_key,
+            base_url=base_url
+        )
+        return {"status": "success", "mindmap": mindmap}
+    except Exception as e:
+        logger.error(f"Lỗi tạo Mindmap: {e}")
+        raise HTTPException(status_code=400, detail=f"Không thể tạo sơ đồ tư duy: {str(e)}")
 
 # --- Timeline & Hierarchical Outline APIs ---
 @app.get("/api/notebooks/{notebook_id}/timeline-outline")
@@ -856,38 +1042,52 @@ async def generate_timeline_outline_endpoint(notebook_id: str, request: Request)
         raise HTTPException(status_code=404, detail="Notebook not found")
 
     focus_topic = ""
+    selected_documents = None
     try:
         body = await request.json()
         if body and isinstance(body, dict):
             focus_topic = body.get("focus_topic", "")
+            selected_documents = body.get("selected_documents")
     except Exception:
         pass
 
-    docs = sm.get_documents(notebook_id)
-    vs = get_vector_store()
-    all_text = ""
-    for d in docs:
-        chunks = vs.get_chunks_by_document(notebook_id, d["filename"])
-        all_text += f"\n--- {d['filename']} ---\n" + "\n".join(chunks[:12])
-        
-    if not all_text.strip():
-        sg = sm.get_study_guide(notebook_id)
-        if sg:
-            all_text = f"Tóm tắt: {sg.get('summary', '')}\nFAQ: {sg.get('faq', '')}"
+    try:
+        docs = sm.get_documents(notebook_id)
+        if selected_documents and len(selected_documents) > 0:
+            docs = [d for d in docs if d["filename"] in selected_documents]
 
-    llm = get_llm_engine()
-    generator = TimelineOutlineGenerator(llm, sm)
-    data = generator.generate(
-        notebook_id=notebook_id,
-        context_text=all_text,
-        focus_topic=focus_topic,
-        is_private=notebook.get('is_private', True),
-        provider=notebook.get('provider'),
-        model_name=notebook.get('model_name'),
-        api_key=notebook.get('api_key') or notebook.get('gemini_api_key'),
-        base_url=notebook.get('base_url')
-    )
-    return {"status": "success", "timeline_outline": data}
+        vs = get_vector_store()
+        all_text = ""
+        for d in docs:
+            chunks = vs.get_chunks_by_document(notebook_id, d["filename"])
+            all_text += f"\n--- {d['filename']} ---\n" + "\n".join(chunks[:12])
+            
+        if not all_text.strip():
+            sg = sm.get_study_guide(notebook_id)
+            if sg:
+                all_text = f"Tóm tắt: {sg.get('summary', '')}\nFAQ: {sg.get('faq', '')}"
+
+        if not all_text.strip():
+            all_text = "Tài liệu học tập tổng quan."
+
+        provider, model_name, api_key, base_url, is_private = resolve_llm_config(notebook)
+
+        llm = get_llm_engine()
+        generator = TimelineOutlineGenerator(llm, sm)
+        data = generator.generate(
+            notebook_id=notebook_id,
+            context_text=all_text,
+            focus_topic=focus_topic,
+            is_private=is_private,
+            provider=provider,
+            model_name=model_name,
+            api_key=api_key,
+            base_url=base_url
+        )
+        return {"status": "success", "timeline_outline": data}
+    except Exception as e:
+        logger.error(f"Lỗi tạo Timeline: {e}")
+        raise HTTPException(status_code=400, detail=f"Không thể trích xuất dòng thời gian & dàn ý: {str(e)}")
 
 # --- Multi-Document Comparison API ---
 @app.post("/api/notebooks/{notebook_id}/documents/compare")
@@ -901,26 +1101,32 @@ async def compare_documents_endpoint(notebook_id: str, req: CompareDocsRequest):
     if len(req.filenames) < 2:
         raise HTTPException(status_code=400, detail="Vui lòng chọn ít nhất 2 tài liệu để so sánh.")
 
-    vs = get_vector_store()
-    docs_data = []
-    for fname in req.filenames:
-        chunks = vs.get_chunks_by_document(notebook_id, fname)
-        text = "\n".join(chunks[:20])
-        docs_data.append({"filename": fname, "text": text})
+    try:
+        vs = get_vector_store()
+        docs_data = []
+        for fname in req.filenames:
+            chunks = vs.get_chunks_by_document(notebook_id, fname)
+            text = "\n".join(chunks[:20])
+            docs_data.append({"filename": fname, "text": text})
 
-    llm = get_llm_engine()
-    comparator = DocComparator(llm, sm)
-    comparison_markdown = comparator.compare(
-        notebook_id=notebook_id,
-        docs_data=docs_data,
-        focus_topic=req.focus_topic or "",
-        is_private=notebook.get('is_private', True),
-        provider=notebook.get('provider'),
-        model_name=notebook.get('model_name'),
-        api_key=notebook.get('api_key') or notebook.get('gemini_api_key'),
-        base_url=notebook.get('base_url')
-    )
-    return {"status": "success", "comparison": comparison_markdown, "filenames": req.filenames}
+        provider, model_name, api_key, base_url, is_private = resolve_llm_config(notebook)
+
+        llm = get_llm_engine()
+        comparator = DocComparator(llm, sm)
+        comparison_markdown = comparator.compare(
+            notebook_id=notebook_id,
+            docs_data=docs_data,
+            focus_topic=req.focus_topic or "",
+            is_private=is_private,
+            provider=provider,
+            model_name=model_name,
+            api_key=api_key,
+            base_url=base_url
+        )
+        return {"status": "success", "comparison": comparison_markdown, "filenames": req.filenames}
+    except Exception as e:
+        logger.error(f"Lỗi so sánh tài liệu: {e}")
+        raise HTTPException(status_code=400, detail=f"Không thể so sánh tài liệu: {str(e)}")
 
 # --- Voice Audio Transcription API ---
 @app.post("/api/audio/transcribe")

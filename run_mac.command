@@ -74,5 +74,5 @@ echo "-> Đang mở trình duyệt tại: http://localhost:8000"
 # Mở trình duyệt sau 1.5s
 (sleep 1.5 && open http://localhost:8000) &
 
-# Chạy Backend FastAPI
-uvicorn src.api.api:app --host 127.0.0.1 --port 8000
+# Chạy Backend FastAPI (auto-reload khi có thay đổi)
+uvicorn src.api.api:app --host 127.0.0.1 --port 8000 --reload

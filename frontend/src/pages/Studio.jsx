@@ -15,6 +15,7 @@ import DocCompareModal from '../components/DocCompareModal';
 import TimelineOutlineModal from '../components/TimelineOutlineModal';
 import ShortcutsModal from '../components/ShortcutsModal';
 import ShareModal from '../components/ShareModal';
+import ModelManagerModal from '../components/ModelManagerModal';
 
 function Studio() {
   const { id } = useParams();
@@ -30,10 +31,16 @@ function Studio() {
   const [podcastGenerating, setPodcastGenerating] = useState(false);
   const [audioUrl, setAudioUrl] = useState(null);
   
+  // Document selection for chat & generation context
+  const [selectedDocs, setSelectedDocs] = useState(new Set());
+
   // Settings & Model Switching State
   const [showSettings, setShowSettings] = useState(false);
   const [showModelPicker, setShowModelPicker] = useState(false);
   const [availableLocalModels, setAvailableLocalModels] = useState([]);
+  const [showModelManagerModal, setShowModelManagerModal] = useState(false);
+  const [modelManagerInitialTab, setModelManagerInitialTab] = useState('recommend');
+  const [customSavedModels, setCustomSavedModels] = useState([]);
 
   // Quiz & Flashcard state
   const [showQuiz, setShowQuiz] = useState(false);
@@ -140,6 +147,7 @@ function Studio() {
         setShowTimelineModal(false);
         setShowShortcutsModal(false);
         setShowShareModal(false);
+        setShowModelManagerModal(false);
         return;
       }
 
@@ -214,6 +222,7 @@ function Studio() {
       if (docRes.ok) {
         const docs = await docRes.json();
         setDocuments(docs);
+        setSelectedDocs(new Set(docs.map(d => d.filename)));
       }
     } catch (e) {
       console.error(e);
@@ -225,23 +234,32 @@ function Studio() {
       const res = await fetch('/api/llm/local-models');
       const data = await res.json();
       setAvailableLocalModels(data?.ollama?.models || []);
+      
+      const storedCustom = localStorage.getItem('custom_ai_models');
+      if (storedCustom) {
+        setCustomSavedModels(JSON.parse(storedCustom));
+      }
     } catch (e) {
       console.error("Lỗi lấy local models:", e);
     }
   };
 
   // Switch model on the fly for active notebook
-  const handleSwitchModel = async (newProvider, newModelName) => {
+  const handleSwitchModel = async (newProvider, newModelName, newBaseUrl, newApiKey) => {
     setShowModelPicker(false);
     try {
+      const payload = {
+        provider: newProvider,
+        model_name: newModelName,
+        is_private: ['ollama', 'lm_studio', 'local_ai'].includes(newProvider)
+      };
+      if (newBaseUrl !== undefined) payload.base_url = newBaseUrl;
+      if (newApiKey !== undefined) payload.api_key = newApiKey;
+
       const res = await fetch(`/api/notebooks/${activeNotebook.id}/settings`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          provider: newProvider,
-          model_name: newModelName,
-          is_private: ['ollama', 'lm_studio'].includes(newProvider)
-        })
+        body: JSON.stringify(payload)
       });
       if (res.ok) {
         const updated = await res.json();
@@ -250,6 +268,27 @@ function Studio() {
     } catch (e) {
       console.error("Lỗi đổi model:", e);
     }
+  };
+
+  // Quản lý việc chọn/bỏ chọn tài liệu làm ngữ cảnh
+  const toggleSelectDoc = (filename) => {
+    setSelectedDocs(prev => {
+      const next = new Set(prev);
+      if (next.has(filename)) {
+        next.delete(filename);
+      } else {
+        next.add(filename);
+      }
+      return next;
+    });
+  };
+
+  const handleSelectAllDocs = () => {
+    setSelectedDocs(new Set(documents.map(d => d.filename)));
+  };
+
+  const handleDeselectAllDocs = () => {
+    setSelectedDocs(new Set());
   };
 
   // Polling Study Guide if it is null AND there are documents
@@ -283,7 +322,10 @@ function Studio() {
       await fetch(`/api/notebooks/${activeNotebook.id}/study-guide/regenerate`, { 
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(guideConfig)
+        body: JSON.stringify({
+          ...guideConfig,
+          selected_documents: Array.from(selectedDocs)
+        })
       });
       setStudyGuide(null); // Kích hoạt polling
     } catch (e) {
@@ -303,7 +345,10 @@ function Studio() {
       await fetch(`/api/notebooks/${activeNotebook.id}/study-guide/regenerate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(guideConfig)
+        body: JSON.stringify({
+          ...guideConfig,
+          selected_documents: Array.from(selectedDocs)
+        })
       });
       setStudyGuide(null); // Kích hoạt polling cập nhật giao diện
     } catch (e) {
@@ -491,8 +536,15 @@ function Studio() {
       const res = await fetch(`/api/notebooks/${activeNotebook.id}/mindmap/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ focus_topic: topic })
+        body: JSON.stringify({ 
+          focus_topic: topic,
+          selected_documents: Array.from(selectedDocs)
+        })
       });
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.detail || `Lỗi máy chủ (${res.status})`);
+      }
       const data = await res.json();
       if (data.mindmap) {
         setMindmapData(data.mindmap);
@@ -511,9 +563,13 @@ function Studio() {
       setLoadingTimeline(true);
       try {
         const res = await fetch(`/api/notebooks/${activeNotebook.id}/timeline-outline`);
-        const data = await res.json();
-        if (data.timeline_outline) {
-          setTimelineData(data.timeline_outline);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.timeline_outline) {
+            setTimelineData(data.timeline_outline);
+          } else {
+            await handleRegenerateTimeline();
+          }
         } else {
           await handleRegenerateTimeline();
         }
@@ -531,8 +587,15 @@ function Studio() {
       const res = await fetch(`/api/notebooks/${activeNotebook.id}/timeline-outline/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ focus_topic: topic })
+        body: JSON.stringify({ 
+          focus_topic: topic,
+          selected_documents: Array.from(selectedDocs)
+        })
       });
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.detail || `Lỗi máy chủ (${res.status})`);
+      }
       const data = await res.json();
       if (data.timeline_outline) {
         setTimelineData(data.timeline_outline);
@@ -545,14 +608,18 @@ function Studio() {
   };
 
   // --- Feature #9: Document Comparison Handler ---
-  const handleCompareDocs = async (selectedDocs, topic = "") => {
+  const handleCompareDocs = async (selectedDocList, topic = "") => {
     setComparingDocs(true);
     try {
       const res = await fetch(`/api/notebooks/${activeNotebook.id}/documents/compare`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filenames: selectedDocs, focus_topic: topic })
+        body: JSON.stringify({ filenames: selectedDocList, focus_topic: topic })
       });
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.detail || `Lỗi máy chủ (${res.status})`);
+      }
       const data = await res.json();
       if (data.comparison) {
         setComparisonResult(data.comparison);
@@ -565,6 +632,7 @@ function Studio() {
       setComparingDocs(false);
     }
   };
+
 
   // --- Feature #12: Export Notebook JSON ---
   const handleExportNotebookJson = async () => {
@@ -645,7 +713,9 @@ function Studio() {
       
       const docRes = await fetch(`/api/notebooks/${activeNotebook.id}/documents`);
       if (docRes.ok) {
-        setDocuments(await docRes.json());
+        const newDocs = await docRes.json();
+        setDocuments(newDocs);
+        setSelectedDocs(new Set(newDocs.map(d => d.filename)));
       }
     } catch (e) {
       setMessages(prev => [...prev, { role: 'assistant', content: `Lỗi khi nạp link: ${e.message}`, citations: [] }]);
@@ -678,7 +748,9 @@ function Studio() {
       
       const docRes = await fetch(`/api/notebooks/${activeNotebook.id}/documents`);
       if (docRes.ok) {
-        setDocuments(await docRes.json());
+        const newDocs = await docRes.json();
+        setDocuments(newDocs);
+        setSelectedDocs(prev => new Set([...prev, file.name]));
       }
     } catch (err) {
       console.error(err);
@@ -698,6 +770,11 @@ function Studio() {
       const res = await fetch(`/api/notebooks/${activeNotebook.id}/documents?filename=${encodeURIComponent(filename)}`, { method: 'DELETE' });
       if (res.ok) {
         setDocuments(prev => prev.filter(d => d.filename !== filename));
+        setSelectedDocs(prev => {
+          const next = new Set(prev);
+          next.delete(filename);
+          return next;
+        });
       }
     } catch (err) {
       console.error('Error deleting document:', err);
@@ -722,7 +799,8 @@ function Studio() {
           query: userMsg, 
           notebook_id: activeNotebook.id,
           provider: activeNotebook.provider,
-          model_name: activeNotebook.model_name
+          model_name: activeNotebook.model_name,
+          selected_documents: Array.from(selectedDocs)
         })
       });
 
@@ -861,7 +939,7 @@ function Studio() {
           )}
         </div>
 
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between mb-2">
           <h2 className="font-semibold text-sm flex items-center gap-2">
             <Layers size={17} className="text-blue-400" /> Nguồn ({documents.length})
           </h2>
@@ -875,8 +953,34 @@ function Studio() {
             </button>
           )}
         </div>
+
+        {/* Thanh công cụ chọn tài liệu làm ngữ cảnh */}
+        {documents.length > 0 && (
+          <div className="flex items-center justify-between pb-2 mb-2 border-b border-white/10 text-[11px]">
+            <span className="text-gray-400">
+              Đang chọn: <strong className={selectedDocs.size > 0 ? "text-green-400" : "text-amber-400"}>{selectedDocs.size}/{documents.length}</strong>
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleSelectAllDocs}
+                className="text-blue-400 hover:text-blue-300 font-medium hover:underline"
+              >
+                Tất cả
+              </button>
+              <span className="text-gray-600">•</span>
+              <button
+                type="button"
+                onClick={handleDeselectAllDocs}
+                className="text-gray-400 hover:text-gray-200 font-medium hover:underline"
+              >
+                Bỏ chọn
+              </button>
+            </div>
+          </div>
+        )}
         
-        <div className="flex-1 overflow-y-auto scrollbar-hide space-y-2.5">
+        <div className="flex-1 overflow-y-auto scrollbar-hide space-y-2">
           {documents.length === 0 && uploadingDocs.length === 0 ? (
             <div className="text-center text-gray-500 text-xs mt-12 px-4 leading-relaxed">
               Chưa có tài liệu nào.<br />Hãy tải tệp PDF, Word, Ảnh hoặc dán Link bài viết vào đây.
@@ -894,42 +998,65 @@ function Studio() {
                   </div>
                 </div>
               ))}
-              {documents.map((doc, index) => (
-                <div 
-                  key={`doc-${index}`} 
-                  className="p-2.5 bg-white/[0.03] hover:bg-white/[0.07] rounded-xl border border-white/10 flex items-center justify-between gap-2 group transition cursor-pointer"
-                  onClick={() => handlePreviewDocument(doc.filename)}
-                >
-                  <div className="flex items-center gap-2.5 flex-1 min-w-0">
-                    <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center text-blue-400 shrink-0 relative">
-                      {doc.filename.includes('http') || doc.filename.includes('YouTube') ? <LinkIcon size={16} /> : <FileText size={16} />}
-                      <div className="absolute -bottom-0.5 -right-0.5 bg-green-500 rounded-full text-[#131314] p-0.5">
-                        <Check size={8} strokeWidth={4} />
+              {documents.map((doc, index) => {
+                const isSelected = selectedDocs.has(doc.filename);
+                return (
+                  <div 
+                    key={`doc-${index}`} 
+                    className={`p-2.5 rounded-xl border flex items-center justify-between gap-2 group transition cursor-pointer ${
+                      isSelected 
+                        ? 'bg-white/[0.04] border-white/15 hover:bg-white/[0.08]' 
+                        : 'bg-black/20 border-white/5 opacity-50 hover:opacity-75'
+                    }`}
+                    onClick={() => toggleSelectDoc(doc.filename)}
+                    title={isSelected ? "Đang chọn làm ngữ cảnh (Bấm để bỏ chọn)" : "Chưa chọn (Bấm để chọn làm ngữ cảnh)"}
+                  >
+                    <div className="flex items-center gap-2.5 flex-1 min-w-0">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleSelectDoc(doc.filename);
+                        }}
+                        className={`w-4 h-4 rounded border flex items-center justify-center transition shrink-0 ${
+                          isSelected 
+                            ? 'bg-blue-600 border-blue-500 text-white' 
+                            : 'border-white/30 bg-white/5 hover:border-white/50 text-transparent'
+                        }`}
+                        title={isSelected ? "Bỏ chọn" : "Chọn làm ngữ cảnh"}
+                      >
+                        <Check size={11} strokeWidth={3} />
+                      </button>
+
+                      <div className="w-7 h-7 rounded-lg bg-blue-500/10 flex items-center justify-center text-blue-400 shrink-0">
+                        {doc.filename.includes('http') || doc.filename.includes('YouTube') ? <LinkIcon size={14} /> : <FileText size={14} />}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-xs font-medium truncate ${isSelected ? 'text-gray-200' : 'text-gray-400'}`} title={doc.filename}>
+                          {doc.filename}
+                        </p>
+                        <p className="text-[10px] text-gray-500 truncate">{new Date(doc.created_at).toLocaleDateString('vi-VN')}</p>
                       </div>
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-medium truncate text-gray-200" title={doc.filename}>{doc.filename}</p>
-                      <p className="text-[10px] text-gray-500 truncate">{new Date(doc.created_at).toLocaleDateString('vi-VN')}</p>
+                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition shrink-0" onClick={e => e.stopPropagation()}>
+                      <button 
+                        onClick={() => handlePreviewDocument(doc.filename)}
+                        className="p-1.5 rounded text-gray-400 hover:text-blue-400 hover:bg-white/10 transition"
+                        title="Xem nội dung trích xuất"
+                      >
+                        <Eye size={13} />
+                      </button>
+                      <button 
+                        onClick={() => deleteDocument(doc.filename)}
+                        className="p-1.5 rounded text-gray-400 hover:text-red-400 hover:bg-white/10 transition"
+                        title="Xóa tài liệu"
+                      >
+                        <Trash2 size={13} />
+                      </button>
                     </div>
                   </div>
-                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition shrink-0" onClick={e => e.stopPropagation()}>
-                    <button 
-                      onClick={() => handlePreviewDocument(doc.filename)}
-                      className="p-1.5 rounded text-gray-400 hover:text-blue-400 hover:bg-white/10 transition"
-                      title="Xem nội dung trích xuất"
-                    >
-                      <Eye size={13} />
-                    </button>
-                    <button 
-                      onClick={() => deleteDocument(doc.filename)}
-                      className="p-1.5 rounded text-gray-400 hover:text-red-400 hover:bg-white/10 transition"
-                      title="Xóa tài liệu"
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </>
           )}
         </div>
@@ -979,24 +1106,105 @@ function Studio() {
 
               {/* Model Picker Dropdown */}
               {showModelPicker && (
-                <div className="absolute left-0 mt-2 w-64 bg-[#1c1e24] border border-white/15 rounded-xl shadow-2xl p-2 z-30 space-y-1 animate-fade-in">
-                  <div className="text-[10px] font-semibold text-gray-400 px-2 py-1 uppercase tracking-wider">
-                    Đổi Mô hình AI:
+                <div className="absolute left-0 mt-2 w-72 bg-[#1c1e24] border border-white/15 rounded-xl shadow-2xl p-2 z-30 space-y-1 animate-fade-in max-h-96 overflow-y-auto">
+                  <div className="flex items-center justify-between px-2 py-1">
+                    <div className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
+                      Đổi Mô hình AI
+                    </div>
+                    <button
+                      onClick={() => {
+                        setShowModelPicker(false);
+                        setModelManagerInitialTab('recommend');
+                        setShowModelManagerModal(true);
+                      }}
+                      className="text-[10px] text-green-400 hover:underline flex items-center gap-1 font-medium"
+                    >
+                      <Sparkles size={11} /> Gợi ý tải
+                    </button>
                   </div>
                   
-                  {availableLocalModels.length > 0 && (
+                  {/* Action buttons */}
+                  <div className="grid grid-cols-2 gap-1 pb-1 border-b border-white/10">
+                    <button
+                      onClick={() => {
+                        setShowModelPicker(false);
+                        setModelManagerInitialTab('recommend');
+                        setShowModelManagerModal(true);
+                      }}
+                      className="p-1.5 rounded-lg bg-green-500/10 hover:bg-green-500/20 border border-green-500/20 text-green-400 text-[11px] font-medium flex items-center justify-center gap-1 transition"
+                    >
+                      <Sparkles size={12} /> Gợi ý tải cho máy
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowModelPicker(false);
+                        setModelManagerInitialTab('add_custom');
+                        setShowModelManagerModal(true);
+                      }}
+                      className="p-1.5 rounded-lg bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/20 text-purple-400 text-[11px] font-medium flex items-center justify-center gap-1 transition"
+                    >
+                      <Plus size={12} /> Thêm Model...
+                    </button>
+                  </div>
+
+                  {/* Ollama local models */}
+                  <div className="flex items-center justify-between text-[10px] text-green-400 px-2 pt-1 font-medium">
+                    <span>Ollama (Trên máy):</span>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        fetchLocalModels();
+                      }}
+                      className="text-gray-400 hover:text-white flex items-center gap-0.5 text-[9px]"
+                      title="Quét lại các mô hình Ollama trên máy"
+                    >
+                      <RefreshCw size={9} /> Quét lại
+                    </button>
+                  </div>
+
+                  {availableLocalModels.length > 0 ? (
+                    availableLocalModels.map(m => (
+                      <button
+                        key={m.name}
+                        onClick={() => handleSwitchModel('ollama', m.name)}
+                        className={`w-full text-left text-xs px-2.5 py-1.5 rounded-lg flex items-center justify-between hover:bg-white/10 transition ${
+                          currentProvider === 'ollama' && currentModel === m.name ? 'bg-green-500/20 text-green-300 font-semibold' : 'text-gray-300'
+                        }`}
+                      >
+                        <span className="truncate">{m.name}</span>
+                        <span className="text-[10px] text-gray-500">{m.size_gb}GB</span>
+                      </button>
+                    ))
+                  ) : (
+                    <div className="px-2 py-1 text-[11px] text-gray-500 italic">
+                      Chưa có model Ollama nào.{' '}
+                      <button 
+                        onClick={() => {
+                          setShowModelPicker(false);
+                          setModelManagerInitialTab('recommend');
+                          setShowModelManagerModal(true);
+                        }}
+                        className="text-green-400 underline font-normal"
+                      >
+                        Tải ngay (1-click)
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Custom Saved Models */}
+                  {customSavedModels.length > 0 && (
                     <>
-                      <div className="text-[10px] text-green-400 px-2 pt-1 font-medium">Ollama (Trên máy):</div>
-                      {availableLocalModels.map(m => (
+                      <div className="text-[10px] text-purple-400 px-2 pt-2 font-medium">Model tùy chỉnh đã lưu:</div>
+                      {customSavedModels.map((cm, idx) => (
                         <button
-                          key={m.name}
-                          onClick={() => handleSwitchModel('ollama', m.name)}
-                          className={`w-full text-left text-xs px-2.5 py-1.5 rounded-lg flex items-center justify-between hover:bg-white/10 transition ${
-                            currentProvider === 'ollama' && currentModel === m.name ? 'bg-green-500/20 text-green-300 font-semibold' : 'text-gray-300'
+                          key={idx}
+                          onClick={() => handleSwitchModel(cm.provider, cm.model, cm.base_url, cm.api_key)}
+                          className={`w-full text-left text-xs px-2.5 py-1.5 rounded-lg hover:bg-white/10 transition flex items-center justify-between ${
+                            currentModel === cm.model ? 'bg-purple-500/20 text-purple-300 font-semibold' : 'text-gray-300'
                           }`}
                         >
-                          <span className="truncate">{m.name}</span>
-                          <span className="text-[10px] text-gray-500">{m.size_gb}GB</span>
+                          <span className="truncate">{cm.name || cm.model}</span>
+                          <span className="text-[9px] uppercase bg-white/10 px-1 rounded text-gray-400">{cm.provider}</span>
                         </button>
                       ))}
                     </>
@@ -1065,12 +1273,22 @@ function Studio() {
                     Groq (Llama-3.3 70B)
                   </button>
 
-                  <div className="pt-1.5 mt-1 border-t border-white/10">
+                  <div className="pt-1.5 mt-1 border-t border-white/10 flex items-center justify-between">
                     <button
                       onClick={() => { setShowModelPicker(false); setShowSettings(true); }}
-                      className="w-full text-left text-[11px] text-blue-400 hover:underline px-2 py-1 flex items-center gap-1"
+                      className="text-left text-[11px] text-blue-400 hover:underline px-2 py-1 flex items-center gap-1"
                     >
-                      <Settings size={12} /> Mở Cài đặt API Keys...
+                      <Settings size={12} /> Cài đặt API...
+                    </button>
+                    <button
+                      onClick={() => { 
+                        setShowModelPicker(false); 
+                        setModelManagerInitialTab('installed'); 
+                        setShowModelManagerModal(true); 
+                      }}
+                      className="text-left text-[11px] text-gray-400 hover:text-white px-2 py-1 flex items-center gap-1"
+                    >
+                      <Cpu size={12} /> Quản lý máy...
                     </button>
                   </div>
                 </div>
@@ -1331,6 +1549,49 @@ function Studio() {
 
         {/* Input Bar with Feature #10: Voice Input */}
         <div className="pt-2">
+          {/* Active Document Context Pill */}
+          {documents.length > 0 && (
+            <div className="flex items-center justify-between px-2 pb-1.5 text-[11px]">
+              <div className="flex items-center gap-1.5 text-gray-400">
+                <span className={`w-2 h-2 rounded-full ${
+                  selectedDocs.size === 0 
+                    ? 'bg-amber-400 animate-pulse' 
+                    : selectedDocs.size === documents.length 
+                      ? 'bg-blue-400' 
+                      : 'bg-emerald-400'
+                }`}></span>
+                <span className="font-medium">Ngữ cảnh:</span>
+                {selectedDocs.size === 0 ? (
+                  <span className="text-amber-400 font-semibold">Chưa chọn tài liệu nào (Hỏi đáp kiến thức chung)</span>
+                ) : selectedDocs.size === documents.length ? (
+                  <span className="text-blue-300 font-semibold">Tất cả tài liệu ({selectedDocs.size}/{documents.length})</span>
+                ) : (
+                  <span className="text-emerald-300 font-semibold">Đã chọn lọc {selectedDocs.size}/{documents.length} tài liệu</span>
+                )}
+              </div>
+              
+              <div className="flex items-center gap-2">
+                {selectedDocs.size < documents.length ? (
+                  <button
+                    onClick={handleSelectAllDocs}
+                    className="text-blue-400 hover:text-blue-300 hover:underline transition font-medium"
+                    title="Dùng tất cả tài liệu làm ngữ cảnh"
+                  >
+                    Dùng tất cả
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleDeselectAllDocs}
+                    className="text-gray-400 hover:text-gray-300 hover:underline transition"
+                    title="Bỏ chọn tất cả tài liệu"
+                  >
+                    Bỏ chọn
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
           <div className="bg-[#181a20] border border-white/15 p-2 flex items-end gap-2 rounded-2xl relative group focus-within:border-blue-500/60 transition-all duration-300">
             
             <div className="relative">
@@ -2119,6 +2380,19 @@ function Studio() {
         studyGuide={studyGuide}
         onExportJson={handleExportNotebookJson}
         isDark={isDark}
+      />
+
+      {/* Model Manager: Gợi ý tải cho máy, Model trên máy, Model tùy chỉnh */}
+      <ModelManagerModal
+        isOpen={showModelManagerModal}
+        onClose={() => {
+          setShowModelManagerModal(false);
+          fetchNotebookDetails();
+          fetchLocalModels();
+        }}
+        activeNotebook={activeNotebook}
+        onSelectModel={handleSwitchModel}
+        initialTab={modelManagerInitialTab}
       />
 
     </div>

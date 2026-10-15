@@ -182,3 +182,55 @@ class VectorStoreManager:
                 "metadata": {k: v for k, v in hit.payload.items() if k != "content"}
             })
         return results
+
+    def get_chunks_by_document(self, notebook_id: str, filename: str, limit: int = 100) -> List[str]:
+        """Lấy danh sách các chunk văn bản thuộc về một tài liệu cụ thể trong notebook."""
+        from qdrant_client.http.models import Filter, FieldCondition, MatchValue
+        chunks = []
+        try:
+            scroll_filter = Filter(
+                must=[
+                    FieldCondition(key="notebook_id", match=MatchValue(value=notebook_id))
+                ],
+                should=[
+                    FieldCondition(key="filename", match=MatchValue(value=filename)),
+                    FieldCondition(key="source_file", match=MatchValue(value=filename)),
+                    FieldCondition(key="title", match=MatchValue(value=filename)),
+                    FieldCondition(key="source_url", match=MatchValue(value=filename))
+                ]
+            )
+            records, _ = self.client.scroll(
+                collection_name=self.collection_name,
+                scroll_filter=scroll_filter,
+                limit=limit,
+                with_payload=True,
+                with_vectors=False
+            )
+            for r in records:
+                content = r.payload.get("content")
+                if content and isinstance(content, str):
+                    chunks.append(content)
+        except Exception as e:
+            logger.warning(f"Lỗi scroll Qdrant cho file {filename}: {e}")
+
+        # Fallback nếu Qdrant chưa có hoặc trả về rỗng: đọc trực tiếp file từ uploads/
+        if not chunks:
+            upload_path = os.path.join("uploads", filename)
+            if os.path.exists(upload_path):
+                try:
+                    ext = os.path.splitext(filename)[1].lower()
+                    if ext in ['.txt', '.md', '.json', '.csv', '.html']:
+                        with open(upload_path, "r", encoding="utf-8", errors="ignore") as f:
+                            text = f.read()
+                            chunks = [text[i:i+800] for i in range(0, min(len(text), 20000), 800) if text[i:i+800].strip()]
+                    else:
+                        from src.ingestion.parsers.markitdown_parser import MarkItDownParser
+                        parser = MarkItDownParser()
+                        tree = parser.parse(upload_path)
+                        if tree and tree.content:
+                            text = tree.content
+                            chunks = [text[i:i+800] for i in range(0, min(len(text), 20000), 800) if text[i:i+800].strip()]
+                except Exception as e:
+                    logger.warning(f"Lỗi đọc fallback file uploads/{filename}: {e}")
+
+        return chunks
