@@ -140,8 +140,15 @@ function Studio() {
     const lines = studyGuide.faq.split('\n');
     const questions = [];
     for (const line of lines) {
-      const clean = line.replace(/^[0-9]+[.)]\s*/, '').replace(/^\*+\s*/, '').replace(/\*+/g, '').trim();
-      if (clean.endsWith('?') && clean.length > 8 && clean.length < 120) {
+      let clean = line.trim()
+        .replace(/^#+\s*/, '')
+        .replace(/^\*+\s*/, '')
+        .replace(/^-\s*/, '')
+        .replace(/^[0-9]+[.)]\s*/, '')
+        .replace(/\*+/g, '')
+        .trim();
+      clean = clean.replace(/^[0-9]+[.)]\s*/, '').trim();
+      if (clean.endsWith('?') && clean.length > 8 && clean.length < 140) {
         questions.push(clean);
       }
     }
@@ -1069,11 +1076,11 @@ function Studio() {
     }`}>
       
       {/* Cột 1: Left Sidebar (Sources) */}
-      <div className={`w-72 flex-shrink-0 h-full border-r flex flex-col p-4 z-20 relative transition-colors ${
+      <div className={`w-64 xl:w-72 flex-shrink-0 h-full border-r flex flex-col p-4 z-20 relative transition-colors ${
         isDark ? 'bg-[#14161a] border-white/5' : 'bg-white border-slate-200'
-      } ${mobileActiveTab === 'docs' ? 'flex fixed inset-0 z-40 w-full md:relative md:w-72' : 'hidden lg:flex'}`}>
+      } ${mobileActiveTab === 'docs' ? 'flex fixed inset-0 z-40 w-full md:relative md:w-64 xl:md:w-72' : 'hidden lg:flex'}`}>
         
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center justify-between pb-3.5 border-b border-white/10 mb-4 min-h-[44px]">
           <button onClick={() => navigate('/dashboard')} className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors text-sm font-medium">
             <ArrowLeft size={16} /> Quay lại
           </button>
@@ -1234,12 +1241,12 @@ function Studio() {
       </div>
 
       {/* Cột 2: Center (Chat) */}
-      <div className="flex-1 flex flex-col h-full border-r border-white/5 p-4 max-w-4xl mx-auto relative z-10">
+      <div className="flex-1 min-w-0 flex flex-col h-full border-r border-white/5 p-4 max-w-4xl mx-auto relative z-10">
         
         {/* Chat Header */}
         <div className="flex items-center justify-between pb-3.5 border-b border-white/10 mb-4 gap-2 flex-nowrap min-h-[44px]">
           <div className="flex items-center gap-2.5 shrink-0 min-w-0">
-            <h2 className="text-sm sm:text-base font-bold flex items-center gap-2 text-white truncate max-w-[140px] sm:max-w-[200px]" title={activeNotebook.title}>
+            <h2 className="text-sm sm:text-base font-bold flex items-center gap-2 text-white truncate max-w-[130px] sm:max-w-[180px]" title={activeNotebook.title}>
               <FileText className="text-blue-500 shrink-0" size={18}/>
               <span className="truncate">{activeNotebook.title}</span>
             </h2>
@@ -1255,8 +1262,8 @@ function Studio() {
                 }`}
                 title="Bấm để đổi mô hình AI"
               >
-                {currentProvider === 'ollama' ? <Cpu size={13} className="shrink-0" /> : <Cloud size={13} className="shrink-0" />}
-                <span className="font-mono text-xs max-w-[120px] sm:max-w-[180px] truncate">{currentProvider.toUpperCase()}: {currentModel}</span>
+                {currentProvider === 'ollama' ? <Cpu size={13} className="shrink-0 text-green-400" /> : <Cloud size={13} className="shrink-0 text-blue-400" />}
+                <span className="font-mono text-xs max-w-[110px] sm:max-w-[160px] truncate">{currentProvider.toUpperCase()}: {currentModel}</span>
                 <span className="text-[10px] opacity-60">▾</span>
               </button>
 
@@ -1279,17 +1286,17 @@ function Studio() {
                     </button>
                   </div>
                   
-                  {/* Action buttons */}
-                  <div className="grid grid-cols-2 gap-1 pb-1 border-b border-white/10">
+                  {/* Action buttons (fixed equal height) */}
+                  <div className="grid grid-cols-2 gap-1.5 pb-1.5 border-b border-white/10">
                     <button
                       onClick={() => {
                         setShowModelPicker(false);
                         setModelManagerInitialTab('recommend');
                         setShowModelManagerModal(true);
                       }}
-                      className="p-1.5 rounded-lg bg-green-500/10 hover:bg-green-500/20 border border-green-500/20 text-green-400 text-[11px] font-medium flex items-center justify-center gap-1 transition"
+                      className="h-8 px-2 rounded-lg bg-green-500/10 hover:bg-green-500/20 border border-green-500/20 text-green-400 text-[11px] font-medium flex items-center justify-center gap-1 transition"
                     >
-                      <Sparkles size={12} /> Gợi ý tải cho máy
+                      <Sparkles size={12} /> Gợi ý tải
                     </button>
                     <button
                       onClick={() => {
@@ -1297,9 +1304,9 @@ function Studio() {
                         setModelManagerInitialTab('add_custom');
                         setShowModelManagerModal(true);
                       }}
-                      className="p-1.5 rounded-lg bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/20 text-purple-400 text-[11px] font-medium flex items-center justify-center gap-1 transition"
+                      className="h-8 px-2 rounded-lg bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/20 text-purple-400 text-[11px] font-medium flex items-center justify-center gap-1 transition"
                     >
-                      <Plus size={12} /> Thêm Model...
+                      <Plus size={12} /> Thêm model
                     </button>
                   </div>
 
@@ -1455,7 +1462,7 @@ function Studio() {
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5 flex-nowrap shrink-0 overflow-x-auto scrollbar-hide py-0.5">
+          <div className="flex items-center gap-1.5 shrink-0">
             {/* Mobile Column Switchers */}
             <button
               onClick={() => setMobileActiveTab('docs')}
@@ -1478,46 +1485,42 @@ function Studio() {
                 setShowChatSearch(prev => !prev);
                 setChatSearchQuery('');
               }}
-              className={`h-8 text-xs px-2.5 rounded-xl border transition flex items-center gap-1.5 font-medium shrink-0 ${
+              className={`h-8 w-8 rounded-xl border transition flex items-center justify-center font-medium shrink-0 ${
                 showChatSearch 
                   ? 'border-blue-500 bg-blue-500/20 text-blue-300' 
                   : 'border-white/10 bg-white/5 text-gray-300 hover:text-white hover:bg-white/10'
               }`}
               title="Tìm kiếm trong lịch sử chat (Ctrl + F)"
             >
-              <Search size={13} />
-              <span className="hidden xl:inline">Tìm</span>
+              <Search size={14} />
             </button>
 
             {/* Clear Chat Button */}
             <button 
               onClick={handleClearAllMessages}
               disabled={messages.length === 0}
-              className="h-8 text-xs px-2.5 rounded-xl border border-white/10 bg-white/5 text-gray-400 hover:text-red-400 hover:bg-red-500/10 transition flex items-center gap-1.5 font-medium disabled:opacity-30 shrink-0"
+              className="h-8 w-8 rounded-xl border border-white/10 bg-white/5 text-gray-400 hover:text-red-400 hover:bg-red-500/10 hover:border-red-500/20 transition flex items-center justify-center font-medium disabled:opacity-30 shrink-0"
               title="Xóa toàn bộ hội thoại chat"
             >
-              <Trash2 size={13} />
-              <span className="hidden xl:inline">Xóa chat</span>
+              <Trash2 size={14} />
             </button>
 
             {/* Share & Export Notebook Modal */}
             <button 
               onClick={() => setShowShareModal(true)}
-              className="h-8 text-xs px-2.5 rounded-xl border border-white/10 bg-white/5 text-gray-300 hover:text-white hover:bg-white/10 transition flex items-center gap-1.5 font-medium shrink-0"
+              className="h-8 w-8 rounded-xl border border-white/10 bg-white/5 text-gray-300 hover:text-white hover:bg-white/10 transition flex items-center justify-center font-medium shrink-0"
               title="Chia sẻ & Xuất dữ liệu sổ tay"
             >
-              <Share2 size={13} />
-              <span className="hidden xl:inline">Chia sẻ</span>
+              <Share2 size={14} />
             </button>
 
             {/* Export Chat to Markdown */}
             <button 
               onClick={handleExportChat}
-              className="h-8 text-xs px-2.5 rounded-xl border border-white/10 bg-white/5 text-gray-300 hover:text-white hover:bg-white/10 transition flex items-center gap-1.5 font-medium shrink-0"
+              className="h-8 w-8 rounded-xl border border-white/10 bg-white/5 text-gray-300 hover:text-white hover:bg-white/10 transition flex items-center justify-center font-medium shrink-0"
               title="Xuất toàn bộ đoạn chat ra file Markdown (.md)"
             >
-              <FileDown size={13} />
-              <span className="hidden xl:inline">Xuất .md</span>
+              <FileDown size={14} />
             </button>
 
             {/* AI Evaluation */}
@@ -1528,46 +1531,46 @@ function Studio() {
               title="Đánh giá mức độ hiểu bài và chất lượng câu hỏi"
             >
               {evaluating ? <Loader size={13} className="animate-spin" /> : <Award size={13} />}
-              <span className="hidden xl:inline">{evaluating ? "Đang chấm..." : "Đánh giá"}</span>
+              <span className="hidden sm:inline">{evaluating ? "Đang chấm..." : "Đánh giá"}</span>
             </button>
 
             {/* Divider */}
-            <div className="w-[1px] h-5 bg-white/10 my-auto shrink-0 mx-0.5" />
+            <div className="w-[1px] h-4 bg-white/10 my-auto shrink-0 mx-0.5" />
 
             {/* Theme Toggle (Dark / Light) */}
             <button 
               onClick={toggleTheme}
-              className="h-8 w-8 rounded-xl flex items-center justify-center text-gray-400 hover:text-amber-400 hover:bg-white/10 border border-transparent hover:border-white/10 transition shrink-0"
+              className="h-8 w-8 rounded-xl flex items-center justify-center text-gray-400 hover:text-amber-400 hover:bg-white/10 border border-white/10 bg-white/5 transition shrink-0"
               title={isDark ? "Chuyển sang Giao diện Sáng (Light Theme)" : "Chuyển sang Giao diện Tối (Dark Theme)"}
             >
-              {isDark ? <Sun size={15} /> : <Moon size={15} />}
+              {isDark ? <Sun size={14} /> : <Moon size={14} />}
             </button>
 
             {/* Shortcuts Help */}
             <button 
               onClick={() => setShowShortcutsModal(true)}
-              className="h-8 w-8 rounded-xl flex items-center justify-center text-gray-400 hover:text-white hover:bg-white/10 border border-transparent hover:border-white/10 transition shrink-0"
+              className="h-8 w-8 rounded-xl flex items-center justify-center text-gray-400 hover:text-white hover:bg-white/10 border border-white/10 bg-white/5 transition shrink-0"
               title="Phím tắt nhanh (Shortcuts)"
             >
-              <HelpCircle size={15} />
+              <HelpCircle size={14} />
             </button>
 
             {/* Global Settings */}
             <button 
               onClick={() => setShowSettings(true)}
-              className="h-8 w-8 rounded-xl flex items-center justify-center text-gray-400 hover:text-white hover:bg-white/10 border border-transparent hover:border-white/10 transition shrink-0"
+              className="h-8 w-8 rounded-xl flex items-center justify-center text-gray-400 hover:text-white hover:bg-white/10 border border-white/10 bg-white/5 transition shrink-0"
               title="Cài đặt mô hình AI"
             >
-              <Settings size={15} />
+              <Settings size={14} />
             </button>
 
             {/* Delete Notebook */}
             <button 
               onClick={deleteNotebook}
-              className="h-8 w-8 rounded-xl flex items-center justify-center text-gray-400 hover:text-red-400 hover:bg-red-500/10 border border-transparent hover:border-red-500/20 transition shrink-0"
+              className="h-8 w-8 rounded-xl flex items-center justify-center text-gray-400 hover:text-red-400 hover:bg-red-500/10 border border-white/10 bg-white/5 hover:border-red-500/20 transition shrink-0"
               title="Xóa sổ tay này"
             >
-              <Trash2 size={15} />
+              <Trash2 size={14} />
             </button>
           </div>
         </div>
@@ -1661,6 +1664,26 @@ function Studio() {
                         )}
                         {msg.role === 'assistant' && loading && idx === messages.length - 1 && (
                           <span className="inline-block w-2 h-3.5 bg-blue-500 animate-pulse ml-1 align-middle rounded-sm"></span>
+                        )}
+                        {/* Quick 1-click recovery buttons if Ollama is offline */}
+                        {msg.content?.includes("Không thể kết nối tới Ollama") && (
+                          <div className="mt-3 pt-3 border-t border-amber-500/20 flex flex-wrap gap-2">
+                            <button
+                              onClick={() => handleSwitchModel('9router', 'kr/auto')}
+                              className="px-3 py-1.5 rounded-xl bg-orange-500/20 hover:bg-orange-500/30 border border-orange-500/40 text-orange-300 text-xs font-semibold flex items-center gap-1.5 transition shadow cursor-pointer"
+                            >
+                              <Cloud size={13} /> Chuyển sang 9Router Gateway (Free Cloud)
+                            </button>
+                            <button
+                              onClick={() => {
+                                setModelManagerInitialTab('recommend');
+                                setShowModelManagerModal(true);
+                              }}
+                              className="px-3 py-1.5 rounded-xl bg-green-500/20 hover:bg-green-500/30 border border-green-500/40 text-green-300 text-xs font-semibold flex items-center gap-1.5 transition shadow cursor-pointer"
+                            >
+                              <Cpu size={13} /> Quản lý & Tải Model cho máy
+                            </button>
+                          </div>
                         )}
                       </div>
                     ) : msg.role === 'assistant' && loading && idx === messages.length - 1 ? (
@@ -1782,8 +1805,8 @@ function Studio() {
                     setInput(q);
                     chatInputRef.current?.focus();
                   }}
-                  className="px-2.5 py-1 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-blue-500/40 rounded-full text-[11px] text-gray-300 hover:text-white transition whitespace-nowrap shrink-0 shadow-sm cursor-pointer"
-                  title="Bấm để đưa câu hỏi vào khung chat"
+                  className="max-w-[260px] truncate px-3 py-1 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-blue-500/40 rounded-full text-[11px] text-gray-300 hover:text-white transition whitespace-nowrap shrink-0 shadow-sm cursor-pointer"
+                  title={q}
                 >
                   {q}
                 </button>
@@ -1893,18 +1916,26 @@ function Studio() {
       </div>
 
       {/* Cột 3: Right Sidebar (Study Guide, Podcast, Mindmap, Timeline) */}
-      <div className={`w-80 lg:w-96 flex-shrink-0 h-full p-4 overflow-y-auto scrollbar-hide flex flex-col gap-5 border-l transition-colors ${
+      <div className={`w-80 xl:w-88 flex-shrink-0 h-full p-4 overflow-y-auto scrollbar-hide flex flex-col gap-4 border-l transition-colors ${
         isDark ? 'bg-[#14161a] border-white/5' : 'bg-white border-slate-200'
-      } ${mobileActiveTab === 'studio' ? 'flex fixed inset-0 z-40 w-full md:relative md:w-80' : 'hidden lg:flex'}`}>
+      } ${mobileActiveTab === 'studio' ? 'flex fixed inset-0 z-40 w-full md:relative md:w-80 xl:md:w-88' : 'hidden lg:flex'}`}>
         
-        {mobileActiveTab === 'studio' && (
-          <div className="lg:hidden flex justify-between items-center pb-2 border-b border-white/10">
-            <span className="font-bold text-sm">Cẩm nang & Công cụ Học tập</span>
-            <button onClick={() => setMobileActiveTab('chat')} className="text-xs px-2.5 py-1 rounded-lg bg-white/10 text-white">
+        {/* Top Header Bar - aligned with Col 1 & Col 2 */}
+        <div className="flex justify-between items-center pb-3.5 border-b border-white/10 mb-1 min-h-[44px]">
+          <div className="flex items-center gap-2">
+            <Sparkles size={16} className="text-purple-400" />
+            <span className="font-bold text-sm text-gray-200">Studio Học Tập</span>
+          </div>
+          {mobileActiveTab === 'studio' ? (
+            <button onClick={() => setMobileActiveTab('chat')} className="lg:hidden text-xs px-2.5 py-1 rounded-lg bg-white/10 text-white">
               Đóng
             </button>
-          </div>
-        )}
+          ) : (
+            <span className="text-[10px] text-gray-400 font-medium bg-white/5 px-2 py-0.5 rounded-full border border-white/10">
+              AI Copilot
+            </span>
+          )}
+        </div>
         
         {/* Study Guide Card */}
         <div className="p-4 rounded-2xl bg-[#181a20] border border-white/10">
@@ -1945,36 +1976,48 @@ function Studio() {
             </div>
           ) : (
             <div className="space-y-3.5 text-xs">
-              <div>
-                <h4 className="font-semibold text-gray-300 mb-1">Tóm tắt cốt lõi:</h4>
-                <p className="text-gray-400 leading-relaxed max-h-36 overflow-y-auto scrollbar-hide">{studyGuide.summary}</p>
-              </div>
-              <div className="pt-2 border-t border-white/10">
-                <h4 className="font-semibold text-gray-300 mb-1">Câu hỏi thường gặp:</h4>
-                <p className="text-gray-400 whitespace-pre-wrap leading-relaxed max-h-36 overflow-y-auto scrollbar-hide">{studyGuide.faq}</p>
-              </div>
+              {studyGuide.summary && (
+                <div>
+                  <h4 className="font-semibold text-gray-300 mb-1">Tóm tắt cốt lõi:</h4>
+                  <div className="text-gray-300 leading-relaxed max-h-36 overflow-y-auto scrollbar-hide text-xs">
+                    <MarkdownRenderer content={studyGuide.summary.replace(/^#+\s*(Tóm tắt|Summary)[^\n]*\n+/i, '').trim()} isDark={isDark} />
+                  </div>
+                </div>
+              )}
+              {studyGuide.faq && (
+                <div className="pt-2 border-t border-white/10">
+                  <h4 className="font-semibold text-gray-300 mb-1">Câu hỏi thường gặp:</h4>
+                  <div className="text-gray-300 leading-relaxed max-h-36 overflow-y-auto scrollbar-hide text-xs">
+                    <MarkdownRenderer content={studyGuide.faq.replace(/^#+\s*(Câu hỏi thường gặp|FAQ)[^\n]*\n+/i, '').trim()} isDark={isDark} />
+                  </div>
+                </div>
+              )}
               {studyGuide.glossary && studyGuide.glossary !== "N/A" && (
                 <div className="pt-2 border-t border-white/10">
                   <h4 className="font-semibold text-gray-300 mb-1">Thuật ngữ cốt lõi (Glossary):</h4>
-                  <p className="text-gray-400 whitespace-pre-wrap leading-relaxed max-h-32 overflow-y-auto scrollbar-hide">{studyGuide.glossary}</p>
+                  <div className="text-gray-300 leading-relaxed max-h-32 overflow-y-auto scrollbar-hide text-xs">
+                    <MarkdownRenderer content={studyGuide.glossary.replace(/^#+\s*(Thuật ngữ|Glossary)[^\n]*\n+/i, '').trim()} isDark={isDark} />
+                  </div>
                 </div>
               )}
 
-              <div className="pt-3 flex gap-2 border-t border-white/10">
+              <div className="pt-3 grid grid-cols-2 gap-2 border-t border-white/10">
                 <button 
                   onClick={() => setShowQuiz(true)}
                   disabled={!studyGuide.quiz || studyGuide.quiz.length === 0}
-                  className="flex-1 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/30 py-2 rounded-xl transition flex items-center justify-center gap-1.5 font-semibold disabled:opacity-40"
+                  className="min-w-0 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/30 py-2 px-2 rounded-xl transition flex items-center justify-center gap-1.5 font-semibold text-xs disabled:opacity-40"
                 >
-                  <Brain size={14} /> Trắc nghiệm ({studyGuide.quiz?.length || 0})
+                  <Brain size={14} className="shrink-0" /> 
+                  <span className="truncate">Trắc nghiệm ({studyGuide.quiz?.length || 0})</span>
                 </button>
                 <button 
                   onClick={() => setShowFlashcards(true)}
                   disabled={!studyGuide.flashcards || studyGuide.flashcards.length === 0}
-                  className="flex-1 bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 border border-purple-500/30 py-2 rounded-xl transition flex items-center justify-center gap-1.5 font-semibold disabled:opacity-40"
+                  className="min-w-0 bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 border border-purple-500/30 py-2 px-2 rounded-xl transition flex items-center justify-center gap-1.5 font-semibold text-xs disabled:opacity-40"
                   title="Mở bộ thẻ lật 3D, game ghép thẻ và xuất Quizlet"
                 >
-                  <Layers size={14} /> Quizlet ({studyGuide.flashcards?.length || 0})
+                  <Layers size={14} className="shrink-0" /> 
+                  <span className="truncate">Quizlet ({studyGuide.flashcards?.length || 0})</span>
                 </button>
               </div>
             </div>
