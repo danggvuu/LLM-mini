@@ -1017,6 +1017,31 @@ async def regenerate_study_guide(
     }
 
 # --- Podcast Audio APIs ---
+_PODCAST_STATUS: Dict[str, Dict[str, Any]] = {}
+
+def _run_podcast_generation_task(generator: PodcastGenerator, notebook_id: str, **kwargs):
+    global _PODCAST_STATUS
+    _PODCAST_STATUS[notebook_id] = {
+        "status": "generating",
+        "started_at": time.time(),
+        "error": None
+    }
+    try:
+        out = generator.generate_podcast(notebook_id=notebook_id, **kwargs)
+        _PODCAST_STATUS[notebook_id] = {
+            "status": "completed",
+            "completed_at": time.time(),
+            "output_file": out,
+            "error": None
+        }
+    except Exception as e:
+        logger.error(f"Lỗi background tạo podcast notebook {notebook_id}: {e}")
+        _PODCAST_STATUS[notebook_id] = {
+            "status": "error",
+            "error": str(e)
+        }
+
+
 @app.post("/api/podcast/generate")
 async def generate_podcast(
     request: Request,
@@ -1077,7 +1102,8 @@ async def generate_podcast(
     generator = PodcastGenerator(llm, sm)
     
     background_tasks.add_task(
-        generator.generate_podcast, 
+        _run_podcast_generation_task,
+        generator=generator,
         notebook_id=target_id,
         is_private=is_private,
         provider=provider,
@@ -1090,9 +1116,29 @@ async def generate_podcast(
     )
     return {"status": "processing"}
 
+@app.get("/api/podcast/status/{notebook_id}")
+def get_podcast_status(notebook_id: str):
+    """Kiểm tra trạng thái tiến trình tạo Podcast."""
+    audio_path = os.path.join("storage", "podcasts", f"{notebook_id}.mp3")
+    wav_path = os.path.join("storage", "podcasts", f"{notebook_id}.wav")
+    has_audio = (os.path.exists(audio_path) and os.path.getsize(audio_path) > 100) or \
+                (os.path.exists(wav_path) and os.path.getsize(wav_path) > 100)
+
+    task_info = _PODCAST_STATUS.get(notebook_id, {})
+    status = task_info.get("status")
+
+    if has_audio:
+        return {"status": "completed", "has_audio": True, "error": None}
+    if status == "generating":
+        return {"status": "generating", "has_audio": False, "error": None}
+    if status == "error":
+        return {"status": "error", "has_audio": False, "error": task_info.get("error")}
+    return {"status": "not_found", "has_audio": False, "error": None}
+
 @app.get("/api/podcast/audio/{notebook_id}")
+@app.head("/api/podcast/audio/{notebook_id}")
 def get_podcast_audio(notebook_id: str):
-    """Phục vụ file âm thanh Podcast đã tạo."""
+    """Phục vụ file âm thanh Podcast đã tạo (Hỗ trợ cả GET và HEAD)."""
     audio_path = os.path.join("storage", "podcasts", f"{notebook_id}.mp3")
     if os.path.exists(audio_path) and os.path.getsize(audio_path) > 100:
         return FileResponse(audio_path, media_type="audio/mpeg")

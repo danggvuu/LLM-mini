@@ -686,31 +686,57 @@ function Studio() {
       });
       if (!res.ok) throw new Error("Lỗi khi gọi API tạo Podcast");
       
-      // Polling kiểm tra file audio mỗi 2.5s (tối đa 25 lần ~ 60 giây)
+      // Polling kiểm tra tiến trình Podcast mỗi 2s (tối đa 60 lần ~ 120 giây)
       let attempts = 0;
+      const maxAttempts = 60;
       const pollAudio = setInterval(async () => {
         attempts += 1;
         try {
-          const checkRes = await fetch(`/api/podcast/audio/${activeNotebook.id}`, { method: 'HEAD' });
-          if (checkRes.ok) {
+          // 1. Kiểm tra status endpoint
+          const statusRes = await fetch(`/api/podcast/status/${activeNotebook.id}`);
+          if (statusRes.ok) {
+            const statusData = await statusRes.json();
+            if (statusData.has_audio || statusData.status === 'completed') {
+              clearInterval(pollAudio);
+              setAudioUrl(`/api/podcast/audio/${activeNotebook.id}?t=${Date.now()}`);
+              setPodcastGenerating(false);
+              showToast("🎉 Podcast đã được tạo thành công!");
+              return;
+            }
+            if (statusData.status === 'error') {
+              clearInterval(pollAudio);
+              setPodcastGenerating(false);
+              showToast(`❌ Lỗi tạo Podcast: ${statusData.error || 'Thất bại'}`);
+              return;
+            }
+          }
+
+          // 2. Dự phòng kiểm tra trực tiếp file audio
+          const checkRes = await fetch(`/api/podcast/audio/${activeNotebook.id}`);
+          if (checkRes.ok && checkRes.status === 200) {
             clearInterval(pollAudio);
             setAudioUrl(`/api/podcast/audio/${activeNotebook.id}?t=${Date.now()}`);
             setPodcastGenerating(false);
-          } else if (attempts >= 25) {
-            clearInterval(pollAudio);
-            setPodcastGenerating(false);
-            alert("Quá thời gian tạo Podcast, vui lòng thử lại.");
+            showToast("🎉 Podcast đã được tạo thành công!");
+            return;
           }
-        } catch {
-          if (attempts >= 25) {
+
+          if (attempts >= maxAttempts) {
             clearInterval(pollAudio);
             setPodcastGenerating(false);
+            showToast("⚠️ Quá thời gian tạo Podcast. Vui lòng kiểm tra lại kết nối mô hình AI và thử lại.", 5000);
+          }
+        } catch (pollErr) {
+          if (attempts >= maxAttempts) {
+            clearInterval(pollAudio);
+            setPodcastGenerating(false);
+            showToast("⚠️ Quá thời gian tạo Podcast. Vui lòng thử lại.", 5000);
           }
         }
-      }, 2500);
+      }, 2000);
     } catch (e) {
       console.error(e);
-      alert("Lỗi tạo podcast: " + e.message);
+      showToast("❌ Lỗi tạo podcast: " + e.message);
       setPodcastGenerating(false);
     }
   };

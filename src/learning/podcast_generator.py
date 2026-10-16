@@ -1,4 +1,8 @@
 import os
+import time
+import shutil
+import platform
+import subprocess
 import logging
 import asyncio
 from typing import Optional, List, Tuple
@@ -103,35 +107,78 @@ class PodcastGenerator:
         return output_file
 
     def _generate_with_edge_tts_multi_voice(self, dialogues: List[Tuple[str, str]], output_file: str):
-        """Sử dụng edge-tts ghép trực tiếp luồng âm thanh 2 giọng Nam & Nữ chuẩn xác."""
-        import edge_tts
+        """Sử dụng edge-tts CLI ghép trực tiếp luồng âm thanh 2 giọng Nam & Nữ chuẩn xác."""
+        edge_bin = shutil.which("edge-tts") or "/opt/anaconda3/bin/edge-tts"
+        if not os.path.exists(edge_bin) and not shutil.which("edge-tts"):
+            raise RuntimeError("edge-tts command not found")
         
         voice_a = "vi-VN-NamMinhNeural"
         voice_b = "vi-VN-HoaiMyNeural"
 
-        async def _synthesize_all():
-            with open(output_file, "wb") as out_f:
-                for speaker, text in dialogues:
-                    if not text.strip():
-                        continue
-                    voice = voice_a if speaker == 'A' else voice_b
-                    communicate = edge_tts.Communicate(text, voice)
-                    async for chunk in communicate.stream():
-                        if chunk["type"] == "audio":
-                            out_f.write(chunk["data"])
-
+        temp_dir = os.path.join(self.output_dir, f"temp_{int(time.time()*1000)}")
+        os.makedirs(temp_dir, exist_ok=True)
+        chunk_files = []
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                from concurrent.futures import ThreadPoolExecutor
-                with ThreadPoolExecutor() as pool:
-                    pool.submit(lambda: asyncio.run(_synthesize_all())).result()
-            else:
-                loop.run_until_complete(_synthesize_all())
-        except Exception:
-            asyncio.run(_synthesize_all())
+            for i, (speaker, text) in enumerate(dialogues):
+                if not text.strip():
+                    continue
+                voice = voice_a if speaker == 'A' else voice_b
+                chunk_path = os.path.join(temp_dir, f"chunk_{i}.mp3")
+                cmd = [edge_bin, "--text", text.strip(), "--voice", voice, "--write-media", chunk_path]
+                res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=25)
+                if res.returncode == 0 and os.path.exists(chunk_path) and os.path.getsize(chunk_path) > 100:
+                    chunk_files.append(chunk_path)
+            
+            if not chunk_files:
+                raise RuntimeError("Không sinh được đoạn âm thanh nào từ edge-tts")
+            
+            with open(output_file, "wb") as out_f:
+                for cp in chunk_files:
+                    with open(cp, "rb") as inf:
+                        out_f.write(inf.read())
+        finally:
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir, ignore_errors=True)
 
     def _generate_offline(self, dialogues: List[Tuple[str, str]], output_file: str):
+        """Tạo âm thanh offline qua macOS say hoặc pyttsx3."""
+        if platform.system() == "Darwin" and shutil.which("say"):
+            temp_dir = os.path.join(self.output_dir, f"say_temp_{int(time.time()*1000)}")
+            os.makedirs(temp_dir, exist_ok=True)
+            chunk_files = []
+            try:
+                for i, (speaker, text) in enumerate(dialogues):
+                    if not text.strip():
+                        continue
+                    aiff_path = os.path.join(temp_dir, f"c_{i}.aiff")
+                    wav_path = os.path.join(temp_dir, f"c_{i}.wav")
+                    subprocess.run(["say", "-v", "Linh", "-o", aiff_path, text.strip()], check=True, timeout=15)
+                    subprocess.run(["afconvert", "-f", "WAVE", "-d", "LEI16@44100", aiff_path, wav_path], check=True, timeout=10)
+                    if os.path.exists(wav_path):
+                        chunk_files.append(wav_path)
+                
+                if chunk_files:
+                    import wave
+                    wav_out = output_file.replace(".mp3", ".wav")
+                    with wave.open(wav_out, 'wb') as outfile:
+                        for idx, wf in enumerate(chunk_files):
+                            with wave.open(wf, 'rb') as w_in:
+                                if idx == 0:
+                                    outfile.setparams(w_in.getparams())
+                                outfile.writeframes(w_in.readframes(w_in.getnframes()))
+                    
+                    ffmpeg_bin = shutil.which("ffmpeg") or "/opt/homebrew/bin/ffmpeg"
+                    if os.path.exists(ffmpeg_bin):
+                        subprocess.run([ffmpeg_bin, "-y", "-i", wav_out, output_file], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    else:
+                        shutil.copy(wav_out, output_file)
+                    return
+            except Exception as e:
+                logger.warning(f"macOS say thất bại: {e}")
+            finally:
+                if os.path.exists(temp_dir):
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+
         import pyttsx3
         engine = pyttsx3.init()
         full_text = " ... ".join([text for _, text in dialogues])
@@ -141,7 +188,6 @@ class PodcastGenerator:
     def _create_dummy_audio(self, output_file: str):
         import wave
         import struct
-        import shutil
         wav_path = output_file.replace(".mp3", ".wav")
         with wave.open(wav_path, 'w') as f:
             f.setnchannels(1)

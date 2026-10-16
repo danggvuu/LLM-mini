@@ -8221,31 +8221,57 @@ function Studio() {
       });
       if (!res.ok) throw new Error("Lỗi khi gọi API tạo Podcast");
       
-      // Polling kiểm tra file audio mỗi 2.5s (tối đa 25 lần ~ 60 giây)
+      // Polling kiểm tra tiến trình Podcast mỗi 2s (tối đa 60 lần ~ 120 giây)
       let attempts = 0;
+      const maxAttempts = 60;
       const pollAudio = setInterval(async () => {
         attempts += 1;
         try {
-          const checkRes = await fetch(`/api/podcast/audio/${activeNotebook.id}`, { method: 'HEAD' });
-          if (checkRes.ok) {
+          // 1. Kiểm tra status endpoint
+          const statusRes = await fetch(`/api/podcast/status/${activeNotebook.id}`);
+          if (statusRes.ok) {
+            const statusData = await statusRes.json();
+            if (statusData.has_audio || statusData.status === 'completed') {
+              clearInterval(pollAudio);
+              setAudioUrl(`/api/podcast/audio/${activeNotebook.id}?t=${Date.now()}`);
+              setPodcastGenerating(false);
+              showToast("🎉 Podcast đã được tạo thành công!");
+              return;
+            }
+            if (statusData.status === 'error') {
+              clearInterval(pollAudio);
+              setPodcastGenerating(false);
+              showToast(`❌ Lỗi tạo Podcast: ${statusData.error || 'Thất bại'}`);
+              return;
+            }
+          }
+
+          // 2. Dự phòng kiểm tra trực tiếp file audio
+          const checkRes = await fetch(`/api/podcast/audio/${activeNotebook.id}`);
+          if (checkRes.ok && checkRes.status === 200) {
             clearInterval(pollAudio);
             setAudioUrl(`/api/podcast/audio/${activeNotebook.id}?t=${Date.now()}`);
             setPodcastGenerating(false);
-          } else if (attempts >= 25) {
-            clearInterval(pollAudio);
-            setPodcastGenerating(false);
-            alert("Quá thời gian tạo Podcast, vui lòng thử lại.");
+            showToast("🎉 Podcast đã được tạo thành công!");
+            return;
           }
-        } catch {
-          if (attempts >= 25) {
+
+          if (attempts >= maxAttempts) {
             clearInterval(pollAudio);
             setPodcastGenerating(false);
+            showToast("⚠️ Quá thời gian tạo Podcast. Vui lòng kiểm tra lại kết nối mô hình AI và thử lại.", 5000);
+          }
+        } catch (pollErr) {
+          if (attempts >= maxAttempts) {
+            clearInterval(pollAudio);
+            setPodcastGenerating(false);
+            showToast("⚠️ Quá thời gian tạo Podcast. Vui lòng thử lại.", 5000);
           }
         }
-      }, 2500);
+      }, 2000);
     } catch (e) {
       console.error(e);
-      alert("Lỗi tạo podcast: " + e.message);
+      showToast("❌ Lỗi tạo podcast: " + e.message);
       setPodcastGenerating(false);
     }
   };
@@ -14183,6 +14209,31 @@ async def regenerate_study_guide(
     }
 
 # --- Podcast Audio APIs ---
+_PODCAST_STATUS: Dict[str, Dict[str, Any]] = {}
+
+def _run_podcast_generation_task(generator: PodcastGenerator, notebook_id: str, **kwargs):
+    global _PODCAST_STATUS
+    _PODCAST_STATUS[notebook_id] = {
+        "status": "generating",
+        "started_at": time.time(),
+        "error": None
+    }
+    try:
+        out = generator.generate_podcast(notebook_id=notebook_id, **kwargs)
+        _PODCAST_STATUS[notebook_id] = {
+            "status": "completed",
+            "completed_at": time.time(),
+            "output_file": out,
+            "error": None
+        }
+    except Exception as e:
+        logger.error(f"Lỗi background tạo podcast notebook {notebook_id}: {e}")
+        _PODCAST_STATUS[notebook_id] = {
+            "status": "error",
+            "error": str(e)
+        }
+
+
 @app.post("/api/podcast/generate")
 async def generate_podcast(
     request: Request,
@@ -14243,7 +14294,8 @@ async def generate_podcast(
     generator = PodcastGenerator(llm, sm)
     
     background_tasks.add_task(
-        generator.generate_podcast, 
+        _run_podcast_generation_task,
+        generator=generator,
         notebook_id=target_id,
         is_private=is_private,
         provider=provider,
@@ -14256,9 +14308,29 @@ async def generate_podcast(
     )
     return {"status": "processing"}
 
+@app.get("/api/podcast/status/{notebook_id}")
+def get_podcast_status(notebook_id: str):
+    """Kiểm tra trạng thái tiến trình tạo Podcast."""
+    audio_path = os.path.join("storage", "podcasts", f"{notebook_id}.mp3")
+    wav_path = os.path.join("storage", "podcasts", f"{notebook_id}.wav")
+    has_audio = (os.path.exists(audio_path) and os.path.getsize(audio_path) > 100) or \
+                (os.path.exists(wav_path) and os.path.getsize(wav_path) > 100)
+
+    task_info = _PODCAST_STATUS.get(notebook_id, {})
+    status = task_info.get("status")
+
+    if has_audio:
+        return {"status": "completed", "has_audio": True, "error": None}
+    if status == "generating":
+        return {"status": "generating", "has_audio": False, "error": None}
+    if status == "error":
+        return {"status": "error", "has_audio": False, "error": task_info.get("error")}
+    return {"status": "not_found", "has_audio": False, "error": None}
+
 @app.get("/api/podcast/audio/{notebook_id}")
+@app.head("/api/podcast/audio/{notebook_id}")
 def get_podcast_audio(notebook_id: str):
-    """Phục vụ file âm thanh Podcast đã tạo."""
+    """Phục vụ file âm thanh Podcast đã tạo (Hỗ trợ cả GET và HEAD)."""
     audio_path = os.path.join("storage", "podcasts", f"{notebook_id}.mp3")
     if os.path.exists(audio_path) and os.path.getsize(audio_path) > 100:
         return FileResponse(audio_path, media_type="audio/mpeg")
@@ -19008,6 +19080,10 @@ Hãy tạo từ 3 đến 6 nhánh chính, mỗi nhánh có từ 2 đến 5 mục
 # ==============================================================================
 
 import os
+import time
+import shutil
+import platform
+import subprocess
 import logging
 import asyncio
 from typing import Optional, List, Tuple
@@ -19112,35 +19188,78 @@ class PodcastGenerator:
         return output_file
 
     def _generate_with_edge_tts_multi_voice(self, dialogues: List[Tuple[str, str]], output_file: str):
-        """Sử dụng edge-tts ghép trực tiếp luồng âm thanh 2 giọng Nam & Nữ chuẩn xác."""
-        import edge_tts
+        """Sử dụng edge-tts CLI ghép trực tiếp luồng âm thanh 2 giọng Nam & Nữ chuẩn xác."""
+        edge_bin = shutil.which("edge-tts") or "/opt/anaconda3/bin/edge-tts"
+        if not os.path.exists(edge_bin) and not shutil.which("edge-tts"):
+            raise RuntimeError("edge-tts command not found")
         
         voice_a = "vi-VN-NamMinhNeural"
         voice_b = "vi-VN-HoaiMyNeural"
 
-        async def _synthesize_all():
-            with open(output_file, "wb") as out_f:
-                for speaker, text in dialogues:
-                    if not text.strip():
-                        continue
-                    voice = voice_a if speaker == 'A' else voice_b
-                    communicate = edge_tts.Communicate(text, voice)
-                    async for chunk in communicate.stream():
-                        if chunk["type"] == "audio":
-                            out_f.write(chunk["data"])
-
+        temp_dir = os.path.join(self.output_dir, f"temp_{int(time.time()*1000)}")
+        os.makedirs(temp_dir, exist_ok=True)
+        chunk_files = []
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                from concurrent.futures import ThreadPoolExecutor
-                with ThreadPoolExecutor() as pool:
-                    pool.submit(lambda: asyncio.run(_synthesize_all())).result()
-            else:
-                loop.run_until_complete(_synthesize_all())
-        except Exception:
-            asyncio.run(_synthesize_all())
+            for i, (speaker, text) in enumerate(dialogues):
+                if not text.strip():
+                    continue
+                voice = voice_a if speaker == 'A' else voice_b
+                chunk_path = os.path.join(temp_dir, f"chunk_{i}.mp3")
+                cmd = [edge_bin, "--text", text.strip(), "--voice", voice, "--write-media", chunk_path]
+                res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=25)
+                if res.returncode == 0 and os.path.exists(chunk_path) and os.path.getsize(chunk_path) > 100:
+                    chunk_files.append(chunk_path)
+            
+            if not chunk_files:
+                raise RuntimeError("Không sinh được đoạn âm thanh nào từ edge-tts")
+            
+            with open(output_file, "wb") as out_f:
+                for cp in chunk_files:
+                    with open(cp, "rb") as inf:
+                        out_f.write(inf.read())
+        finally:
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir, ignore_errors=True)
 
     def _generate_offline(self, dialogues: List[Tuple[str, str]], output_file: str):
+        """Tạo âm thanh offline qua macOS say hoặc pyttsx3."""
+        if platform.system() == "Darwin" and shutil.which("say"):
+            temp_dir = os.path.join(self.output_dir, f"say_temp_{int(time.time()*1000)}")
+            os.makedirs(temp_dir, exist_ok=True)
+            chunk_files = []
+            try:
+                for i, (speaker, text) in enumerate(dialogues):
+                    if not text.strip():
+                        continue
+                    aiff_path = os.path.join(temp_dir, f"c_{i}.aiff")
+                    wav_path = os.path.join(temp_dir, f"c_{i}.wav")
+                    subprocess.run(["say", "-v", "Linh", "-o", aiff_path, text.strip()], check=True, timeout=15)
+                    subprocess.run(["afconvert", "-f", "WAVE", "-d", "LEI16@44100", aiff_path, wav_path], check=True, timeout=10)
+                    if os.path.exists(wav_path):
+                        chunk_files.append(wav_path)
+                
+                if chunk_files:
+                    import wave
+                    wav_out = output_file.replace(".mp3", ".wav")
+                    with wave.open(wav_out, 'wb') as outfile:
+                        for idx, wf in enumerate(chunk_files):
+                            with wave.open(wf, 'rb') as w_in:
+                                if idx == 0:
+                                    outfile.setparams(w_in.getparams())
+                                outfile.writeframes(w_in.readframes(w_in.getnframes()))
+                    
+                    ffmpeg_bin = shutil.which("ffmpeg") or "/opt/homebrew/bin/ffmpeg"
+                    if os.path.exists(ffmpeg_bin):
+                        subprocess.run([ffmpeg_bin, "-y", "-i", wav_out, output_file], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    else:
+                        shutil.copy(wav_out, output_file)
+                    return
+            except Exception as e:
+                logger.warning(f"macOS say thất bại: {e}")
+            finally:
+                if os.path.exists(temp_dir):
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+
         import pyttsx3
         engine = pyttsx3.init()
         full_text = " ... ".join([text for _, text in dialogues])
@@ -19150,7 +19269,6 @@ class PodcastGenerator:
     def _create_dummy_audio(self, output_file: str):
         import wave
         import struct
-        import shutil
         wav_path = output_file.replace(".mp3", ".wav")
         with wave.open(wav_path, 'w') as f:
             f.setnchannels(1)

@@ -1,6 +1,6 @@
 ================================================================================
 NOTEBOOKLM MINI - LATEST PATCH CONSOLIDATED (BẢN VÁ MỚI NHẤT)
-TOTAL FILES: 6
+TOTAL FILES: 7
 ================================================================================
 
 
@@ -215,6 +215,215 @@ NỘI DUNG TÀI LIỆU:
 """
         res = self._call_llm(prompt, system_prompt, llm_kwargs)
         return {"content": res}
+
+
+
+
+# ==============================================================================
+# FILE: src/learning/podcast_generator.py
+# ==============================================================================
+
+import os
+import time
+import shutil
+import platform
+import subprocess
+import logging
+import asyncio
+from typing import Optional, List, Tuple
+from ..llm.llm_client import LLMEngine
+from ..db.session_manager import SessionManager
+
+logger = logging.getLogger(__name__)
+
+class PodcastGenerator:
+    def __init__(self, llm_engine: LLMEngine, session_manager: SessionManager):
+        self.llm = llm_engine
+        self.db = session_manager
+        self.output_dir = "storage/podcasts"
+        os.makedirs(self.output_dir, exist_ok=True)
+
+    def generate_podcast(
+        self, 
+        notebook_id: str, 
+        is_private: bool = True, 
+        gemini_api_key: Optional[str] = None,
+        provider: Optional[str] = None,
+        model_name: Optional[str] = None,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
+        focus_topic: Optional[str] = None,
+        style: Optional[str] = "fun",
+        custom_context: Optional[str] = None
+    ) -> str:
+        """Sinh Podcast MP3 2 giọng đọc (MC Nam & MC Nữ) dựa trên tài liệu được chọn hoặc Study Guide."""
+        guide = self.db.get_study_guide(notebook_id)
+        summary = ""
+        if custom_context and custom_context.strip():
+            summary = custom_context.strip()
+        elif guide and guide.get('summary'):
+            summary = f"{guide.get('summary', '')}\n\n{guide.get('glossary', '')}"
+        else:
+            summary = "Tài liệu kiến thức tổng hợp."
+        
+        style_instructions = {
+            "fun": "Phong cách trò chuyện: Hài hước, sôi nổi, dí dỏm, sử dụng ngôn từ đời thường gần gũi, nhiều năng lượng.",
+            "academic": "Phong cách trò chuyện: Học thuật, phân tích chuyên sâu, đi thẳng vào bản chất vấn đề và logic chặt chẽ.",
+            "debate": "Phong cách trò chuyện: Tranh luận phản biện, một người nêu quan điểm/thắc mắc, người kia bổ sung hoặc phản biện sắc bén."
+        }
+        chosen_style = style_instructions.get(style, style_instructions["fun"])
+        topic_clause = f"\nCHỦ ĐỀ TRỌNG TÂM: Tập trung thảo luận sâu về '{focus_topic.strip()}'.\n" if focus_topic and focus_topic.strip() else ""
+
+        prompt = (
+            f"Dưới đây là nội dung tài liệu:\n{summary[:5000]}\n\n"
+            f"{topic_clause}"
+            f"{chosen_style}\n"
+            f"Hãy viết một kịch bản trò chuyện Podcast (khoảng 6-10 lượt thoại) giữa 2 người dẫn chương trình: "
+            f"MC Nam (A - Minh) và MC Nữ (B - My), thảo luận sinh động về nội dung trên.\n"
+            f"Định dạng BẮT BUỘC trên từng dòng như sau, không dùng markdown đậm/nghiêng ở tên nhân vật:\n"
+            f"A: [Lời thoại của A]\n"
+            f"B: [Lời thoại của B]\n"
+        )
+        
+        logger.info(f"Đang sinh kịch bản Podcast cho notebook {notebook_id} (Focus: '{focus_topic}', Style: '{style}')...")
+        script_raw = "".join(self.llm.generate(
+            prompt, 
+            system_prompt="Bạn là biên kịch Podcast chuyên nghiệp. Chỉ xuất ra các dòng thoại bắt đầu bằng 'A:' hoặc 'B:'.",
+            is_private=is_private,
+            gemini_api_key=api_key or gemini_api_key,
+            provider=provider,
+            model_name=model_name,
+            api_key=api_key,
+            base_url=base_url
+        ))
+        
+        dialogues = []
+        for line in script_raw.split('\n'):
+            clean_line = line.strip().lstrip('*').lstrip('-').strip()
+            if clean_line.startswith(('A:', 'Host A:', 'Nam:', 'Minh:')):
+                text_part = clean_line.split(':', 1)[1].strip().strip('*')
+                if text_part:
+                    dialogues.append(('A', text_part))
+            elif clean_line.startswith(('B:', 'Host B:', 'Nữ:', 'My:')):
+                text_part = clean_line.split(':', 1)[1].strip().strip('*')
+                if text_part:
+                    dialogues.append(('B', text_part))
+                
+        if not dialogues:
+            dialogues = [
+                ('A', 'Chào các bạn thính giả, chào mừng đến với buổi phân tích tài liệu trên NotebookLM Mini hôm nay!'),
+                ('B', 'Chào anh Minh và các bạn! Chủ đề trong sổ tay hôm nay có rất nhiều điểm thú vị đáng chú ý.'),
+                ('A', f'Đúng vậy! Điểm cốt lõi đầu tiên mà tài liệu đề cập là: {summary[:250]}'),
+                ('B', 'Thật sự rất súc tích và hữu ích. Các bạn có thể xem thêm ở phần Sơ đồ tư duy hoặc Thẻ ghi nhớ để ôn tập kỹ hơn nhé!')
+            ]
+            
+        output_file = os.path.join(self.output_dir, f"{notebook_id}.mp3")
+        
+        try:
+            self._generate_with_edge_tts_multi_voice(dialogues, output_file)
+        except Exception as e:
+            logger.warning(f"edge-tts không khả dụng: {e}, chuyển sang phương thức dự phòng...")
+            try:
+                self._generate_offline(dialogues, output_file)
+            except Exception as ex:
+                logger.error(f"Tạo audio thất bại: {ex}. Tạo file âm thanh mẫu...")
+                self._create_dummy_audio(output_file)
+                
+        return output_file
+
+    def _generate_with_edge_tts_multi_voice(self, dialogues: List[Tuple[str, str]], output_file: str):
+        """Sử dụng edge-tts CLI ghép trực tiếp luồng âm thanh 2 giọng Nam & Nữ chuẩn xác."""
+        edge_bin = shutil.which("edge-tts") or "/opt/anaconda3/bin/edge-tts"
+        if not os.path.exists(edge_bin) and not shutil.which("edge-tts"):
+            raise RuntimeError("edge-tts command not found")
+        
+        voice_a = "vi-VN-NamMinhNeural"
+        voice_b = "vi-VN-HoaiMyNeural"
+
+        temp_dir = os.path.join(self.output_dir, f"temp_{int(time.time()*1000)}")
+        os.makedirs(temp_dir, exist_ok=True)
+        chunk_files = []
+        try:
+            for i, (speaker, text) in enumerate(dialogues):
+                if not text.strip():
+                    continue
+                voice = voice_a if speaker == 'A' else voice_b
+                chunk_path = os.path.join(temp_dir, f"chunk_{i}.mp3")
+                cmd = [edge_bin, "--text", text.strip(), "--voice", voice, "--write-media", chunk_path]
+                res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=25)
+                if res.returncode == 0 and os.path.exists(chunk_path) and os.path.getsize(chunk_path) > 100:
+                    chunk_files.append(chunk_path)
+            
+            if not chunk_files:
+                raise RuntimeError("Không sinh được đoạn âm thanh nào từ edge-tts")
+            
+            with open(output_file, "wb") as out_f:
+                for cp in chunk_files:
+                    with open(cp, "rb") as inf:
+                        out_f.write(inf.read())
+        finally:
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def _generate_offline(self, dialogues: List[Tuple[str, str]], output_file: str):
+        """Tạo âm thanh offline qua macOS say hoặc pyttsx3."""
+        if platform.system() == "Darwin" and shutil.which("say"):
+            temp_dir = os.path.join(self.output_dir, f"say_temp_{int(time.time()*1000)}")
+            os.makedirs(temp_dir, exist_ok=True)
+            chunk_files = []
+            try:
+                for i, (speaker, text) in enumerate(dialogues):
+                    if not text.strip():
+                        continue
+                    aiff_path = os.path.join(temp_dir, f"c_{i}.aiff")
+                    wav_path = os.path.join(temp_dir, f"c_{i}.wav")
+                    subprocess.run(["say", "-v", "Linh", "-o", aiff_path, text.strip()], check=True, timeout=15)
+                    subprocess.run(["afconvert", "-f", "WAVE", "-d", "LEI16@44100", aiff_path, wav_path], check=True, timeout=10)
+                    if os.path.exists(wav_path):
+                        chunk_files.append(wav_path)
+                
+                if chunk_files:
+                    import wave
+                    wav_out = output_file.replace(".mp3", ".wav")
+                    with wave.open(wav_out, 'wb') as outfile:
+                        for idx, wf in enumerate(chunk_files):
+                            with wave.open(wf, 'rb') as w_in:
+                                if idx == 0:
+                                    outfile.setparams(w_in.getparams())
+                                outfile.writeframes(w_in.readframes(w_in.getnframes()))
+                    
+                    ffmpeg_bin = shutil.which("ffmpeg") or "/opt/homebrew/bin/ffmpeg"
+                    if os.path.exists(ffmpeg_bin):
+                        subprocess.run([ffmpeg_bin, "-y", "-i", wav_out, output_file], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    else:
+                        shutil.copy(wav_out, output_file)
+                    return
+            except Exception as e:
+                logger.warning(f"macOS say thất bại: {e}")
+            finally:
+                if os.path.exists(temp_dir):
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+
+        import pyttsx3
+        engine = pyttsx3.init()
+        full_text = " ... ".join([text for _, text in dialogues])
+        engine.save_to_file(full_text, output_file)
+        engine.runAndWait()
+
+    def _create_dummy_audio(self, output_file: str):
+        import wave
+        import struct
+        wav_path = output_file.replace(".mp3", ".wav")
+        with wave.open(wav_path, 'w') as f:
+            f.setnchannels(1)
+            f.setsampwidth(2)
+            f.setframerate(44100)
+            for i in range(44100 * 2):
+                value = int(32767.0 * 0.1 * (i % 100) / 100)
+                data = struct.pack('<h', value)
+                f.writeframesraw(data)
+        if os.path.exists(wav_path) and not os.path.exists(output_file):
+            shutil.copy(wav_path, output_file)
 
 
 
@@ -1242,6 +1451,31 @@ async def regenerate_study_guide(
     }
 
 # --- Podcast Audio APIs ---
+_PODCAST_STATUS: Dict[str, Dict[str, Any]] = {}
+
+def _run_podcast_generation_task(generator: PodcastGenerator, notebook_id: str, **kwargs):
+    global _PODCAST_STATUS
+    _PODCAST_STATUS[notebook_id] = {
+        "status": "generating",
+        "started_at": time.time(),
+        "error": None
+    }
+    try:
+        out = generator.generate_podcast(notebook_id=notebook_id, **kwargs)
+        _PODCAST_STATUS[notebook_id] = {
+            "status": "completed",
+            "completed_at": time.time(),
+            "output_file": out,
+            "error": None
+        }
+    except Exception as e:
+        logger.error(f"Lỗi background tạo podcast notebook {notebook_id}: {e}")
+        _PODCAST_STATUS[notebook_id] = {
+            "status": "error",
+            "error": str(e)
+        }
+
+
 @app.post("/api/podcast/generate")
 async def generate_podcast(
     request: Request,
@@ -1302,7 +1536,8 @@ async def generate_podcast(
     generator = PodcastGenerator(llm, sm)
     
     background_tasks.add_task(
-        generator.generate_podcast, 
+        _run_podcast_generation_task,
+        generator=generator,
         notebook_id=target_id,
         is_private=is_private,
         provider=provider,
@@ -1315,9 +1550,29 @@ async def generate_podcast(
     )
     return {"status": "processing"}
 
+@app.get("/api/podcast/status/{notebook_id}")
+def get_podcast_status(notebook_id: str):
+    """Kiểm tra trạng thái tiến trình tạo Podcast."""
+    audio_path = os.path.join("storage", "podcasts", f"{notebook_id}.mp3")
+    wav_path = os.path.join("storage", "podcasts", f"{notebook_id}.wav")
+    has_audio = (os.path.exists(audio_path) and os.path.getsize(audio_path) > 100) or \
+                (os.path.exists(wav_path) and os.path.getsize(wav_path) > 100)
+
+    task_info = _PODCAST_STATUS.get(notebook_id, {})
+    status = task_info.get("status")
+
+    if has_audio:
+        return {"status": "completed", "has_audio": True, "error": None}
+    if status == "generating":
+        return {"status": "generating", "has_audio": False, "error": None}
+    if status == "error":
+        return {"status": "error", "has_audio": False, "error": task_info.get("error")}
+    return {"status": "not_found", "has_audio": False, "error": None}
+
 @app.get("/api/podcast/audio/{notebook_id}")
+@app.head("/api/podcast/audio/{notebook_id}")
 def get_podcast_audio(notebook_id: str):
-    """Phục vụ file âm thanh Podcast đã tạo."""
+    """Phục vụ file âm thanh Podcast đã tạo (Hỗ trợ cả GET và HEAD)."""
     audio_path = os.path.join("storage", "podcasts", f"{notebook_id}.mp3")
     if os.path.exists(audio_path) and os.path.getsize(audio_path) > 100:
         return FileResponse(audio_path, media_type="audio/mpeg")
@@ -3858,31 +4113,57 @@ function Studio() {
       });
       if (!res.ok) throw new Error("Lỗi khi gọi API tạo Podcast");
       
-      // Polling kiểm tra file audio mỗi 2.5s (tối đa 25 lần ~ 60 giây)
+      // Polling kiểm tra tiến trình Podcast mỗi 2s (tối đa 60 lần ~ 120 giây)
       let attempts = 0;
+      const maxAttempts = 60;
       const pollAudio = setInterval(async () => {
         attempts += 1;
         try {
-          const checkRes = await fetch(`/api/podcast/audio/${activeNotebook.id}`, { method: 'HEAD' });
-          if (checkRes.ok) {
+          // 1. Kiểm tra status endpoint
+          const statusRes = await fetch(`/api/podcast/status/${activeNotebook.id}`);
+          if (statusRes.ok) {
+            const statusData = await statusRes.json();
+            if (statusData.has_audio || statusData.status === 'completed') {
+              clearInterval(pollAudio);
+              setAudioUrl(`/api/podcast/audio/${activeNotebook.id}?t=${Date.now()}`);
+              setPodcastGenerating(false);
+              showToast("🎉 Podcast đã được tạo thành công!");
+              return;
+            }
+            if (statusData.status === 'error') {
+              clearInterval(pollAudio);
+              setPodcastGenerating(false);
+              showToast(`❌ Lỗi tạo Podcast: ${statusData.error || 'Thất bại'}`);
+              return;
+            }
+          }
+
+          // 2. Dự phòng kiểm tra trực tiếp file audio
+          const checkRes = await fetch(`/api/podcast/audio/${activeNotebook.id}`);
+          if (checkRes.ok && checkRes.status === 200) {
             clearInterval(pollAudio);
             setAudioUrl(`/api/podcast/audio/${activeNotebook.id}?t=${Date.now()}`);
             setPodcastGenerating(false);
-          } else if (attempts >= 25) {
-            clearInterval(pollAudio);
-            setPodcastGenerating(false);
-            alert("Quá thời gian tạo Podcast, vui lòng thử lại.");
+            showToast("🎉 Podcast đã được tạo thành công!");
+            return;
           }
-        } catch {
-          if (attempts >= 25) {
+
+          if (attempts >= maxAttempts) {
             clearInterval(pollAudio);
             setPodcastGenerating(false);
+            showToast("⚠️ Quá thời gian tạo Podcast. Vui lòng kiểm tra lại kết nối mô hình AI và thử lại.", 5000);
+          }
+        } catch (pollErr) {
+          if (attempts >= maxAttempts) {
+            clearInterval(pollAudio);
+            setPodcastGenerating(false);
+            showToast("⚠️ Quá thời gian tạo Podcast. Vui lòng thử lại.", 5000);
           }
         }
-      }, 2500);
+      }, 2000);
     } catch (e) {
       console.error(e);
-      alert("Lỗi tạo podcast: " + e.message);
+      showToast("❌ Lỗi tạo podcast: " + e.message);
       setPodcastGenerating(false);
     }
   };
