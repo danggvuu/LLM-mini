@@ -34,7 +34,17 @@ class LLMEngine:
         "9router": "http://localhost:20128/v1"
     }
 
-    def __init__(self):
+    def __init__(
+        self, 
+        provider: Optional[str] = None, 
+        model_name: Optional[str] = None, 
+        api_key: Optional[str] = None, 
+        base_url: Optional[str] = None
+    ):
+        self.provider = provider
+        self.model_name = model_name
+        self.api_key = api_key
+        self.base_url = base_url
         self.default_ollama_url = "http://localhost:11434"
         self.default_lm_studio_url = "http://localhost:1234/v1"
         self.default_9router_url = "http://localhost:20128/v1"
@@ -238,21 +248,23 @@ class LLMEngine:
         """
         Tạo phản hồi dạng Stream hỗ trợ đa nền tảng (9Router, Ollama, Gemini, OpenAI, Groq...).
         """
-        actual_provider = (provider or "").lower()
+        actual_provider = (provider or self.provider or "").lower()
         if not actual_provider:
-            if not is_private and (api_key or gemini_api_key):
+            if not is_private and (api_key or self.api_key or gemini_api_key):
                 actual_provider = "gemini"
             else:
                 actual_provider = "ollama"
 
-        actual_key = api_key or gemini_api_key or ""
-        actual_model = model_name or self.DEFAULT_MODELS.get(actual_provider, "")
+        actual_key = api_key or self.api_key or gemini_api_key or ""
+        actual_model = model_name or self.model_name or self.DEFAULT_MODELS.get(actual_provider, "")
         if actual_provider == "9router" and (not actual_model or actual_model.lower() == "default"):
             actual_model = "kr/claude-sonnet-4.5"
 
+        actual_base_url = base_url or self.base_url
+
         # 1. Xử lý Ollama Local
         if actual_provider == "ollama":
-            url = (base_url or self.default_ollama_url).rstrip("/")
+            url = (actual_base_url or self.default_ollama_url).rstrip("/")
             # Phải đảm bảo url không bị dính port của 9Router (20128) hay LM Studio (1234)
             if "20128" in url or "1234" in url or "openrouter" in url or "api.openai" in url:
                 url = "http://127.0.0.1:11434"
@@ -491,3 +503,10 @@ class LLMEngine:
             f"Câu hỏi của người dùng: {query}\n"
             f"Trả lời:"
         )
+
+    def generate_text(self, prompt: str, **kwargs) -> str:
+        """Trả về toàn bộ văn bản phản hồi dạng chuỗi (Non-streaming)."""
+        chunks = self.generate(prompt, **kwargs)
+        if isinstance(chunks, str):
+            return chunks
+        return "".join(chunks).strip()

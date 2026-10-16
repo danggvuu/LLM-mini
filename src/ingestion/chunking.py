@@ -1,16 +1,39 @@
+from typing import List, Dict, Any, Union
+from dataclasses import dataclass, field
 import re
-import numpy as np
-from typing import List, Dict, Any
-from .document_tree import DocumentNode, HeadingNode, ParagraphNode, TableNode, CodeBlockNode, ListItemNode, Node
-from ..utils.config import settings
+import uuid
 
-def cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
-    v1 = np.array(vec1)
-    v2 = np.array(vec2)
-    denom = np.linalg.norm(v1) * np.linalg.norm(v2)
-    if denom == 0:
-        return 0.0
-    return float(np.dot(v1, v2) / denom)
+from src.ingestion.schema import (
+    DocumentNode, NodeType, HeadingNode, ParagraphNode, TableNode, CodeBlockNode
+)
+from src.utils.logger import logger
+
+
+@dataclass
+class Chunk:
+    """Đại diện cho 1 đoạn dữ liệu hoàn chỉnh sẵn sàng đem đi Embedding."""
+    chunk_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    content: str = ""
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def __getitem__(self, item):
+        if item == "content":
+            return self.content
+        elif item == "metadata":
+            return self.metadata
+        elif item == "chunk_id":
+            return self.chunk_id
+        raise KeyError(item)
+
+    def get(self, item, default=None):
+        if item == "content":
+            return self.content
+        elif item == "metadata":
+            return self.metadata
+        elif item == "chunk_id":
+            return self.chunk_id
+        return default
+
 
 class RecursiveCharacterChunker:
     """Chia văn bản dựa trên số lượng ký tự đệ quy (Nhanh, cho CPU)."""
@@ -46,86 +69,155 @@ class RecursiveCharacterChunker:
             chunks.append(" ".join(current_chunk))
         return chunks
 
-class SemanticChunker:
-    """Chia văn bản dựa trên khoảng cách ngữ nghĩa (Cần GPU/MPS)."""
-    def __init__(self, embedder, threshold: float = 0.75):
-        self.embedder = embedder
-        self.threshold = threshold
-
-    def chunk_text(self, text: str) -> List[str]:
-        sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', text) if s.strip()]
-        if not sentences:
-            return []
-        if len(sentences) == 1:
-            return sentences
-            
-        embeddings = self.embedder.embed_documents(sentences)
-        
-        chunks = []
-        current_chunk = [sentences[0]]
-        
-        for i in range(1, len(sentences)):
-            sim = cosine_similarity(embeddings[i-1], embeddings[i])
-            if sim >= self.threshold and sum(len(s) for s in current_chunk) < 1500:
-                current_chunk.append(sentences[i])
-            else:
-                chunks.append(" ".join(current_chunk))
-                current_chunk = [sentences[i]]
-                
-        if current_chunk:
-            chunks.append(" ".join(current_chunk))
-            
-        return chunks
 
 class AdaptiveChunker:
-    """Tự động lựa chọn phương pháp Chunking phù hợp với phần cứng."""
-    
-    def __init__(self, embedder=None):
-        self.tier = self._get_hardware_tier()
-        
-        if self.tier in [1, 2] and embedder is not None:
-            print("[AdaptiveChunker] Chế độ GPU/MPS: Kích hoạt Semantic Chunking.")
-            self.chunker = SemanticChunker(embedder=embedder, threshold=0.75)
-        else:
-            print("[AdaptiveChunker] Chế độ Tốc độ cao: Kích hoạt Recursive Character Chunking.")
-            self.chunker = RecursiveCharacterChunker(
-                chunk_size=settings.chunk_size, 
-                chunk_overlap=settings.chunk_overlap
-            )
+    """
+    Hệ thống phân mảnh thông minh (Context-Aware + Buffer Merging):
+    - Gom các Paragraph ngắn / List items liền kề trong cùng 1 Heading lại với nhau.
+    - Bảo toàn nguyên vẹn Bảng (Table) và Khối Code (CodeBlock).
+    - Tự động đính kèm Breadcrumbs (Ngữ cảnh tiêu đề cha) vào đầu mỗi Chunk.
+    """
+    def __init__(self, chunk_size: int = 1000, chunk_overlap: int = 200, min_chunk_length: int = 40, embedder=None):
+        self.chunk_size = chunk_size
+        self.chunk_overlap = chunk_overlap
+        self.min_chunk_length = min_chunk_length
+        self.embedder = embedder
 
-    def _get_hardware_tier(self) -> int:
-        from ..utils.hardware_profiler import ModelZooManager
-        manager = ModelZooManager()
-        return manager.get_tier()
+    def chunk_text(self, text: str) -> List[str]:
+        """Chia văn bản dài thành các đoạn nhỏ theo câu hoàn chỉnh."""
+        if len(text) <= self.chunk_size:
+            return [text]
 
-    def process_document(self, document_node: DocumentNode) -> List[Dict[str, Any]]:
-        """Duyệt Cây Tài liệu (DFS) và chunking mọi Node nội dung (Paragraph, Table, CodeBlock, ListItem)."""
-        final_chunks = []
-        current_heading = ""
-        
-        def traverse(node: Node):
-            nonlocal current_heading
-            if isinstance(node, HeadingNode) and node.content.strip():
-                current_heading = node.content.strip()
+        sentences = re.split(r'(?<=[.!?])\s+|\n+', text)
+        chunks = []
+        current_chunk = ""
 
-            elif isinstance(node, (ParagraphNode, TableNode, CodeBlockNode, ListItemNode)) and node.content.strip():
-                raw_content = node.content.strip()
-                if isinstance(node, CodeBlockNode):
-                    lang = getattr(node, "language", "")
-                    raw_content = f"```{lang}\n{raw_content}\n```"
-                
-                text_chunks = self.chunker.chunk_text(raw_content)
-                for chunk_text in text_chunks:
-                    meta = node.metadata.copy()
-                    if current_heading and "heading_level_1" not in meta:
-                        meta["heading_level_1"] = current_heading
-                    final_chunks.append({
-                        "content": chunk_text,
-                        "metadata": meta
-                    })
-            
-            for child in node.children:
-                traverse(child)
+        for sentence in sentences:
+            if not sentence.strip():
+                continue
+            if len(current_chunk) + len(sentence) + 1 <= self.chunk_size:
+                current_chunk += (" " if current_chunk else "") + sentence
+            else:
+                if current_chunk:
+                    chunks.append(current_chunk.strip())
 
-        traverse(document_node)
-        return final_chunks
+                if len(sentence) > self.chunk_size:
+                    for i in range(0, len(sentence), max(1, self.chunk_size - self.chunk_overlap)):
+                        chunks.append(sentence[i:i + self.chunk_size].strip())
+                    current_chunk = ""
+                else:
+                    overlap_text = current_chunk[-self.chunk_overlap:] if len(current_chunk) > self.chunk_overlap else current_chunk
+                    current_chunk = (overlap_text + " " + sentence).strip()
+
+        if current_chunk:
+            chunks.append(current_chunk.strip())
+
+        return chunks
+
+    def process_document(self, doc_tree: DocumentNode) -> List[Chunk]:
+        logger.info(f"Bắt đầu phân mảnh tài liệu (Adaptive Buffer): {getattr(doc_tree, 'title', 'Tài liệu')}")
+        chunks: List[Chunk] = []
+        source_name = doc_tree.metadata.get("source", getattr(doc_tree, "title", "Tài liệu"))
+        notebook_id = doc_tree.metadata.get("notebook_id", "default")
+
+        def traverse(node: DocumentNode, current_breadcrumbs: List[str]):
+            breadcrumbs = list(current_breadcrumbs)
+            if isinstance(node, HeadingNode) and node.content:
+                breadcrumbs.append(node.content.strip())
+
+            context_prefix = " > ".join(breadcrumbs)
+            prefix_str = f"[{context_prefix}]\n" if context_prefix else ""
+
+            # Bộ đệm gom các ParagraphNode liên tiếp trong cùng một cấp node
+            paragraph_buffer: List[str] = []
+            buffer_pages: List[int] = []
+
+            def flush_paragraph_buffer():
+                nonlocal paragraph_buffer, buffer_pages
+                if not paragraph_buffer:
+                    return
+                merged_text = "\n".join(paragraph_buffer).strip()
+                paragraph_buffer = []
+                first_page = buffer_pages[0] if buffer_pages else getattr(node, "page_number", 1)
+                buffer_pages = []
+
+                if len(merged_text) < self.min_chunk_length and chunks:
+                    # Nếu đoạn gộp vẫn quá ngắn, nối vào chunk liền trước nếu cùng source
+                    chunks[-1].content += f"\n{merged_text}"
+                    return
+
+                sub_texts = self.chunk_text(merged_text)
+                for st in sub_texts:
+                    if not st.strip():
+                        continue
+                    chunks.append(Chunk(
+                        content=f"{prefix_str}{st}",
+                        metadata={
+                            "source": source_name,
+                            "type": "text",
+                            "breadcrumbs": context_prefix,
+                            "page": first_page,
+                            "notebook_id": notebook_id
+                        }
+                    ))
+
+            # Nếu bản thân node gốc là Paragraph/Table/Code (trường hợp không có Heading bọc ngoài)
+            if isinstance(node, ParagraphNode) and node.content.strip():
+                paragraph_buffer.append(node.content.strip())
+                buffer_pages.append(getattr(node, "page_number", 1))
+                flush_paragraph_buffer()
+
+            elif isinstance(node, TableNode):
+                table_content = getattr(node, "markdown", None) or node.content
+                if table_content and table_content.strip():
+                    chunks.append(Chunk(
+                        content=f"{prefix_str}Bảng dữ liệu:\n{table_content}",
+                        metadata={
+                            "source": source_name,
+                            "type": "table",
+                            "breadcrumbs": context_prefix,
+                            "page": getattr(node, "page_number", 1),
+                            "notebook_id": notebook_id
+                        }
+                    ))
+
+            elif isinstance(node, CodeBlockNode) and node.content.strip():
+                lang = getattr(node, "language", "text")
+                chunks.append(Chunk(
+                    content=f"{prefix_str}Đoạn mã ({lang}):\n```{lang}\n{node.content}\n```",
+                    metadata={
+                        "source": source_name,
+                        "type": "code",
+                        "language": lang,
+                        "breadcrumbs": context_prefix,
+                        "page": getattr(node, "page_number", 1),
+                        "notebook_id": notebook_id
+                    }
+                ))
+
+            # Duyệt qua các node con và gộp các ParagraphNode liên tiếp
+            for child in getattr(node, "children", []):
+                if isinstance(child, ParagraphNode):
+                    text = child.content.strip()
+                    if not text:
+                        continue
+                    current_len = sum(len(x) for x in paragraph_buffer)
+                    if current_len + len(text) + 1 <= self.chunk_size:
+                        paragraph_buffer.append(text)
+                        if getattr(child, "page_number", None):
+                            buffer_pages.append(child.page_number)
+                    else:
+                        flush_paragraph_buffer()
+                        paragraph_buffer.append(text)
+                        if getattr(child, "page_number", None):
+                            buffer_pages.append(child.page_number)
+                else:
+                    # Gặp Heading mới, Table hoặc CodeBlock thì xả buffer hiện tại trước
+                    flush_paragraph_buffer()
+                    traverse(child, breadcrumbs)
+
+            flush_paragraph_buffer()
+
+        traverse(doc_tree, [])
+        logger.info(f"Hoàn tất phân mảnh! Tổng số Chunks tạo ra: {len(chunks)}")
+        return chunks

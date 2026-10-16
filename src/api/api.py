@@ -8,7 +8,7 @@ if sys.stdout.encoding != 'utf-8':
 
 logger = logging.getLogger(__name__)
 
-from fastapi import FastAPI, File, UploadFile, BackgroundTasks, Form, HTTPException, Request, Response
+from fastapi import FastAPI, File, UploadFile, BackgroundTasks, Form, HTTPException, Request, Response, Depends
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,6 +29,7 @@ from src.learning.evaluator import Evaluator
 from src.learning.mindmap_generator import MindmapGenerator
 from src.learning.timeline_generator import TimelineOutlineGenerator
 from src.learning.doc_comparator import DocComparator
+from src.learning.critique_generator import CritiqueAndActionGenerator
 
 app = FastAPI(title="NotebookLM Mini API", version="2.0.0")
 
@@ -164,6 +165,11 @@ class PullModelRequest(BaseModel):
     model_name: str
     base_url: Optional[str] = None
 
+class StudioFilterRequest(BaseModel):
+    notebook_id: Optional[str] = None
+    source_filter: Optional[str] = None
+    selected_documents: Optional[List[str]] = None
+
 def resolve_llm_config(notebook: dict, override_provider: str = None, override_model: str = None) -> tuple:
     """
     Chuẩn hóa cấu hình LLM (provider, model_name, api_key, base_url, is_private)
@@ -239,6 +245,38 @@ def resolve_llm_config(notebook: dict, override_provider: str = None, override_m
     is_private = provider in ["ollama", "lm_studio", "local_ai"]
 
     return provider, model_name, api_key, base_url, is_private
+
+def get_notebook_id(request: Request, notebook_id: Optional[str] = None) -> str:
+    if notebook_id:
+        return notebook_id
+    header_val = request.headers.get("x-notebook-id")
+    if header_val:
+        return header_val
+    return "default"
+
+_NOTEBOOK_CACHE: Dict[str, Dict[str, Any]] = {}
+
+def get_notebook_engines(notebook_id: str = "default") -> Dict[str, Any]:
+    global _NOTEBOOK_CACHE
+    sm = get_session_manager()
+    notebook = sm.get_notebook(notebook_id) or {}
+    provider, model_name, api_key, base_url, is_private = resolve_llm_config(notebook)
+    llm = LLMEngine(provider=provider, model_name=model_name, api_key=api_key, base_url=base_url)
+    store = get_vector_store()
+    search = get_search_engine()
+    
+    _NOTEBOOK_CACHE[notebook_id] = {
+        "store": store,
+        "search": search,
+        "llm": llm,
+        "guide": GuideGenerator(llm, sm),
+        "mindmap": MindmapGenerator(llm, store),
+        "podcast": PodcastGenerator(llm, store),
+        "timeline": TimelineOutlineGenerator(llm, store),
+        "comparator": DocComparator(llm, store),
+        "critique": CritiqueAndActionGenerator(llm, store, notebook_id=notebook_id),
+    }
+    return _NOTEBOOK_CACHE[notebook_id]
 
 # --- Settings & Model Discovery APIs ---
 @app.get("/api/settings")
@@ -1314,6 +1352,83 @@ async def import_notebook_endpoint(payload: Dict[str, Any]):
             vs.index_chunks(formatted_chunks)
 
     return {"status": "success", "notebook_id": new_id}
+
+# --- Studio Analysis & Document Chunks Inspection APIs ---
+@app.get("/api/documents/chunks")
+@app.get("/api/notebooks/{notebook_id}/documents/chunks")
+async def get_document_chunks(
+    source: str,
+    notebook_id: str = Depends(get_notebook_id),
+    request: Request = None
+):
+    """Xem toàn bộ các đoạn (chunks) đã bóc tách của 1 tài liệu cụ thể."""
+    target_nb = notebook_id
+    if not target_nb or target_nb == "default":
+        if request and request.query_params.get("notebook_id"):
+            target_nb = request.query_params.get("notebook_id")
+    engines = get_notebook_engines(target_nb)
+    all_chunks = engines["store"].get_all_chunks(limit=500, notebook_id=target_nb)
+    matched = [
+        {
+            "chunk_id": c.get("chunk_id", ""),
+            "content": c.get("content", ""),
+            "page": c.get("metadata", {}).get("page", 1),
+            "breadcrumbs": c.get("metadata", {}).get("breadcrumbs", ""),
+            "type": c.get("metadata", {}).get("type", "text")
+        }
+        for c in all_chunks
+        if c.get("metadata", {}).get("source") == source
+        or c.get("metadata", {}).get("filename") == source
+        or c.get("metadata", {}).get("source_file") == source
+        or c.get("metadata", {}).get("title") == source
+    ]
+    if not matched:
+        raw_chunks = engines["store"].get_chunks_by_document(target_nb, source, limit=500)
+        matched = [
+            {
+                "chunk_id": f"fb-{i}",
+                "content": rc,
+                "page": 1,
+                "breadcrumbs": "",
+                "type": "text"
+            }
+            for i, rc in enumerate(raw_chunks)
+        ]
+    return {"source": source, "total_chunks": len(matched), "chunks": matched}
+
+
+@app.post("/api/studio/critique")
+@app.post("/api/notebooks/{notebook_id}/studio/critique")
+async def create_critique(
+    req: StudioFilterRequest = StudioFilterRequest(),
+    notebook_id: str = Depends(get_notebook_id),
+    request: Request = None
+):
+    """Tạo Báo cáo Phản biện & Tìm lỗ hổng (Peer Review)."""
+    target_nb = req.notebook_id or notebook_id
+    if not target_nb or target_nb == "default":
+        if request and request.headers.get("x-notebook-id"):
+            target_nb = request.headers.get("x-notebook-id")
+    engines = get_notebook_engines(target_nb)
+    source_filter = req.source_filter or (req.selected_documents[0] if req.selected_documents and len(req.selected_documents) == 1 else None)
+    return engines["critique"].generate_critique(source_filter=source_filter)
+
+
+@app.post("/api/studio/action-plan")
+@app.post("/api/notebooks/{notebook_id}/studio/action-plan")
+async def create_action_plan(
+    req: StudioFilterRequest = StudioFilterRequest(),
+    notebook_id: str = Depends(get_notebook_id),
+    request: Request = None
+):
+    """Tạo Kế hoạch hành động (Action Matrix & Checklist)."""
+    target_nb = req.notebook_id or notebook_id
+    if not target_nb or target_nb == "default":
+        if request and request.headers.get("x-notebook-id"):
+            target_nb = request.headers.get("x-notebook-id")
+    engines = get_notebook_engines(target_nb)
+    source_filter = req.source_filter or (req.selected_documents[0] if req.selected_documents and len(req.selected_documents) == 1 else None)
+    return engines["critique"].generate_action_plan(source_filter=source_filter)
 
 # --- Phục vụ Giao Diện React Frontend (SPA) ---
 FRONTEND_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "frontend", "dist")

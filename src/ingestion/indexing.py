@@ -1,7 +1,7 @@
 import os
 import uuid
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams, PointStruct
 from ..utils.config import settings
@@ -11,8 +11,12 @@ logger = logging.getLogger(__name__)
 class VectorStoreManager:
     """Quản lý việc lưu trữ Vector vào Qdrant Local và đồng bộ hóa BM25 Index."""
     
-    def __init__(self, embedder):
+    def __init__(self, embedder=None, notebook_id: str = "default"):
+        if embedder is None:
+            from src.ingestion.embedding import LocalEmbedder
+            embedder = LocalEmbedder()
         self.embedder = embedder
+        self.notebook_id = notebook_id
         
         # Tạo thư mục chứa database nếu chưa có
         os.makedirs(settings.storage_dir, exist_ok=True)
@@ -41,13 +45,22 @@ class VectorStoreManager:
         else:
             print(f"[Qdrant] Đã kết nối tới Collection: {self.collection_name}")
 
-    def index_chunks(self, chunks: List[Dict[str, Any]]):
+    def clear_all(self):
+        """Xóa toàn bộ dữ liệu trong collection hiện tại và khởi tạo lại."""
+        try:
+            self.client.delete_collection(collection_name=self.collection_name)
+            self._init_collection()
+            print(f"[Qdrant] Đã dọn dẹp toàn bộ dữ liệu trong collection {self.collection_name}")
+        except Exception as e:
+            logger.warning(f"Lỗi clear_all collection: {e}")
+
+    def index_chunks(self, chunks: List[Any]):
         """Nhúng và lưu các đoạn văn bản vào Database, đồng thời cập nhật BM25."""
         if not chunks:
             return
             
         print(f"[Qdrant] Đang tính toán Vector cho {len(chunks)} đoạn văn bản...")
-        texts = [chunk["content"] for chunk in chunks]
+        texts = [chunk["content"] if isinstance(chunk, dict) else chunk.content for chunk in chunks]
         embeddings = self.embedder.embed_documents(texts)
         
         def _clean_meta(meta_dict):
@@ -63,14 +76,17 @@ class VectorStoreManager:
 
         points = []
         for i, chunk in enumerate(chunks):
-            point_id = str(uuid.uuid4())
+            c_content = chunk["content"] if isinstance(chunk, dict) else chunk.content
+            c_meta = chunk.get("metadata", {}) if isinstance(chunk, dict) else getattr(chunk, "metadata", {})
+            c_id = (chunk.get("chunk_id") if isinstance(chunk, dict) else getattr(chunk, "chunk_id", None)) or str(uuid.uuid4())
             cleaned_payload = {
-                "chunk_id": point_id,
-                "content": str(chunk["content"]),
-                **_clean_meta(chunk.get("metadata", {}))
+                "chunk_id": c_id,
+                "content": str(c_content),
+                "notebook_id": c_meta.get("notebook_id", self.notebook_id),
+                **_clean_meta(c_meta)
             }
             point = PointStruct(
-                id=point_id,
+                id=c_id,
                 vector=embeddings[i],
                 payload=cleaned_payload
             )
@@ -89,13 +105,14 @@ class VectorStoreManager:
         # Đồng bộ hóa sang BM25 Index cho Hybrid Search
         try:
             from ..retrieval.bm25_index import get_bm25_index, BM25Document
-            notebook_id = chunks[0]["metadata"].get("notebook_id", "default")
+            first_meta = chunks[0].get("metadata", {}) if isinstance(chunks[0], dict) else getattr(chunks[0], "metadata", {})
+            notebook_id = first_meta.get("notebook_id", self.notebook_id)
             bm25 = get_bm25_index(notebook_id)
             bm25_docs = [
                 BM25Document(
                     chunk_id=points[i].id,
-                    text=chunks[i]["content"],
-                    metadata=chunks[i]["metadata"]
+                    text=chunks[i]["content"] if isinstance(chunks[i], dict) else chunks[i].content,
+                    metadata=chunks[i].get("metadata", {}) if isinstance(chunks[i], dict) else getattr(chunks[i], "metadata", {})
                 )
                 for i in range(len(chunks))
             ]
@@ -138,7 +155,8 @@ class VectorStoreManager:
                     FieldCondition(key="filename", match=MatchValue(value=filename)),
                     FieldCondition(key="source_file", match=MatchValue(value=filename)),
                     FieldCondition(key="title", match=MatchValue(value=filename)),
-                    FieldCondition(key="source_url", match=MatchValue(value=filename))
+                    FieldCondition(key="source_url", match=MatchValue(value=filename)),
+                    FieldCondition(key="source", match=MatchValue(value=filename))
                 ]
             )
         )
@@ -156,13 +174,14 @@ class VectorStoreManager:
         
         query_vector = self.embedder.embed_query(query)
         
+        target_nb = notebook_id or getattr(self, "notebook_id", None)
         query_filter = None
-        if notebook_id:
+        if target_nb and target_nb != "default":
             query_filter = Filter(
                 must=[
                     FieldCondition(
                         key="notebook_id",
-                        match=MatchValue(value=notebook_id)
+                        match=MatchValue(value=target_nb)
                     )
                 ]
             )
@@ -184,6 +203,57 @@ class VectorStoreManager:
             })
         return results
 
+    def get_all_chunks(self, limit: int = 500, notebook_id: str = None) -> List[Dict[str, Any]]:
+        """Lấy tất cả các chunk trong collection hoặc lọc theo notebook_id."""
+        from qdrant_client.http.models import Filter, FieldCondition, MatchValue
+        target_nb = notebook_id or getattr(self, "notebook_id", None)
+        scroll_filter = None
+        if target_nb and target_nb != "default":
+            scroll_filter = Filter(
+                must=[
+                    FieldCondition(key="notebook_id", match=MatchValue(value=target_nb))
+                ]
+            )
+        chunks = []
+        try:
+            records, _ = self.client.scroll(
+                collection_name=self.collection_name,
+                scroll_filter=scroll_filter,
+                limit=limit,
+                with_payload=True,
+                with_vectors=False
+            )
+            for r in records:
+                payload = r.payload or {}
+                chunks.append({
+                    "chunk_id": payload.get("chunk_id", str(r.id)),
+                    "content": payload.get("content", ""),
+                    "metadata": {k: v for k, v in payload.items() if k != "content"}
+                })
+        except Exception as e:
+            logger.warning(f"Lỗi scroll all chunks từ Qdrant: {e}")
+
+        # Fallback nếu scroll theo notebook_id không ra kết quả (ví dụ dữ liệu cũ chưa có trường notebook_id)
+        if not chunks and target_nb and target_nb != "default":
+            try:
+                records, _ = self.client.scroll(
+                    collection_name=self.collection_name,
+                    limit=limit,
+                    with_payload=True,
+                    with_vectors=False
+                )
+                for r in records:
+                    payload = r.payload or {}
+                    chunks.append({
+                        "chunk_id": payload.get("chunk_id", str(r.id)),
+                        "content": payload.get("content", ""),
+                        "metadata": {k: v for k, v in payload.items() if k != "content"}
+                    })
+            except Exception as e:
+                logger.warning(f"Lỗi scroll fallback Qdrant: {e}")
+
+        return chunks
+
     def get_chunks_by_document(self, notebook_id: str, filename: str, limit: int = 100) -> List[str]:
         """Lấy danh sách các chunk văn bản thuộc về một tài liệu cụ thể trong notebook."""
         from qdrant_client.http.models import Filter, FieldCondition, MatchValue
@@ -197,7 +267,8 @@ class VectorStoreManager:
                     FieldCondition(key="filename", match=MatchValue(value=filename)),
                     FieldCondition(key="source_file", match=MatchValue(value=filename)),
                     FieldCondition(key="title", match=MatchValue(value=filename)),
-                    FieldCondition(key="source_url", match=MatchValue(value=filename))
+                    FieldCondition(key="source_url", match=MatchValue(value=filename)),
+                    FieldCondition(key="source", match=MatchValue(value=filename))
                 ]
             )
             records, _ = self.client.scroll(

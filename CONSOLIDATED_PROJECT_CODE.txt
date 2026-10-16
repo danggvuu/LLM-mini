@@ -1,6 +1,6 @@
 ================================================================================
 NOTEBOOKLM MINI - CONSOLIDATED SOURCE CODE REPOSITORY
-TOTAL FILES: 122
+TOTAL FILES: 128
 ================================================================================
 
 
@@ -7664,7 +7664,7 @@ import {
   Link as LinkIcon, Plus, ArrowLeft, Settings, Cpu, Cloud, Award, Sparkles,
   Copy, Download, Eye, SlidersHorizontal, FileDown, Sun, Moon, Mic, MicOff,
   Search, HelpCircle, Network, Scale, Clock, Share2, Flame, ArrowUp, ArrowDown,
-  Square
+  Square, ShieldAlert, ClipboardCheck
 } from 'lucide-react';
 import SettingsModal from '../components/SettingsModal';
 import QuizletModal from '../components/QuizletModal';
@@ -7792,6 +7792,21 @@ function Studio() {
   // Citation highlight snippet in preview
   const [highlightSnippet, setHighlightSnippet] = useState(null);
 
+  // Source Inspector Modal State (Chunks viewer)
+  const [inspectDoc, setInspectDoc] = useState(null);
+  const [docChunks, setDocChunks] = useState([]);
+  const [loadingChunks, setLoadingChunks] = useState(false);
+  const [chunkSearch, setChunkSearch] = useState('');
+
+  // Critique & Action Plan State
+  const [critiqueModal, setCritiqueModal] = useState({ isOpen: false, type: '', title: '', content: '', loading: false });
+
+  // Tools definition for Studio Analysis
+  const tools = [
+    { id: 'critique', name: 'Phản biện AI', desc: 'Tìm lỗ hổng & góc nhìn phản biện', icon: ShieldAlert, endpoint: '/api/studio/critique', color: 'text-rose-600', bg: 'bg-rose-50' },
+    { id: 'action_plan', name: 'Kế hoạch hành động', desc: 'Action Matrix & Checklist thực thi', icon: ClipboardCheck, endpoint: '/api/studio/action-plan', color: 'text-lime-600', bg: 'bg-lime-50' },
+  ];
+
   // Suggested questions extracted from studyGuide.faq
   const suggestedQuestions = useMemo(() => {
     if (!studyGuide?.faq) return [];
@@ -7840,6 +7855,8 @@ function Studio() {
         setShowShareModal(false);
         setShowModelManagerModal(false);
         setShowPasteTextModal(false);
+        setInspectDoc(null);
+        setCritiqueModal(prev => ({ ...prev, isOpen: false }));
         return;
       }
 
@@ -8397,6 +8414,56 @@ function Studio() {
     }
   };
 
+  const handleInspectChunks = async (sourceName, e) => {
+    if (e) e.stopPropagation();
+    setInspectDoc(sourceName);
+    setLoadingChunks(true);
+    setChunkSearch('');
+    try {
+      const res = await fetch(`/api/documents/chunks?source=${encodeURIComponent(sourceName)}&notebook_id=${activeNotebook?.id || ''}`);
+      if (res.ok) {
+        const data = await res.json();
+        setDocChunks(data.chunks || []);
+      } else {
+        setDocChunks([]);
+      }
+    } catch (err) {
+      console.error("Lỗi tải chunks:", err);
+      setDocChunks([]);
+    } finally {
+      setLoadingChunks(false);
+    }
+  };
+
+  const handleRunStudioTool = async (toolId) => {
+    const isCritique = toolId === 'critique';
+    const endpoint = isCritique ? '/api/studio/critique' : '/api/studio/action-plan';
+    const title = isCritique ? 'Báo Cáo Phản Biện & Tìm Lỗ Hổng (Peer Review)' : 'Kế Hoạch Hành Động Thực Tiễn (Action Plan)';
+    
+    setCritiqueModal({ isOpen: true, type: toolId, title, content: '', loading: true });
+    
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          notebook_id: activeNotebook?.id,
+          source_filter: selectedDocs.size === 1 ? Array.from(selectedDocs)[0] : null,
+          selected_documents: Array.from(selectedDocs)
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setCritiqueModal({ isOpen: true, type: toolId, title, content: data.content || data.error || 'Không có kết quả phân tích.', loading: false });
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setCritiqueModal({ isOpen: true, type: toolId, title, content: err.detail || 'Lỗi khi gọi API phân tích.', loading: false });
+      }
+    } catch (e) {
+      setCritiqueModal({ isOpen: true, type: toolId, title, content: 'Lỗi kết nối máy chủ: ' + e.message, loading: false });
+    }
+  };
+
   const deleteNotebook = async () => {
     if (!activeNotebook) return;
     if (!window.confirm("Bạn có chắc chắn muốn xóa sổ tay này và toàn bộ dữ liệu bên trong không?")) return;
@@ -8855,11 +8922,18 @@ function Studio() {
                     </div>
                     <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition shrink-0" onClick={e => e.stopPropagation()}>
                       <button 
-                        onClick={() => handlePreviewDocument(doc.filename)}
-                        className="p-1.5 rounded text-gray-400 hover:text-blue-400 hover:bg-white/10 transition"
-                        title="Xem nội dung trích xuất"
+                        onClick={(e) => handleInspectChunks(doc.filename, e)}
+                        className="p-1.5 rounded text-gray-400 hover:text-emerald-400 hover:bg-emerald-500/10 transition"
+                        title="Xem các đoạn (Chunks) đã bóc tách"
                       >
                         <Eye size={13} />
+                      </button>
+                      <button 
+                        onClick={() => handlePreviewDocument(doc.filename)}
+                        className="p-1.5 rounded text-gray-400 hover:text-blue-400 hover:bg-white/10 transition"
+                        title="Xem toàn văn trích xuất"
+                      >
+                        <FileText size={13} />
                       </button>
                       <button 
                         onClick={() => deleteDocument(doc.filename)}
@@ -9787,6 +9861,44 @@ function Studio() {
           )}
         </div>
 
+        {/* Feature: Phản biện AI (Deep Critique) */}
+        <div className="p-4 rounded-2xl bg-[#181a20] border border-white/10">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-sm font-bold text-rose-400 flex items-center gap-1.5">
+              <ShieldAlert size={16} /> Phản Biện AI (Peer Review)
+            </h3>
+          </div>
+          <p className="text-xs text-gray-400 mb-3 leading-relaxed">
+            Tìm điểm mù, lỗ hổng lập luận, thiếu sót dữ liệu và các câu hỏi phản biện sắc bén.
+          </p>
+          <button
+            onClick={() => handleRunStudioTool('critique')}
+            disabled={documents.length === 0}
+            className="w-full bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 font-semibold text-xs py-2.5 rounded-xl transition disabled:opacity-40 flex justify-center items-center gap-2 cursor-pointer"
+          >
+            <ShieldAlert size={14} /> Tạo Báo cáo Phản biện
+          </button>
+        </div>
+
+        {/* Feature: Kế hoạch hành động (Action Plan) */}
+        <div className="p-4 rounded-2xl bg-[#181a20] border border-white/10">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-sm font-bold text-lime-400 flex items-center gap-1.5">
+              <ClipboardCheck size={16} /> Kế Hoạch Hành Động
+            </h3>
+          </div>
+          <p className="text-xs text-gray-400 mb-3 leading-relaxed">
+            Chuyển hóa lý thuyết thành ma trận hành động (Action Matrix) và checklist thực thi.
+          </p>
+          <button
+            onClick={() => handleRunStudioTool('action_plan')}
+            disabled={documents.length === 0}
+            className="w-full bg-lime-500/10 hover:bg-lime-500/20 text-lime-300 border border-lime-500/30 font-semibold text-xs py-2.5 rounded-xl transition disabled:opacity-40 flex justify-center items-center gap-2 cursor-pointer"
+          >
+            <ClipboardCheck size={14} /> Lập Kế hoạch Thực thi
+          </button>
+        </div>
+
       </div>
 
       {/* MODAL: QUIZ */}
@@ -10375,6 +10487,111 @@ function Studio() {
               >
                 Nạp vào Sổ tay
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Xem Chunks Gốc của Tài liệu (Source Inspector Modal) */}
+      {inspectDoc && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in font-sans">
+          <div className="bg-[#181a20] rounded-2xl max-w-3xl w-full max-h-[85vh] flex flex-col shadow-2xl border border-white/15 overflow-hidden">
+            <div className="p-4 bg-white/[0.03] border-b border-white/10 flex items-center justify-between">
+              <div className="flex items-center space-x-2.5 truncate">
+                <Eye className="w-5 h-5 text-emerald-400 shrink-0" />
+                <div className="truncate">
+                  <h3 className="font-bold text-sm text-white truncate">Chi tiết Phân mảnh (Chunks): {inspectDoc}</h3>
+                  <p className="text-[11px] text-gray-400">Tổng cộng {docChunks.length} đoạn dữ liệu đã lưu trong Vector & BM25</p>
+                </div>
+              </div>
+              <button onClick={() => setInspectDoc(null)} className="p-1.5 text-gray-400 hover:text-white rounded-lg">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-3 border-b border-white/10 bg-white/[0.02]">
+              <input
+                type="text"
+                value={chunkSearch}
+                onChange={(e) => setChunkSearch(e.target.value)}
+                placeholder="Lọc nhanh nội dung chunk theo từ khóa..."
+                className="w-full px-3 py-1.5 text-xs bg-black/40 text-white border border-white/15 rounded-lg focus:outline-none focus:border-blue-500"
+              />
+            </div>
+
+            <div className="p-4 overflow-y-auto flex-1 space-y-3 scrollbar-hide">
+              {loadingChunks ? (
+                <div className="flex items-center justify-center py-12 text-gray-400 text-sm">
+                  <Loader className="w-5 h-5 animate-spin mr-2 text-blue-500" /> Đang tải các đoạn văn bản...
+                </div>
+              ) : docChunks.length === 0 ? (
+                <div className="text-center py-12 text-gray-500 text-xs">Không tìm thấy chunk nào cho tài liệu này.</div>
+              ) : (
+                docChunks
+                  .filter(c => !chunkSearch.trim() || (c.content && c.content.toLowerCase().includes(chunkSearch.toLowerCase())))
+                  .map((chunk, i) => (
+                    <div key={chunk.chunk_id || i} className="bg-white/[0.03] p-3.5 rounded-xl border border-white/10 shadow-sm">
+                      <div className="flex items-center justify-between text-[11px] text-gray-400 mb-1.5 pb-1.5 border-b border-white/5">
+                        <span className="font-semibold text-blue-400">Chunk #{i + 1} ({chunk.type || 'text'})</span>
+                        <div className="flex items-center gap-2">
+                          {chunk.breadcrumbs && (
+                            <span className="text-[10px] bg-white/5 px-2 py-0.5 rounded text-gray-300 max-w-[200px] truncate" title={chunk.breadcrumbs}>
+                              {chunk.breadcrumbs}
+                            </span>
+                          )}
+                          <span>Trang: {chunk.page || 1} • {(chunk.content || '').length} ký tự</span>
+                        </div>
+                      </div>
+                      <pre className="text-xs text-gray-300 whitespace-pre-wrap font-sans leading-relaxed">{chunk.content}</pre>
+                    </div>
+                  ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Phản biện AI & Kế hoạch hành động */}
+      {critiqueModal.isOpen && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in font-sans">
+          <div className="bg-[#181a20] rounded-2xl max-w-3xl w-full max-h-[85vh] flex flex-col shadow-2xl border border-white/15 overflow-hidden">
+            <div className={`p-4 border-b border-white/10 flex items-center justify-between ${critiqueModal.type === 'critique' ? 'bg-rose-500/10' : 'bg-lime-500/10'}`}>
+              <div className="flex items-center space-x-2.5 truncate">
+                {critiqueModal.type === 'critique' ? (
+                  <ShieldAlert className="w-5 h-5 text-rose-400 shrink-0" />
+                ) : (
+                  <ClipboardCheck className="w-5 h-5 text-lime-400 shrink-0" />
+                )}
+                <h3 className="font-bold text-sm text-white truncate">{critiqueModal.title}</h3>
+              </div>
+              <div className="flex items-center gap-2">
+                {critiqueModal.content && !critiqueModal.loading && (
+                  <button 
+                    onClick={() => {
+                      navigator.clipboard.writeText(critiqueModal.content);
+                      alert("Đã sao chép nội dung vào Clipboard!");
+                    }}
+                    className="p-1.5 text-gray-400 hover:text-white rounded-lg hover:bg-white/10 transition"
+                    title="Sao chép nội dung"
+                  >
+                    <Copy size={16} />
+                  </button>
+                )}
+                <button onClick={() => setCritiqueModal(prev => ({ ...prev, isOpen: false }))} className="p-1.5 text-gray-400 hover:text-white rounded-lg">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="p-5 overflow-y-auto flex-1 scrollbar-hide text-sm text-gray-200">
+              {critiqueModal.loading ? (
+                <div className="flex flex-col items-center justify-center py-16 gap-3 text-gray-400">
+                  <Loader className="w-7 h-7 animate-spin text-purple-400" />
+                  <p className="text-xs">Đang đọc tài liệu và phân tích chuyên sâu...</p>
+                </div>
+              ) : (
+                <MarkdownRenderer content={critiqueModal.content} isDark={isDark} />
+              )}
             </div>
           </div>
         </div>
@@ -12586,7 +12803,7 @@ if sys.stdout.encoding != 'utf-8':
 
 logger = logging.getLogger(__name__)
 
-from fastapi import FastAPI, File, UploadFile, BackgroundTasks, Form, HTTPException, Request, Response
+from fastapi import FastAPI, File, UploadFile, BackgroundTasks, Form, HTTPException, Request, Response, Depends
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -12607,6 +12824,7 @@ from src.learning.evaluator import Evaluator
 from src.learning.mindmap_generator import MindmapGenerator
 from src.learning.timeline_generator import TimelineOutlineGenerator
 from src.learning.doc_comparator import DocComparator
+from src.learning.critique_generator import CritiqueAndActionGenerator
 
 app = FastAPI(title="NotebookLM Mini API", version="2.0.0")
 
@@ -12742,6 +12960,11 @@ class PullModelRequest(BaseModel):
     model_name: str
     base_url: Optional[str] = None
 
+class StudioFilterRequest(BaseModel):
+    notebook_id: Optional[str] = None
+    source_filter: Optional[str] = None
+    selected_documents: Optional[List[str]] = None
+
 def resolve_llm_config(notebook: dict, override_provider: str = None, override_model: str = None) -> tuple:
     """
     Chuẩn hóa cấu hình LLM (provider, model_name, api_key, base_url, is_private)
@@ -12817,6 +13040,38 @@ def resolve_llm_config(notebook: dict, override_provider: str = None, override_m
     is_private = provider in ["ollama", "lm_studio", "local_ai"]
 
     return provider, model_name, api_key, base_url, is_private
+
+def get_notebook_id(request: Request, notebook_id: Optional[str] = None) -> str:
+    if notebook_id:
+        return notebook_id
+    header_val = request.headers.get("x-notebook-id")
+    if header_val:
+        return header_val
+    return "default"
+
+_NOTEBOOK_CACHE: Dict[str, Dict[str, Any]] = {}
+
+def get_notebook_engines(notebook_id: str = "default") -> Dict[str, Any]:
+    global _NOTEBOOK_CACHE
+    sm = get_session_manager()
+    notebook = sm.get_notebook(notebook_id) or {}
+    provider, model_name, api_key, base_url, is_private = resolve_llm_config(notebook)
+    llm = LLMEngine(provider=provider, model_name=model_name, api_key=api_key, base_url=base_url)
+    store = get_vector_store()
+    search = get_search_engine()
+    
+    _NOTEBOOK_CACHE[notebook_id] = {
+        "store": store,
+        "search": search,
+        "llm": llm,
+        "guide": GuideGenerator(llm, sm),
+        "mindmap": MindmapGenerator(llm, store),
+        "podcast": PodcastGenerator(llm, store),
+        "timeline": TimelineOutlineGenerator(llm, store),
+        "comparator": DocComparator(llm, store),
+        "critique": CritiqueAndActionGenerator(llm, store, notebook_id=notebook_id),
+    }
+    return _NOTEBOOK_CACHE[notebook_id]
 
 # --- Settings & Model Discovery APIs ---
 @app.get("/api/settings")
@@ -13893,6 +14148,83 @@ async def import_notebook_endpoint(payload: Dict[str, Any]):
 
     return {"status": "success", "notebook_id": new_id}
 
+# --- Studio Analysis & Document Chunks Inspection APIs ---
+@app.get("/api/documents/chunks")
+@app.get("/api/notebooks/{notebook_id}/documents/chunks")
+async def get_document_chunks(
+    source: str,
+    notebook_id: str = Depends(get_notebook_id),
+    request: Request = None
+):
+    """Xem toàn bộ các đoạn (chunks) đã bóc tách của 1 tài liệu cụ thể."""
+    target_nb = notebook_id
+    if not target_nb or target_nb == "default":
+        if request and request.query_params.get("notebook_id"):
+            target_nb = request.query_params.get("notebook_id")
+    engines = get_notebook_engines(target_nb)
+    all_chunks = engines["store"].get_all_chunks(limit=500, notebook_id=target_nb)
+    matched = [
+        {
+            "chunk_id": c.get("chunk_id", ""),
+            "content": c.get("content", ""),
+            "page": c.get("metadata", {}).get("page", 1),
+            "breadcrumbs": c.get("metadata", {}).get("breadcrumbs", ""),
+            "type": c.get("metadata", {}).get("type", "text")
+        }
+        for c in all_chunks
+        if c.get("metadata", {}).get("source") == source
+        or c.get("metadata", {}).get("filename") == source
+        or c.get("metadata", {}).get("source_file") == source
+        or c.get("metadata", {}).get("title") == source
+    ]
+    if not matched:
+        raw_chunks = engines["store"].get_chunks_by_document(target_nb, source, limit=500)
+        matched = [
+            {
+                "chunk_id": f"fb-{i}",
+                "content": rc,
+                "page": 1,
+                "breadcrumbs": "",
+                "type": "text"
+            }
+            for i, rc in enumerate(raw_chunks)
+        ]
+    return {"source": source, "total_chunks": len(matched), "chunks": matched}
+
+
+@app.post("/api/studio/critique")
+@app.post("/api/notebooks/{notebook_id}/studio/critique")
+async def create_critique(
+    req: StudioFilterRequest = StudioFilterRequest(),
+    notebook_id: str = Depends(get_notebook_id),
+    request: Request = None
+):
+    """Tạo Báo cáo Phản biện & Tìm lỗ hổng (Peer Review)."""
+    target_nb = req.notebook_id or notebook_id
+    if not target_nb or target_nb == "default":
+        if request and request.headers.get("x-notebook-id"):
+            target_nb = request.headers.get("x-notebook-id")
+    engines = get_notebook_engines(target_nb)
+    source_filter = req.source_filter or (req.selected_documents[0] if req.selected_documents and len(req.selected_documents) == 1 else None)
+    return engines["critique"].generate_critique(source_filter=source_filter)
+
+
+@app.post("/api/studio/action-plan")
+@app.post("/api/notebooks/{notebook_id}/studio/action-plan")
+async def create_action_plan(
+    req: StudioFilterRequest = StudioFilterRequest(),
+    notebook_id: str = Depends(get_notebook_id),
+    request: Request = None
+):
+    """Tạo Kế hoạch hành động (Action Matrix & Checklist)."""
+    target_nb = req.notebook_id or notebook_id
+    if not target_nb or target_nb == "default":
+        if request and request.headers.get("x-notebook-id"):
+            target_nb = request.headers.get("x-notebook-id")
+    engines = get_notebook_engines(target_nb)
+    source_filter = req.source_filter or (req.selected_documents[0] if req.selected_documents and len(req.selected_documents) == 1 else None)
+    return engines["critique"].generate_action_plan(source_filter=source_filter)
+
 # --- Phục vụ Giao Diện React Frontend (SPA) ---
 FRONTEND_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "frontend", "dist")
 
@@ -14765,148 +15097,54 @@ class RagasEvaluator:
 # FILE: src/evaluation/run_chunking.py
 # ==============================================================================
 
-﻿import json
-import csv
-import pandas as pd
-from pathlib import Path
-from typing import List, Dict, Any
-from src.utils.config import settings
-from src.schemas import RagAnswer
-from src.indexing import ingest
-from src.rag import answer
-from src.store import get_embeddings
-from src.evaluation.chunking_strategies import (
-    ChunkingStrategy, 
-    RecursiveChunker, 
-    SemanticChunkerWrapper, 
-    _RECURSIVE_CONFIGS, 
-    _SEMANTIC_CONFIGS
-)
-from src.evaluation.ragas_evaluator import run_evaluation
+import time
+import sys
+import os
 
-def summary_metrics(df: pd.DataFrame) -> Dict[str, float]:
-    metrics = ["faithfulness", "answer_relevancy", "context_precision", "context_recall"]
-    res = {}
-    for m in metrics:
-        if m in df.columns:
-            res[m] = float(df[m].mean())
-    return res
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-def write_json(path: Path, data: Any):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+from src.ingestion.router import DocumentRouter
+from src.ingestion.chunking import AdaptiveChunker
+from src.retrieval.vector_store import VectorStoreManager
+from src.retrieval.search_engine import SearchEngine
 
-def _evaluate_strategy(
-    strategy: ChunkingStrategy, 
-    output_dir: Path, 
-    test_cases: List[Dict[str, str]]
-) -> Dict[str, Any]:
-    collection_name = f"{settings.qdrant_collection}__{strategy.strategy_id}"
-    chunk_count = ingest(
-        recreate=True, 
-        collection_name=collection_name, 
-        chunker=strategy.chunker
-    )
-    
-    result_out: Dict[str, Any] = {
-        "strategy_id": strategy.strategy_id,
-        "chunk_count": chunk_count,
-        "summary_metrics": {},
-    }
-    
-    try:
-        def answer_fn(q: str) -> RagAnswer:
-            return answer(q, collection_name=collection_name)
-            
-        result = run_evaluation(
-            test_cases, 
-            answer_fn=answer_fn, 
-            llm_provider=settings.llm_provider
-        )
-        df = result.to_pandas()
-        result_out["summary_metrics"] = summary_metrics(df)
-        
-    except Exception as exc:
-        result_out["error"] = str(exc)
-        
-    write_json(output_dir / f"{strategy.strategy_id}.json", result_out)
-    return result_out
+TEST_Queries = [
+    "Kiến trúc của hệ thống gồm những thành phần nào?",
+    "Phương pháp đánh giá mô hình được thực hiện ra sao?",
+]
 
-def load_test_cases(csv_path: Path) -> List[Dict[str, str]]:
-    cases = []
-    if not csv_path.exists():
-        return cases
-    with open(csv_path, mode="r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            cases.append({
-                "question": row["question"],
-                "ground_truth": row["ground_truth"]
-            })
-    return cases
 
-def main():
-    csv_path = Path(__file__).parent / "benchmark_rag.csv"
-    test_cases = load_test_cases(csv_path)
-    if not test_cases:
-        print(f"No test cases found in {csv_path}. Please populate the benchmark.")
-        return
-        
-    output_dir = Path("storage/evaluation/chunking")
-    output_dir.mkdir(parents=True, exist_ok=True)
-    
-    strategies = []
-    
-    # 1. Load Recursive Strategies
-    for sid, size, overlap in _RECURSIVE_CONFIGS:
-        chunker = RecursiveChunker(chunk_size=size, chunk_overlap=overlap)
-        strategies.append(
-            ChunkingStrategy(
-                strategy_id=sid, 
-                chunker=chunker, 
-                params={"size": size, "overlap": overlap}
-            )
-        )
-        
-    # 2. Load Semantic Strategies
-    embeddings = get_embeddings()
-    for sid, btype in _SEMANTIC_CONFIGS:
-        chunker = SemanticChunkerWrapper(embeddings=embeddings, breakpoint_type=btype)
-        strategies.append(
-            ChunkingStrategy(
-                strategy_id=sid, 
-                chunker=chunker, 
-                params={"breakpoint_type": btype}
-            )
-        )
-        
-    print(f"Loaded {len(strategies)} chunking strategies for evaluation.")
-    
-    results = []
-    for s in strategies:
-        print(f"\nEvaluating strategy: {s.strategy_id}...")
-        res = _evaluate_strategy(s, output_dir, test_cases)
-        results.append(res)
-        print(f"Strategy {s.strategy_id} completed. Metrics: {res.get('summary_metrics', {})}")
-        
-    # Print summary table
-    print("\n" + "="*50)
-    print("CHUNKING EVALUATION SUMMARY")
-    print("="*50)
-    print(f"{'Strategy ID':<25} | {'Chunks':<6} | {'Faith.':<6} | {'Relev.':<6} | {'Prec.':<6} | {'Recall':<6}")
-    print("-"*50)
-    for r in results:
-        m = r.get("summary_metrics", {})
-        err = r.get("error")
-        if err:
-            print(f"{r['strategy_id']:<25} | Error: {err[:35]}...")
-        else:
-            print(f"{r['strategy_id']:<25} | {r['chunk_count']:<6} | {m.get('faithfulness', 0.0):.4f} | {m.get('answer_relevancy', 0.0):.4f} | {m.get('context_precision', 0.0):.4f} | {m.get('context_recall', 0.0):.4f}")
-    print("="*50)
+def evaluate_chunking(file_path: str):
+    configs = [
+        {"chunk_size": 500, "chunk_overlap": 50},
+        {"chunk_size": 1000, "chunk_overlap": 200},
+        {"chunk_size": 1500, "chunk_overlap": 300},
+    ]
+    parser = DocumentRouter.get_parser(file_path)
+    doc_tree = parser.parse(file_path)
+
+    print(f"=== ĐÁNH GIÁ CHUNKING TRÊN: {file_path} ===")
+    for cfg in configs:
+        nb_id = f"eval_chunk_{cfg['chunk_size']}"
+        chunker = AdaptiveChunker(**cfg)
+        t0 = time.time()
+        chunks = chunker.process_document(doc_tree)
+        store = VectorStoreManager(notebook_id=nb_id)
+        store.clear_all()
+        store.index_chunks(chunks)
+        search_engine = SearchEngine(store)
+
+        avg_len = sum(len(c.content) for c in chunks) / max(1, len(chunks))
+        print(f"\n[Config {cfg}] -> Số chunks: {len(chunks)} | Độ dài TB: {avg_len:.0f} ký tự | Index time: {time.time() - t0:.2f}s")
+        for q in TEST_Queries:
+            res = search_engine.search(q, top_k=3)
+            top_score = res[0].get("rerank_score", 0.0) if res else 0.0
+            print(f"  - Query: '{q}' | Top-1 Rerank Score: {top_score:.4f}")
+
 
 if __name__ == "__main__":
-    main()
+    target = sys.argv[1] if len(sys.argv) > 1 else "README.md"
+    evaluate_chunking(target)
 
 
 
@@ -14914,112 +15152,48 @@ if __name__ == "__main__":
 # FILE: src/evaluation/run_reranking.py
 # ==============================================================================
 
-﻿import csv
-from pathlib import Path
-from typing import List, Dict, Any
-import pandas as pd
-from sentence_transformers import CrossEncoder
-from src.utils.config import settings
-from src.schemas import RagAnswer
-from src.rag import ANSWER_TEMPLATE, format_citations, render_prompt, retrieve
-from src.llm import invoke_llm
-from src.evaluation.ragas_evaluator import run_evaluation, summary_metrics
-from src.evaluation.run_chunking import load_test_cases, write_json
+import sys
+import os
 
-RERANKER_MODEL = "BAAI/bge-reranker-v2-m3"
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-def answer_with_reranker(
-    question: str,
-    collection_name: str,
-    reranker: CrossEncoder,
-    initial_k: int = 15,
-    rerank_k: int = 5,
-    filters: dict = None,
-) -> RagAnswer:
-    # Giai Ä‘oáº¡n 1: Truy xuáº¥t thÃ´ (initial_k)
-    chunks = retrieve(question, k=initial_k, filters=filters, collection_name=collection_name)
-    if not chunks:
-        return RagAnswer(
-            question=question,
-            answer="TÃ´i khÃ´ng cÃ³ Ä‘á»§ thÃ´ng tin trong ngá»¯ cáº£nh Ä‘Æ°á»£c cung cáº¥p Ä‘á»ƒ tráº£ lá»i."
-        )
-        
-    # Giai Ä‘oáº¡n 2: TÃ­nh toÃ¡n Ä‘iá»ƒm sá»‘ tÆ°Æ¡ng quan chÃ©o báº±ng Cross-Encoder
-    scores = reranker.predict([[question, chunk.text] for chunk in chunks])
-    for chunk, score in zip(chunks, scores):
-        chunk.score = float(score)
-        
-    # Xáº¿p háº¡ng láº¡i vÃ  lá»c ra cÃ¡c Ä‘oáº¡n liÃªn quan nháº¥t (rerank_k)
-    reranked = sorted(chunks, key=lambda c: c.score, reverse=True)[:rerank_k]
-    
-    # ÄÆ°a ngá»¯ cáº£nh Ä‘Ã£ Ä‘Æ°á»£c lá»c vÃ o prompt cho LLM
-    prompt = render_prompt(ANSWER_TEMPLATE, question=question, chunks=reranked)
-    text = invoke_llm(prompt)
-    
-    return RagAnswer(
-        question=question,
-        answer=text.strip(),
-        citations=format_citations(reranked),
-        chunks=reranked,
-    )
+from src.retrieval.vector_store import VectorStoreManager
+from src.retrieval.search_engine import SearchEngine
+from src.llm.llm_client import LLMEngine
+from src.llm.prompt_builder import PromptBuilder
 
-def main():
-    csv_path = Path(__file__).parent / "benchmark_rag.csv"
-    test_cases = load_test_cases(csv_path)
-    if not test_cases:
-        print(f"No test cases found in {csv_path}. Please populate the benchmark.")
-        return
-        
-    output_path = Path("storage/evaluation/reranking/recursive_rerank.json")
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    
-    print(f"Loading CrossEncoder model: {RERANKER_MODEL}...")
-    try:
-        reranker = CrossEncoder(RERANKER_MODEL)
-    except Exception as e:
-        print(f"Error loading CrossEncoder model locally: {e}. Falling back to mock/CPU load.")
-        reranker = None
-        
-    if not reranker:
-        print("Reranking evaluation cannot proceed without a valid CrossEncoder.")
-        return
-        
-    # Run evaluation using the standard Best Chunker collection
-    best_collection = f"{settings.qdrant_collection}__rc_1000_150"
-    
-    print("\nRunning RAG evaluation WITH Cross-Encoder Reranker...")
-    
-    def answer_fn(q: str) -> RagAnswer:
-        return answer_with_reranker(
-            question=q,
-            collection_name=best_collection,
-            reranker=reranker,
-            initial_k=15,
-            rerank_k=5
-        )
-        
-    result_out = {
-        "strategy_id": "recursive_1000_150_with_reranker",
-        "summary_metrics": {},
-    }
-    
-    try:
-        result = run_evaluation(
-            test_cases, 
-            answer_fn=answer_fn, 
-            llm_provider=settings.llm_provider
-        )
-        df = result.to_pandas()
-        result_out["summary_metrics"] = summary_metrics(df)
-        print(f"\nReranking evaluation completed. Metrics: {result_out['summary_metrics']}")
-    except Exception as exc:
-        result_out["error"] = str(exc)
-        print(f"\nEvaluation failed: {exc}")
-        
-    write_json(output_path, result_out)
+TEST_QUERIES = [
+    "Kiến trúc của hệ thống gồm những thành phần nào?",
+    "Phương pháp đánh giá mô hình được thực hiện ra sao?",
+    "Chế độ chạy offline hỗ trợ những mô hình nào?"
+]
+
+
+def evaluate_reranking(notebook_id: str = "default"):
+    print(f"=== ĐÁNH GIÁ RERANKING TRÊN SỔ TAY: {notebook_id} ===")
+    store = VectorStoreManager(notebook_id=notebook_id)
+    engine = SearchEngine(store)
+    llm = LLMEngine()
+
+    for q in TEST_QUERIES:
+        print(f"\n[Truy vấn]: {q}")
+        results = engine.search(query=q, top_k=3)
+        if not results:
+            print("  Không tìm thấy kết quả phù hợp.")
+            continue
+        for i, r in enumerate(results, start=1):
+            score = r.get("rerank_score", r.get("score", 0.0))
+            src = r.get("metadata", {}).get("source", "N/A")
+            print(f"  Top-{i} [Score: {score:.4f} | Nguồn: {src}]: {r.get('content', '')[:120]}...")
+            
+        prompt = PromptBuilder.build_rag_prompt(query=q, retrieved_chunks=results)
+        ans = llm.generate(prompt)
+        print(f"  [AI Trả lời]: {ans[:200]}...")
+
 
 if __name__ == "__main__":
-    main()
+    nb = sys.argv[1] if len(sys.argv) > 1 else "default"
+    evaluate_reranking(nb)
 
 
 
@@ -15034,19 +15208,42 @@ if __name__ == "__main__":
 # FILE: src/ingestion/chunking.py
 # ==============================================================================
 
+from typing import List, Dict, Any, Union
+from dataclasses import dataclass, field
 import re
-import numpy as np
-from typing import List, Dict, Any
-from .document_tree import DocumentNode, HeadingNode, ParagraphNode, TableNode, CodeBlockNode, ListItemNode, Node
-from ..utils.config import settings
+import uuid
 
-def cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
-    v1 = np.array(vec1)
-    v2 = np.array(vec2)
-    denom = np.linalg.norm(v1) * np.linalg.norm(v2)
-    if denom == 0:
-        return 0.0
-    return float(np.dot(v1, v2) / denom)
+from src.ingestion.schema import (
+    DocumentNode, NodeType, HeadingNode, ParagraphNode, TableNode, CodeBlockNode
+)
+from src.utils.logger import logger
+
+
+@dataclass
+class Chunk:
+    """Đại diện cho 1 đoạn dữ liệu hoàn chỉnh sẵn sàng đem đi Embedding."""
+    chunk_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    content: str = ""
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def __getitem__(self, item):
+        if item == "content":
+            return self.content
+        elif item == "metadata":
+            return self.metadata
+        elif item == "chunk_id":
+            return self.chunk_id
+        raise KeyError(item)
+
+    def get(self, item, default=None):
+        if item == "content":
+            return self.content
+        elif item == "metadata":
+            return self.metadata
+        elif item == "chunk_id":
+            return self.chunk_id
+        return default
+
 
 class RecursiveCharacterChunker:
     """Chia văn bản dựa trên số lượng ký tự đệ quy (Nhanh, cho CPU)."""
@@ -15082,89 +15279,158 @@ class RecursiveCharacterChunker:
             chunks.append(" ".join(current_chunk))
         return chunks
 
-class SemanticChunker:
-    """Chia văn bản dựa trên khoảng cách ngữ nghĩa (Cần GPU/MPS)."""
-    def __init__(self, embedder, threshold: float = 0.75):
-        self.embedder = embedder
-        self.threshold = threshold
-
-    def chunk_text(self, text: str) -> List[str]:
-        sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', text) if s.strip()]
-        if not sentences:
-            return []
-        if len(sentences) == 1:
-            return sentences
-            
-        embeddings = self.embedder.embed_documents(sentences)
-        
-        chunks = []
-        current_chunk = [sentences[0]]
-        
-        for i in range(1, len(sentences)):
-            sim = cosine_similarity(embeddings[i-1], embeddings[i])
-            if sim >= self.threshold and sum(len(s) for s in current_chunk) < 1500:
-                current_chunk.append(sentences[i])
-            else:
-                chunks.append(" ".join(current_chunk))
-                current_chunk = [sentences[i]]
-                
-        if current_chunk:
-            chunks.append(" ".join(current_chunk))
-            
-        return chunks
 
 class AdaptiveChunker:
-    """Tự động lựa chọn phương pháp Chunking phù hợp với phần cứng."""
-    
-    def __init__(self, embedder=None):
-        self.tier = self._get_hardware_tier()
-        
-        if self.tier in [1, 2] and embedder is not None:
-            print("[AdaptiveChunker] Chế độ GPU/MPS: Kích hoạt Semantic Chunking.")
-            self.chunker = SemanticChunker(embedder=embedder, threshold=0.75)
-        else:
-            print("[AdaptiveChunker] Chế độ Tốc độ cao: Kích hoạt Recursive Character Chunking.")
-            self.chunker = RecursiveCharacterChunker(
-                chunk_size=settings.chunk_size, 
-                chunk_overlap=settings.chunk_overlap
-            )
+    """
+    Hệ thống phân mảnh thông minh (Context-Aware + Buffer Merging):
+    - Gom các Paragraph ngắn / List items liền kề trong cùng 1 Heading lại với nhau.
+    - Bảo toàn nguyên vẹn Bảng (Table) và Khối Code (CodeBlock).
+    - Tự động đính kèm Breadcrumbs (Ngữ cảnh tiêu đề cha) vào đầu mỗi Chunk.
+    """
+    def __init__(self, chunk_size: int = 1000, chunk_overlap: int = 200, min_chunk_length: int = 40, embedder=None):
+        self.chunk_size = chunk_size
+        self.chunk_overlap = chunk_overlap
+        self.min_chunk_length = min_chunk_length
+        self.embedder = embedder
 
-    def _get_hardware_tier(self) -> int:
-        from ..utils.hardware_profiler import ModelZooManager
-        manager = ModelZooManager()
-        return manager.get_tier()
+    def chunk_text(self, text: str) -> List[str]:
+        """Chia văn bản dài thành các đoạn nhỏ theo câu hoàn chỉnh."""
+        if len(text) <= self.chunk_size:
+            return [text]
 
-    def process_document(self, document_node: DocumentNode) -> List[Dict[str, Any]]:
-        """Duyệt Cây Tài liệu (DFS) và chunking mọi Node nội dung (Paragraph, Table, CodeBlock, ListItem)."""
-        final_chunks = []
-        current_heading = ""
-        
-        def traverse(node: Node):
-            nonlocal current_heading
-            if isinstance(node, HeadingNode) and node.content.strip():
-                current_heading = node.content.strip()
+        sentences = re.split(r'(?<=[.!?])\s+|\n+', text)
+        chunks = []
+        current_chunk = ""
 
-            elif isinstance(node, (ParagraphNode, TableNode, CodeBlockNode, ListItemNode)) and node.content.strip():
-                raw_content = node.content.strip()
-                if isinstance(node, CodeBlockNode):
-                    lang = getattr(node, "language", "")
-                    raw_content = f"```{lang}\n{raw_content}\n```"
-                
-                text_chunks = self.chunker.chunk_text(raw_content)
-                for chunk_text in text_chunks:
-                    meta = node.metadata.copy()
-                    if current_heading and "heading_level_1" not in meta:
-                        meta["heading_level_1"] = current_heading
-                    final_chunks.append({
-                        "content": chunk_text,
-                        "metadata": meta
-                    })
-            
-            for child in node.children:
-                traverse(child)
+        for sentence in sentences:
+            if not sentence.strip():
+                continue
+            if len(current_chunk) + len(sentence) + 1 <= self.chunk_size:
+                current_chunk += (" " if current_chunk else "") + sentence
+            else:
+                if current_chunk:
+                    chunks.append(current_chunk.strip())
 
-        traverse(document_node)
-        return final_chunks
+                if len(sentence) > self.chunk_size:
+                    for i in range(0, len(sentence), max(1, self.chunk_size - self.chunk_overlap)):
+                        chunks.append(sentence[i:i + self.chunk_size].strip())
+                    current_chunk = ""
+                else:
+                    overlap_text = current_chunk[-self.chunk_overlap:] if len(current_chunk) > self.chunk_overlap else current_chunk
+                    current_chunk = (overlap_text + " " + sentence).strip()
+
+        if current_chunk:
+            chunks.append(current_chunk.strip())
+
+        return chunks
+
+    def process_document(self, doc_tree: DocumentNode) -> List[Chunk]:
+        logger.info(f"Bắt đầu phân mảnh tài liệu (Adaptive Buffer): {getattr(doc_tree, 'title', 'Tài liệu')}")
+        chunks: List[Chunk] = []
+        source_name = doc_tree.metadata.get("source", getattr(doc_tree, "title", "Tài liệu"))
+        notebook_id = doc_tree.metadata.get("notebook_id", "default")
+
+        def traverse(node: DocumentNode, current_breadcrumbs: List[str]):
+            breadcrumbs = list(current_breadcrumbs)
+            if isinstance(node, HeadingNode) and node.content:
+                breadcrumbs.append(node.content.strip())
+
+            context_prefix = " > ".join(breadcrumbs)
+            prefix_str = f"[{context_prefix}]\n" if context_prefix else ""
+
+            # Bộ đệm gom các ParagraphNode liên tiếp trong cùng một cấp node
+            paragraph_buffer: List[str] = []
+            buffer_pages: List[int] = []
+
+            def flush_paragraph_buffer():
+                nonlocal paragraph_buffer, buffer_pages
+                if not paragraph_buffer:
+                    return
+                merged_text = "\n".join(paragraph_buffer).strip()
+                paragraph_buffer = []
+                first_page = buffer_pages[0] if buffer_pages else getattr(node, "page_number", 1)
+                buffer_pages = []
+
+                if len(merged_text) < self.min_chunk_length and chunks:
+                    # Nếu đoạn gộp vẫn quá ngắn, nối vào chunk liền trước nếu cùng source
+                    chunks[-1].content += f"\n{merged_text}"
+                    return
+
+                sub_texts = self.chunk_text(merged_text)
+                for st in sub_texts:
+                    if not st.strip():
+                        continue
+                    chunks.append(Chunk(
+                        content=f"{prefix_str}{st}",
+                        metadata={
+                            "source": source_name,
+                            "type": "text",
+                            "breadcrumbs": context_prefix,
+                            "page": first_page,
+                            "notebook_id": notebook_id
+                        }
+                    ))
+
+            # Nếu bản thân node gốc là Paragraph/Table/Code (trường hợp không có Heading bọc ngoài)
+            if isinstance(node, ParagraphNode) and node.content.strip():
+                paragraph_buffer.append(node.content.strip())
+                buffer_pages.append(getattr(node, "page_number", 1))
+                flush_paragraph_buffer()
+
+            elif isinstance(node, TableNode):
+                table_content = getattr(node, "markdown", None) or node.content
+                if table_content and table_content.strip():
+                    chunks.append(Chunk(
+                        content=f"{prefix_str}Bảng dữ liệu:\n{table_content}",
+                        metadata={
+                            "source": source_name,
+                            "type": "table",
+                            "breadcrumbs": context_prefix,
+                            "page": getattr(node, "page_number", 1),
+                            "notebook_id": notebook_id
+                        }
+                    ))
+
+            elif isinstance(node, CodeBlockNode) and node.content.strip():
+                lang = getattr(node, "language", "text")
+                chunks.append(Chunk(
+                    content=f"{prefix_str}Đoạn mã ({lang}):\n```{lang}\n{node.content}\n```",
+                    metadata={
+                        "source": source_name,
+                        "type": "code",
+                        "language": lang,
+                        "breadcrumbs": context_prefix,
+                        "page": getattr(node, "page_number", 1),
+                        "notebook_id": notebook_id
+                    }
+                ))
+
+            # Duyệt qua các node con và gộp các ParagraphNode liên tiếp
+            for child in getattr(node, "children", []):
+                if isinstance(child, ParagraphNode):
+                    text = child.content.strip()
+                    if not text:
+                        continue
+                    current_len = sum(len(x) for x in paragraph_buffer)
+                    if current_len + len(text) + 1 <= self.chunk_size:
+                        paragraph_buffer.append(text)
+                        if getattr(child, "page_number", None):
+                            buffer_pages.append(child.page_number)
+                    else:
+                        flush_paragraph_buffer()
+                        paragraph_buffer.append(text)
+                        if getattr(child, "page_number", None):
+                            buffer_pages.append(child.page_number)
+                else:
+                    # Gặp Heading mới, Table hoặc CodeBlock thì xả buffer hiện tại trước
+                    flush_paragraph_buffer()
+                    traverse(child, breadcrumbs)
+
+            flush_paragraph_buffer()
+
+        traverse(doc_tree, [])
+        logger.info(f"Hoàn tất phân mảnh! Tổng số Chunks tạo ra: {len(chunks)}")
+        return chunks
 
 
 
@@ -15172,72 +15438,15 @@ class AdaptiveChunker:
 # FILE: src/ingestion/document_tree.py
 # ==============================================================================
 
-from typing import List, Dict, Any, Optional
+from .schema import (
+    NodeType, Node, DocumentNode, HeadingNode, ParagraphNode,
+    TableNode, ImageNode, CodeBlockNode, ListNode, ListItemNode
+)
 
-class Node:
-    """Lớp cơ sở cho tất cả các nút trong Cây Tài Liệu."""
-    def __init__(self, node_type: str, content: str = "", metadata: Optional[Dict[str, Any]] = None):
-        self.node_type = node_type
-        self.content = content
-        self.metadata = metadata or {}
-        self.children: List['Node'] = []
-        self.parent: Optional['Node'] = None
-
-    def add_child(self, child: 'Node'):
-        child.parent = self
-        # Kế thừa metadata từ cha
-        merged_meta = self.metadata.copy()
-        merged_meta.update(child.metadata)
-        child.metadata = merged_meta
-        self.children.append(child)
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "type": self.node_type,
-            "content": self.content,
-            "metadata": self.metadata,
-            "children": [child.to_dict() for child in self.children]
-        }
-
-class DocumentNode(Node):
-    def __init__(self, metadata: Optional[Dict[str, Any]] = None):
-        super().__init__("Document", metadata=metadata)
-
-class HeadingNode(Node):
-    def __init__(self, level: int, content: str, metadata: Optional[Dict[str, Any]] = None):
-        super().__init__("Heading", content, metadata)
-        self.level = level
-        self.metadata["heading_level"] = level
-
-class ParagraphNode(Node):
-    def __init__(self, content: str, metadata: Optional[Dict[str, Any]] = None):
-        super().__init__("Paragraph", content, metadata)
-
-class TableNode(Node):
-    def __init__(self, markdown_table: str, metadata: Optional[Dict[str, Any]] = None):
-        super().__init__("Table", markdown_table, metadata)
-
-class ImageNode(Node):
-    def __init__(self, alt_text: str, url: str, description: str = "", metadata: Optional[Dict[str, Any]] = None):
-        super().__init__("Image", description, metadata)
-        self.alt_text = alt_text
-        self.url = url
-        self.metadata["image_url"] = url
-
-class CodeBlockNode(Node):
-    def __init__(self, language: str, code: str, metadata: Optional[Dict[str, Any]] = None):
-        super().__init__("CodeBlock", code, metadata)
-        self.language = language
-        self.metadata["code_language"] = language
-
-class ListNode(Node):
-    def __init__(self, is_ordered: bool = False, metadata: Optional[Dict[str, Any]] = None):
-        super().__init__("List", metadata=metadata)
-        self.is_ordered = is_ordered
-
-class ListItemNode(Node):
-    def __init__(self, content: str, metadata: Optional[Dict[str, Any]] = None):
-        super().__init__("ListItem", content, metadata)
+__all__ = [
+    "NodeType", "Node", "DocumentNode", "HeadingNode", "ParagraphNode",
+    "TableNode", "ImageNode", "CodeBlockNode", "ListNode", "ListItemNode"
+]
 
 
 
@@ -15245,31 +15454,82 @@ class ListItemNode(Node):
 # FILE: src/ingestion/embedding.py
 # ==============================================================================
 
-from typing import List
-from sentence_transformers import SentenceTransformer
-from ..utils.config import settings
+from typing import List, Union
+import numpy as np
+from src.utils.logger import logger
+from src.utils.config import settings
+
 
 class LocalEmbedder:
-    """Quản lý Embedding Model với khả năng tự động chọn Device và mô hình tối ưu."""
+    """Wrapper cho SentenceTransformers hoạt động hoàn toàn Offline, đồng bộ với config.py."""
     
     def __init__(self, model_name: str = None):
-        self.model_name = model_name or "sentence-transformers/all-MiniLM-L6-v2"
-        self.device = settings.hf_device if settings.hf_device != "auto" else None
-        
-        print(f"[LocalEmbedder] Đang tải mô hình {self.model_name} lên thiết bị: {self.device}")
-        self.model = SentenceTransformer(self.model_name, device=self.device)
+        self.model_name = model_name or getattr(
+            settings, "embedding_model", "sentence-transformers/all-MiniLM-L6-v2"
+        )
+        self.device = getattr(settings, "hf_device", None) if getattr(settings, "hf_device", "auto") != "auto" else None
+        self.model = None
+        self._load_model()
+
+    def _load_model(self):
+        try:
+            from sentence_transformers import SentenceTransformer
+            logger.info(f"Đang tải Local Embedding Model: {self.model_name}...")
+            self.model = SentenceTransformer(self.model_name, device=self.device)
+            logger.info("Tải Local Embedding Model thành công!")
+        except Exception as e:
+            fallback = "sentence-transformers/all-MiniLM-L6-v2"
+            if self.model_name != fallback:
+                logger.warning(f"Không thể tải {self.model_name} ({e}). Chuyển sang fallback: {fallback}")
+                try:
+                    from sentence_transformers import SentenceTransformer
+                    self.model_name = fallback
+                    self.model = SentenceTransformer(fallback, device=self.device)
+                    return
+                except Exception as inner_e:
+                    logger.error(f"Lỗi tải fallback model: {inner_e}")
+            logger.error(f"Lỗi khi tải sentence-transformers: {e}")
+            self.model = None
+
+    def embed_text(self, texts: Union[str, List[str]]) -> Union[List[float], List[List[float]]]:
+        if not self.model:
+            logger.warning("LocalEmbedder chưa khởi tạo. Trả về vector 0.")
+            is_single = isinstance(texts, str)
+            return [0.0] * 384 if is_single else [[0.0] * 384 for _ in texts]
+
+        is_single = isinstance(texts, str)
+        input_texts = [texts] if is_single else texts
+
+        try:
+            embeddings = self.model.encode(
+                input_texts,
+                show_progress_bar=False,
+                convert_to_numpy=True,
+                normalize_embeddings=True
+            )
+            result = embeddings.tolist()
+            return result[0] if is_single else result
+        except Exception as e:
+            logger.error(f"Lỗi trong quá trình tạo Embedding: {e}")
+            return [0.0] * 384 if is_single else [[0.0] * 384 for _ in input_texts]
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         """Nhúng danh sách các đoạn văn bản (Dùng cho Ingestion)."""
         if not texts:
             return []
-        embeddings = self.model.encode(texts, convert_to_numpy=True, show_progress_bar=False)
-        return embeddings.tolist()
+        res = self.embed_text(texts)
+        if isinstance(res, list) and len(res) > 0 and isinstance(res[0], list):
+            return res
+        return [res] if isinstance(res, list) else []
 
     def embed_query(self, text: str) -> List[float]:
         """Nhúng một câu truy vấn duy nhất (Dùng cho Retrieval)."""
-        embedding = self.model.encode(text, convert_to_numpy=True, show_progress_bar=False)
-        return embedding.tolist()
+        res = self.embed_text(text)
+        if isinstance(res, list) and len(res) > 0 and isinstance(res[0], float):
+            return res
+        if isinstance(res, list) and len(res) > 0 and isinstance(res[0], list):
+            return res[0]
+        return [0.0] * 384
 
 
 
@@ -15287,7 +15547,7 @@ class LocalEmbedder:
 import os
 import uuid
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams, PointStruct
 from ..utils.config import settings
@@ -15297,8 +15557,12 @@ logger = logging.getLogger(__name__)
 class VectorStoreManager:
     """Quản lý việc lưu trữ Vector vào Qdrant Local và đồng bộ hóa BM25 Index."""
     
-    def __init__(self, embedder):
+    def __init__(self, embedder=None, notebook_id: str = "default"):
+        if embedder is None:
+            from src.ingestion.embedding import LocalEmbedder
+            embedder = LocalEmbedder()
         self.embedder = embedder
+        self.notebook_id = notebook_id
         
         # Tạo thư mục chứa database nếu chưa có
         os.makedirs(settings.storage_dir, exist_ok=True)
@@ -15327,13 +15591,22 @@ class VectorStoreManager:
         else:
             print(f"[Qdrant] Đã kết nối tới Collection: {self.collection_name}")
 
-    def index_chunks(self, chunks: List[Dict[str, Any]]):
+    def clear_all(self):
+        """Xóa toàn bộ dữ liệu trong collection hiện tại và khởi tạo lại."""
+        try:
+            self.client.delete_collection(collection_name=self.collection_name)
+            self._init_collection()
+            print(f"[Qdrant] Đã dọn dẹp toàn bộ dữ liệu trong collection {self.collection_name}")
+        except Exception as e:
+            logger.warning(f"Lỗi clear_all collection: {e}")
+
+    def index_chunks(self, chunks: List[Any]):
         """Nhúng và lưu các đoạn văn bản vào Database, đồng thời cập nhật BM25."""
         if not chunks:
             return
             
         print(f"[Qdrant] Đang tính toán Vector cho {len(chunks)} đoạn văn bản...")
-        texts = [chunk["content"] for chunk in chunks]
+        texts = [chunk["content"] if isinstance(chunk, dict) else chunk.content for chunk in chunks]
         embeddings = self.embedder.embed_documents(texts)
         
         def _clean_meta(meta_dict):
@@ -15349,14 +15622,17 @@ class VectorStoreManager:
 
         points = []
         for i, chunk in enumerate(chunks):
-            point_id = str(uuid.uuid4())
+            c_content = chunk["content"] if isinstance(chunk, dict) else chunk.content
+            c_meta = chunk.get("metadata", {}) if isinstance(chunk, dict) else getattr(chunk, "metadata", {})
+            c_id = (chunk.get("chunk_id") if isinstance(chunk, dict) else getattr(chunk, "chunk_id", None)) or str(uuid.uuid4())
             cleaned_payload = {
-                "chunk_id": point_id,
-                "content": str(chunk["content"]),
-                **_clean_meta(chunk.get("metadata", {}))
+                "chunk_id": c_id,
+                "content": str(c_content),
+                "notebook_id": c_meta.get("notebook_id", self.notebook_id),
+                **_clean_meta(c_meta)
             }
             point = PointStruct(
-                id=point_id,
+                id=c_id,
                 vector=embeddings[i],
                 payload=cleaned_payload
             )
@@ -15375,13 +15651,14 @@ class VectorStoreManager:
         # Đồng bộ hóa sang BM25 Index cho Hybrid Search
         try:
             from ..retrieval.bm25_index import get_bm25_index, BM25Document
-            notebook_id = chunks[0]["metadata"].get("notebook_id", "default")
+            first_meta = chunks[0].get("metadata", {}) if isinstance(chunks[0], dict) else getattr(chunks[0], "metadata", {})
+            notebook_id = first_meta.get("notebook_id", self.notebook_id)
             bm25 = get_bm25_index(notebook_id)
             bm25_docs = [
                 BM25Document(
                     chunk_id=points[i].id,
-                    text=chunks[i]["content"],
-                    metadata=chunks[i]["metadata"]
+                    text=chunks[i]["content"] if isinstance(chunks[i], dict) else chunks[i].content,
+                    metadata=chunks[i].get("metadata", {}) if isinstance(chunks[i], dict) else getattr(chunks[i], "metadata", {})
                 )
                 for i in range(len(chunks))
             ]
@@ -15424,7 +15701,8 @@ class VectorStoreManager:
                     FieldCondition(key="filename", match=MatchValue(value=filename)),
                     FieldCondition(key="source_file", match=MatchValue(value=filename)),
                     FieldCondition(key="title", match=MatchValue(value=filename)),
-                    FieldCondition(key="source_url", match=MatchValue(value=filename))
+                    FieldCondition(key="source_url", match=MatchValue(value=filename)),
+                    FieldCondition(key="source", match=MatchValue(value=filename))
                 ]
             )
         )
@@ -15442,13 +15720,14 @@ class VectorStoreManager:
         
         query_vector = self.embedder.embed_query(query)
         
+        target_nb = notebook_id or getattr(self, "notebook_id", None)
         query_filter = None
-        if notebook_id:
+        if target_nb and target_nb != "default":
             query_filter = Filter(
                 must=[
                     FieldCondition(
                         key="notebook_id",
-                        match=MatchValue(value=notebook_id)
+                        match=MatchValue(value=target_nb)
                     )
                 ]
             )
@@ -15470,6 +15749,57 @@ class VectorStoreManager:
             })
         return results
 
+    def get_all_chunks(self, limit: int = 500, notebook_id: str = None) -> List[Dict[str, Any]]:
+        """Lấy tất cả các chunk trong collection hoặc lọc theo notebook_id."""
+        from qdrant_client.http.models import Filter, FieldCondition, MatchValue
+        target_nb = notebook_id or getattr(self, "notebook_id", None)
+        scroll_filter = None
+        if target_nb and target_nb != "default":
+            scroll_filter = Filter(
+                must=[
+                    FieldCondition(key="notebook_id", match=MatchValue(value=target_nb))
+                ]
+            )
+        chunks = []
+        try:
+            records, _ = self.client.scroll(
+                collection_name=self.collection_name,
+                scroll_filter=scroll_filter,
+                limit=limit,
+                with_payload=True,
+                with_vectors=False
+            )
+            for r in records:
+                payload = r.payload or {}
+                chunks.append({
+                    "chunk_id": payload.get("chunk_id", str(r.id)),
+                    "content": payload.get("content", ""),
+                    "metadata": {k: v for k, v in payload.items() if k != "content"}
+                })
+        except Exception as e:
+            logger.warning(f"Lỗi scroll all chunks từ Qdrant: {e}")
+
+        # Fallback nếu scroll theo notebook_id không ra kết quả (ví dụ dữ liệu cũ chưa có trường notebook_id)
+        if not chunks and target_nb and target_nb != "default":
+            try:
+                records, _ = self.client.scroll(
+                    collection_name=self.collection_name,
+                    limit=limit,
+                    with_payload=True,
+                    with_vectors=False
+                )
+                for r in records:
+                    payload = r.payload or {}
+                    chunks.append({
+                        "chunk_id": payload.get("chunk_id", str(r.id)),
+                        "content": payload.get("content", ""),
+                        "metadata": {k: v for k, v in payload.items() if k != "content"}
+                    })
+            except Exception as e:
+                logger.warning(f"Lỗi scroll fallback Qdrant: {e}")
+
+        return chunks
+
     def get_chunks_by_document(self, notebook_id: str, filename: str, limit: int = 100) -> List[str]:
         """Lấy danh sách các chunk văn bản thuộc về một tài liệu cụ thể trong notebook."""
         from qdrant_client.http.models import Filter, FieldCondition, MatchValue
@@ -15483,7 +15813,8 @@ class VectorStoreManager:
                     FieldCondition(key="filename", match=MatchValue(value=filename)),
                     FieldCondition(key="source_file", match=MatchValue(value=filename)),
                     FieldCondition(key="title", match=MatchValue(value=filename)),
-                    FieldCondition(key="source_url", match=MatchValue(value=filename))
+                    FieldCondition(key="source_url", match=MatchValue(value=filename)),
+                    FieldCondition(key="source", match=MatchValue(value=filename))
                 ]
             )
             records, _ = self.client.scroll(
@@ -16010,14 +16341,18 @@ import re
 import textwrap
 from youtube_transcript_api import YouTubeTranscriptApi
 
-from ..document_tree import DocumentNode, HeadingNode, ParagraphNode, Node
+from src.ingestion.schema import (
+    DocumentNode, HeadingNode, ParagraphNode, CodeBlockNode, NodeType, Node
+)
+from src.utils.logger import logger
+
 
 class WebParser:
     """Cào dữ liệu từ URL hoặc YouTube và bóc tách thành Cây Tài Liệu (Document Tree)."""
     
     def __init__(self, headers: Optional[dict] = None):
         self.headers = headers or {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
         }
 
     def _fetch_youtube_transcript_text(self, video_id: str) -> str:
@@ -16034,6 +16369,74 @@ class WebParser:
                 texts.append(txt)
             return " ".join(texts)
 
+    def _parse_website(self, url: str) -> DocumentNode:
+        logger.info(f"Đang cào dữ liệu từ Website: {url}")
+        headers = self.headers
+        response = requests.get(url, headers=headers, timeout=15)
+        response.raise_for_status()
+        response.encoding = response.apparent_encoding
+
+        soup = BeautifulSoup(response.text, "html.parser")
+
+        # Xóa các thẻ rác và các hộp điều hướng Wikipedia/Web
+        for junk in soup(["script", "style", "nav", "footer", "header", "aside", "form", "iframe", "noscript"]):
+            junk.decompose()
+        for junk_class in soup.select(".mw-editsection, .navbox, .vertical-navbox, .sidebar, .reflist, .hatnote, .mbox-small, .toc"):
+            junk_class.decompose()
+
+        title = soup.title.string.strip() if soup.title and soup.title.string else url
+        doc_root = DocumentNode(
+            node_type=NodeType.DOCUMENT,
+            title=title,
+            metadata={"source": url, "type": "website", "title": title}
+        )
+
+        main_content = soup.find("main") or soup.find("article") or soup.find("div", {"id": "mw-content-text"}) or soup.body
+        if not main_content:
+            return doc_root
+
+        node_stack = [doc_root]
+
+        for element in main_content.find_all(["h1", "h2", "h3", "h4", "p", "ul", "ol", "pre"]):
+            # Bỏ qua thẻ p/li nằm lồng bên trong ul/ol đã được xử lý ở cấp ul/ol
+            if element.name == "p" and element.find_parent(["ul", "ol", "table"]):
+                continue
+
+            if element.name in ["ul", "ol"]:
+                if element.find_parent(["ul", "ol"]):
+                    continue
+                items = [
+                    f"- {li.get_text(separator=' ', strip=True)}"
+                    for li in element.find_all("li", recursive=False)
+                    if len(li.get_text(strip=True)) > 3
+                ]
+                if items:
+                    node_stack[-1].add_child(ParagraphNode(content="\n".join(items)))
+                continue
+
+            text = element.get_text(separator=" ", strip=True)
+            if not text or len(text) <= 2:
+                continue
+
+            if element.name.startswith("h"):
+                level = int(element.name[1])
+                heading_node = HeadingNode(level=level, content=text)
+                while (
+                    len(node_stack) > 1
+                    and isinstance(node_stack[-1], HeadingNode)
+                    and node_stack[-1].level >= level
+                ):
+                    node_stack.pop()
+                node_stack[-1].add_child(heading_node)
+                node_stack.append(heading_node)
+
+            elif element.name == "pre":
+                node_stack[-1].add_child(CodeBlockNode(content=text, language="text"))
+            else:
+                node_stack[-1].add_child(ParagraphNode(content=text))
+
+        return doc_root
+
     def parse(self, url: str, source_metadata: Optional[dict] = None) -> DocumentNode:
         meta = source_metadata or {}
         meta["source_url"] = url
@@ -16046,7 +16449,7 @@ class WebParser:
             video_id = match.group(1)
             meta["title"] = f"YouTube Video: {video_id}"
             meta["parser"] = "YouTubeTranscript"
-            root = DocumentNode(metadata=meta)
+            root = DocumentNode(metadata=meta, title=meta["title"])
             try:
                 full_text = self._fetch_youtube_transcript_text(video_id)
                 paragraphs = textwrap.wrap(full_text, width=1500)
@@ -16064,6 +16467,7 @@ class WebParser:
                     
                     meta["title"] = title_text
                     root.metadata["title"] = title_text
+                    root.title = title_text
                     
                     content = f"Tiêu đề video: {title_text}\n\nMô tả video:\n{desc_text}\n\n(Video này không có phụ đề công khai hoặc tắt CC)."
                     root.add_child(ParagraphNode(content=content))
@@ -16073,58 +16477,17 @@ class WebParser:
                     root.add_child(ParagraphNode(content=content))
                     return root
 
-        # 2. Xử lý trang web thông thường
+        # 2. Xử lý website thông thường
         try:
-            response = requests.get(url, headers=self.headers, timeout=12)
-            response.raise_for_status()
+            doc_root = self._parse_website(url)
+            if source_metadata:
+                doc_root.metadata.update(source_metadata)
+            return doc_root
         except Exception as e:
-            root = DocumentNode(metadata=meta)
+            root = DocumentNode(metadata=meta, title=url)
             content = f"Không thể lấy dữ liệu từ URL này.\nChi tiết lỗi: {str(e)}"
             root.add_child(ParagraphNode(content=content))
             return root
-
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        for element in soup(["script", "style", "nav", "footer", "header", "aside"]):
-            element.decompose()
-
-        title_text = str(soup.title.string).strip() if (soup.title and soup.title.string) else url
-        meta["title"] = title_text
-
-        root = DocumentNode(metadata=meta)
-        main_content = soup.find('main') or soup.find('article') or soup.body
-        
-        if not main_content:
-            return root
-
-        current_parent: Node = root
-        heading_stack = []
-
-        for tag in main_content.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'li']):
-            text = tag.get_text(strip=True)
-            if not text:
-                continue
-
-            if tag.name.startswith('h'):
-                level = int(tag.name[1])
-                heading_node = HeadingNode(level=level, content=text)
-                
-                while heading_stack and heading_stack[-1].level >= level:
-                    heading_stack.pop()
-                    
-                if heading_stack:
-                    heading_stack[-1].add_child(heading_node)
-                else:
-                    root.add_child(heading_node)
-                    
-                heading_stack.append(heading_node)
-                current_parent = heading_node
-            elif tag.name == 'p':
-                current_parent.add_child(ParagraphNode(content=text))
-            elif tag.name == 'li':
-                current_parent.add_child(ParagraphNode(content=f"- {text}"))
-                
-        return root
 
 
 
@@ -16245,6 +16608,178 @@ class YouTubeParser:
 
 
 # ==============================================================================
+# FILE: src/ingestion/router.py
+# ==============================================================================
+
+import os
+from .parsers.web_parser import WebParser
+from .parsers.markitdown_parser import MarkItDownParser
+from .parsers.text_parser import TextParser
+from .parsers.audio_parser import AudioParser
+from .parsers.image_parser import ImageParser
+
+
+class DocumentRouter:
+    """Tự động điều hướng và chọn Parser phù hợp với định dạng tài liệu hoặc URL."""
+    
+    @staticmethod
+    def get_parser(source: str):
+        if source.startswith("http://") or source.startswith("https://"):
+            return WebParser()
+        
+        ext = os.path.splitext(source)[1].lower()
+        if ext in [".mp3", ".wav", ".m4a"]:
+            return AudioParser()
+        elif ext in [".png", ".jpg", ".jpeg", ".webp"]:
+            return ImageParser()
+        elif ext in [".txt"]:
+            return TextParser()
+        else:
+            return MarkItDownParser()
+
+
+
+# ==============================================================================
+# FILE: src/ingestion/schema.py
+# ==============================================================================
+
+from typing import List, Dict, Any, Optional
+from enum import Enum
+
+
+class NodeType(str, Enum):
+    DOCUMENT = "Document"
+    HEADING = "Heading"
+    PARAGRAPH = "Paragraph"
+    TABLE = "Table"
+    CODE_BLOCK = "CodeBlock"
+    LIST = "List"
+    LIST_ITEM = "ListItem"
+    IMAGE = "Image"
+
+
+class Node:
+    """Lớp cơ sở cho tất cả các nút trong Cây Tài Liệu."""
+    def __init__(
+        self, 
+        node_type: str = "Node", 
+        content: str = "", 
+        metadata: Optional[Dict[str, Any]] = None,
+        page_number: int = 1
+    ):
+        self.node_type = str(node_type.value if hasattr(node_type, "value") else node_type)
+        self.content = content
+        self.metadata = metadata.copy() if metadata else {}
+        self.page_number = self.metadata.get("page", page_number)
+        self.children: List['Node'] = []
+        self.parent: Optional['Node'] = None
+
+    def add_child(self, child: 'Node'):
+        child.parent = self
+        merged_meta = self.metadata.copy()
+        merged_meta.update(child.metadata)
+        child.metadata = merged_meta
+        if not getattr(child, "page_number", None):
+            child.page_number = self.page_number
+        self.children.append(child)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "type": self.node_type,
+            "content": self.content,
+            "metadata": self.metadata,
+            "children": [child.to_dict() for child in self.children]
+        }
+
+
+class DocumentNode(Node):
+    def __init__(
+        self, 
+        node_type: NodeType = NodeType.DOCUMENT, 
+        title: str = "", 
+        content: str = "", 
+        metadata: Optional[Dict[str, Any]] = None
+    ):
+        meta = metadata.copy() if metadata else {}
+        if title and "title" not in meta:
+            meta["title"] = title
+        super().__init__(node_type=node_type, content=content or title, metadata=meta)
+        self.title = title or self.metadata.get("title") or self.metadata.get("source", "Tài liệu")
+
+
+class HeadingNode(Node):
+    def __init__(self, level: int = 1, content: str = "", metadata: Optional[Dict[str, Any]] = None):
+        super().__init__(NodeType.HEADING, content, metadata)
+        self.level = level
+        self.metadata["heading_level"] = level
+
+
+class ParagraphNode(Node):
+    def __init__(
+        self, 
+        content: str = "", 
+        metadata: Optional[Dict[str, Any]] = None, 
+        page_number: int = 1
+    ):
+        super().__init__(NodeType.PARAGRAPH, content, metadata, page_number=page_number)
+
+
+class TableNode(Node):
+    def __init__(
+        self, 
+        markdown_table: str = "", 
+        content: str = "", 
+        markdown: str = "", 
+        metadata: Optional[Dict[str, Any]] = None,
+        page_number: int = 1
+    ):
+        tbl = markdown or markdown_table or content
+        super().__init__(NodeType.TABLE, tbl, metadata, page_number=page_number)
+        self.markdown = tbl
+
+
+class ImageNode(Node):
+    def __init__(
+        self, 
+        alt_text: str = "", 
+        url: str = "", 
+        description: str = "", 
+        metadata: Optional[Dict[str, Any]] = None
+    ):
+        super().__init__(NodeType.IMAGE, description, metadata)
+        self.alt_text = alt_text
+        self.url = url
+        self.metadata["image_url"] = url
+
+
+class CodeBlockNode(Node):
+    def __init__(
+        self, 
+        language: str = "text", 
+        code: str = "", 
+        content: str = "", 
+        metadata: Optional[Dict[str, Any]] = None,
+        page_number: int = 1
+    ):
+        c = code or content
+        super().__init__(NodeType.CODE_BLOCK, c, metadata, page_number=page_number)
+        self.language = language
+        self.metadata["code_language"] = language
+
+
+class ListNode(Node):
+    def __init__(self, is_ordered: bool = False, metadata: Optional[Dict[str, Any]] = None):
+        super().__init__(NodeType.LIST, metadata=metadata)
+        self.is_ordered = is_ordered
+
+
+class ListItemNode(Node):
+    def __init__(self, content: str = "", metadata: Optional[Dict[str, Any]] = None):
+        super().__init__(NodeType.LIST_ITEM, content, metadata)
+
+
+
+# ==============================================================================
 # FILE: src/ingestion/vision/__init__.py
 # ==============================================================================
 
@@ -16284,135 +16819,53 @@ class YouTubeParser:
 # FILE: src/interfaces/cli.py
 # ==============================================================================
 
-﻿"""
-Typer CLI â€” Command-line interface for Simple NotebookLM v2.0
-"""
-import json
+import sys
+import os
 import typer
-from typing import Optional
-from src.indexing import ingest as ingest_data_dir
-from src.rag import answer, retrieve
-from src.learning import summarize as summarize_learning, generate_quiz, generate_flashcards
-from src.export import export
+from rich.console import Console
+from rich.markdown import Markdown
 
-app = typer.Typer(help="Simple NotebookLM Command Line Interface v2.0")
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-def _parse_filters(filters_str: Optional[str]):
-    if not filters_str:
-        return None
-    d = {}
-    for part in filters_str.split(","):
-        if "=" in part:
-            k, v = part.split("=", 1)
-            k = k.strip()
-            v = v.strip()
-            if k == "page":
-                d[k] = int(v)
-            else:
-                d[k] = v
-    return d
+from src.ingestion.router import DocumentRouter
+from src.ingestion.chunking import AdaptiveChunker
+from src.retrieval.vector_store import VectorStoreManager
+from src.retrieval.search_engine import SearchEngine
+from src.llm.llm_client import LLMEngine
+from src.llm.prompt_builder import PromptBuilder
 
-def _print_answer(ans: str):
-    typer.secho("\nAnswer:", fg=typer.colors.GREEN, bold=True)
-    typer.echo(ans)
+app = typer.Typer(help="NotebookLM Mini CLI (New Architecture)")
+console = Console()
 
-def _print_sources(chunks):
-    typer.secho("\nSources:", fg=typer.colors.BLUE, bold=True)
-    for i, c in enumerate(chunks, start=1):
-        typer.echo(f"[{i}] {c.metadata.filename} (Page {c.metadata.page}, Score: {c.score:.4f})")
-        typer.echo(f"    {c.text[:200]}...")
-
-def _emit(result, output: Optional[str], fmt: str):
-    out = export(result, fmt=fmt, output=output)
-    if output is None:
-        typer.echo(out)
-    else:
-        typer.secho(f"\nResult exported to {output}", fg=typer.colors.CYAN)
 
 @app.command()
-def ingest(recreate: bool = False):
-    """Index all documents in the data folder (PDF, DOCX, PPTX, etc.)."""
-    typer.echo("Starting document ingestion (MarkItDown + BM25 + Qdrant)...")
-    count = ingest_data_dir(recreate=recreate)
-    typer.secho(f"Success! Done. {count} chunks indexed.", fg=typer.colors.GREEN)
+def add(source: str, notebook_id: str = "default"):
+    """Bóc tách và nạp một file hoặc URL vào Notebook."""
+    with console.status(f"[bold green]Đang xử lý '{source}'...[/bold green]"):
+        parser = DocumentRouter.get_parser(source)
+        doc_tree = parser.parse(source)
+        chunker = AdaptiveChunker(chunk_size=1000, chunk_overlap=200)
+        chunks = chunker.process_document(doc_tree)
+        store = VectorStoreManager(notebook_id=notebook_id)
+        store.index_chunks(chunks)
+    console.print(f"[bold green]✔ Hoàn tất![/bold green] Đã nạp [cyan]{len(chunks)}[/cyan] chunks vào sổ tay '{notebook_id}'.")
+
 
 @app.command()
-def ask(
-    question: str, 
-    k: Optional[int] = None, 
-    filters: Optional[str] = None
-):
-    """Ask a question grounded in the indexed documents (Hybrid Search + Reranker)."""
-    parsed = _parse_filters(filters)
-    typer.echo(f"Searching index for: '{question}'...")
-    result = answer(question, k=k, filters=parsed)
-    _print_answer(result.answer)
-    _print_sources(result.chunks)
+def ask(question: str, notebook_id: str = "default"):
+    """Đặt câu hỏi trực tiếp trên Terminal với trích dẫn nguồn."""
+    store = VectorStoreManager(notebook_id=notebook_id)
+    search_engine = SearchEngine(store)
+    llm = LLMEngine()
 
-@app.command("debug-retrieval")
-def debug_retrieval(
-    question: str, 
-    k: Optional[int] = None, 
-    filters: Optional[str] = None
-):
-    """Retrieve raw chunks related to a query without calling the LLM."""
-    parsed = _parse_filters(filters)
-    chunks = retrieve(question, k=k, filters=parsed)
-    typer.echo(json.dumps([c.model_dump() for c in chunks], ensure_ascii=False, indent=2))
+    with console.status("[bold cyan]Đang truy xuất Hybrid Search + Rerank và suy luận...[/bold cyan]"):
+        retrieved_chunks = search_engine.search(query=question, top_k=5)
+        prompt = PromptBuilder.build_rag_prompt(query=question, retrieved_chunks=retrieved_chunks)
+        response = llm.generate(prompt)
 
-@app.command("summarize")
-def summarize(
-    document: Optional[str] = None,
-    query: Optional[str] = None,
-    filters: Optional[str] = None,
-    k: Optional[int] = None,
-    output: Optional[str] = None,
-    fmt: str = "text"
-):
-    """Generate a multi-point document summary using Map-Reduce."""
-    parsed = _parse_filters(filters)
-    typer.echo("Generating summary...")
-    result = summarize_learning(document=document, query=query, filters=parsed, k=k)
-    _emit(result, output, fmt)
+    console.print("\n[bold blue]Trả lời:[/bold blue]")
+    console.print(Markdown(response))
 
-@app.command("quiz")
-def quiz(
-    document: Optional[str] = None,
-    query: Optional[str] = None,
-    filters: Optional[str] = None,
-    count: Optional[int] = None,
-    k: Optional[int] = None,
-    output: Optional[str] = None,
-    fmt: str = "text"
-):
-    """Create a multiple-choice quiz based on document content."""
-    parsed = _parse_filters(filters)
-    typer.echo("Generating quiz...")
-    result = generate_quiz(document=document, query=query, filters=parsed, count=count, k=k)
-    _emit(result, output, fmt)
-
-@app.command("flashcards")
-def flashcards(
-    document: Optional[str] = None,
-    query: Optional[str] = None,
-    filters: Optional[str] = None,
-    count: Optional[int] = None,
-    k: Optional[int] = None,
-    output: Optional[str] = None,
-    fmt: str = "text"
-):
-    """Create interactive flashcards based on document content."""
-    parsed = _parse_filters(filters)
-    typer.echo("Generating flashcards...")
-    result = generate_flashcards(document=document, query=query, filters=parsed, count=count, k=k)
-    _emit(result, output, fmt)
-
-@app.command("cache-clear")
-def cache_clear():
-    """Clear the Redis semantic cache."""
-    from src.cache import get_cache
-    get_cache().flush_all()
-    typer.secho("Cache cleared.", fg=typer.colors.YELLOW)
 
 if __name__ == "__main__":
     app()
@@ -17239,6 +17692,112 @@ def run():
 
 if __name__ == "__main__":
     run()
+
+
+
+# ==============================================================================
+# FILE: src/learning/critique_generator.py
+# ==============================================================================
+
+from typing import Dict, Any, Optional
+from src.llm.llm_client import LLMEngine
+from src.retrieval.vector_store import VectorStoreManager
+from src.utils.logger import logger
+
+
+class CritiqueAndActionGenerator:
+    """
+    1. Phản biện chuyên sâu (Deep Critique / Peer Review)
+    2. Kế hoạch hành động thực tiễn (Actionable Checklist & Roadmap)
+    """
+    def __init__(self, llm_engine: LLMEngine, vector_store: VectorStoreManager, notebook_id: str = "default"):
+        self.llm = llm_engine
+        self.store = vector_store
+        self.notebook_id = notebook_id
+
+    def _collect_context(self, source_filter: Optional[str] = None, max_chars: int = 16000) -> str:
+        chunks = self.store.get_all_chunks(limit=250, notebook_id=self.notebook_id)
+        if source_filter:
+            chunks = [
+                c for c in chunks 
+                if c.get("metadata", {}).get("source") == source_filter 
+                or c.get("metadata", {}).get("filename") == source_filter
+                or c.get("metadata", {}).get("source_file") == source_filter
+                or c.get("metadata", {}).get("title") == source_filter
+            ]
+        if not chunks:
+            return ""
+
+        text_parts = []
+        total = 0
+        for c in chunks:
+            src = c.get("metadata", {}).get("source") or c.get("metadata", {}).get("filename", "Tài liệu")
+            block = f"[Nguồn: {src}]\n{c.get('content', '')}\n\n"
+            if total + len(block) > max_chars:
+                break
+            text_parts.append(block)
+            total += len(block)
+        return "".join(text_parts)
+
+    def generate_critique(self, source_filter: Optional[str] = None) -> Dict[str, Any]:
+        logger.info(f"Đang tạo Báo cáo Phản biện (Critique) (source={source_filter})")
+        context = self._collect_context(source_filter)
+        if not context:
+            return {"error": "Chưa có tài liệu nào để phân tích phản biện."}
+
+        prompt = f"""Bạn là một Chuyên gia Phản biện Học thuật & Phân tích Chiến lược (Peer Reviewer).
+Dựa trên nội dung tài liệu dưới đây, hãy viết một **Báo cáo Phản biện & Đánh giá Chuyên sâu** bằng tiếng Việt (định dạng Markdown):
+
+### 1. Điểm mạnh & Giá trị cốt lõi (Strengths)
+- Những luận điểm, dữ liệu hoặc phương pháp nào được trình bày thuyết phục nhất?
+
+### 2. Lỗ hổng Lập luận & Điểm mù (Blind Spots & Limitations)
+- Những khía cạnh nào chưa được giải thích rõ, thiếu bằng chứng thực nghiệm hoặc mới chỉ dừng ở giả định?
+- Có rủi ro hay trường hợp ngoại lệ (edge cases) nào bị bỏ qua không?
+
+### 3. Góc nhìn Phản biện (Counter-Arguments)
+- Nếu đứng ở góc nhìn đối lập hoặc thực tế triển khai, người đọc cần đặt ra 3-5 câu hỏi chất vấn sắc bén nào?
+
+### 4. Đề xuất Nâng cấp / Bổ sung
+- Cần bổ sung thêm dữ liệu, dẫn chứng hay bước kiểm chứng nào để tài liệu hoàn chỉnh hơn?
+
+NỘI DUNG TÀI LIỆU:
+{context}
+"""
+        if hasattr(self.llm, "generate_text"):
+            res = self.llm.generate_text(prompt)
+        else:
+            chunks = self.llm.generate(prompt)
+            res = "".join(chunks).strip() if hasattr(chunks, "__iter__") and not isinstance(chunks, str) else str(chunks)
+        return {"content": res}
+
+    def generate_action_plan(self, source_filter: Optional[str] = None) -> Dict[str, Any]:
+        logger.info(f"Đang tạo Action Plan (source={source_filter})")
+        context = self._collect_context(source_filter)
+        if not context:
+            return {"error": "Chưa có tài liệu nào để lập kế hoạch hành động."}
+
+        prompt = f"""Bạn là Chuyên gia Tư vấn Triển khai Dự án.
+Từ nội dung tài liệu dưới đây, hãy chuyển hóa toàn bộ kiến thức lý thuyết thành **Kế hoạch Hành động Thực tiễn (Action Plan)** bằng tiếng Việt (định dạng Markdown):
+
+### 1. Mục tiêu Trọng tâm (Key Objectives)
+- Tóm tắt 3 mục tiêu thực tiễn nhất rút ra từ tài liệu.
+
+### 2. Bảng Phân bổ Hành động (Action Matrix)
+Trình bày dưới dạng Bảng Markdown gồm các cột: `Giai đoạn` | `Hành động cụ thể` | `Đầu ra kỳ vọng (Deliverable)` | `Mức độ ưu tiên (Cao/TB/Thấp)`.
+
+### 3. Danh sách Kiểm tra (Checklist Thực thi)
+- [ ] Các bước chuẩn bị và kiểm chứng cụ thể để áp dụng ngay kiến thức trong tài liệu.
+
+NỘI DUNG TÀI LIỆU:
+{context}
+"""
+        if hasattr(self.llm, "generate_text"):
+            res = self.llm.generate_text(prompt)
+        else:
+            chunks = self.llm.generate(prompt)
+            res = "".join(chunks).strip() if hasattr(chunks, "__iter__") and not isinstance(chunks, str) else str(chunks)
+        return {"content": res}
 
 
 
@@ -18175,7 +18734,17 @@ class LLMEngine:
         "9router": "http://localhost:20128/v1"
     }
 
-    def __init__(self):
+    def __init__(
+        self, 
+        provider: Optional[str] = None, 
+        model_name: Optional[str] = None, 
+        api_key: Optional[str] = None, 
+        base_url: Optional[str] = None
+    ):
+        self.provider = provider
+        self.model_name = model_name
+        self.api_key = api_key
+        self.base_url = base_url
         self.default_ollama_url = "http://localhost:11434"
         self.default_lm_studio_url = "http://localhost:1234/v1"
         self.default_9router_url = "http://localhost:20128/v1"
@@ -18379,21 +18948,23 @@ class LLMEngine:
         """
         Tạo phản hồi dạng Stream hỗ trợ đa nền tảng (9Router, Ollama, Gemini, OpenAI, Groq...).
         """
-        actual_provider = (provider or "").lower()
+        actual_provider = (provider or self.provider or "").lower()
         if not actual_provider:
-            if not is_private and (api_key or gemini_api_key):
+            if not is_private and (api_key or self.api_key or gemini_api_key):
                 actual_provider = "gemini"
             else:
                 actual_provider = "ollama"
 
-        actual_key = api_key or gemini_api_key or ""
-        actual_model = model_name or self.DEFAULT_MODELS.get(actual_provider, "")
+        actual_key = api_key or self.api_key or gemini_api_key or ""
+        actual_model = model_name or self.model_name or self.DEFAULT_MODELS.get(actual_provider, "")
         if actual_provider == "9router" and (not actual_model or actual_model.lower() == "default"):
             actual_model = "kr/claude-sonnet-4.5"
 
+        actual_base_url = base_url or self.base_url
+
         # 1. Xử lý Ollama Local
         if actual_provider == "ollama":
-            url = (base_url or self.default_ollama_url).rstrip("/")
+            url = (actual_base_url or self.default_ollama_url).rstrip("/")
             # Phải đảm bảo url không bị dính port của 9Router (20128) hay LM Studio (1234)
             if "20128" in url or "1234" in url or "openrouter" in url or "api.openai" in url:
                 url = "http://127.0.0.1:11434"
@@ -18632,6 +19203,54 @@ class LLMEngine:
             f"Câu hỏi của người dùng: {query}\n"
             f"Trả lời:"
         )
+
+    def generate_text(self, prompt: str, **kwargs) -> str:
+        """Trả về toàn bộ văn bản phản hồi dạng chuỗi (Non-streaming)."""
+        chunks = self.generate(prompt, **kwargs)
+        if isinstance(chunks, str):
+            return chunks
+        return "".join(chunks).strip()
+
+
+# ==============================================================================
+# FILE: src/llm/prompt_builder.py
+# ==============================================================================
+
+from typing import List, Dict, Any, Union
+
+
+class PromptBuilder:
+    """Xây dựng Prompt chuẩn mực có grounding ngữ cảnh cho RAG."""
+    
+    @staticmethod
+    def build_rag_prompt(query: str, retrieved_chunks: List[Any]) -> str:
+        context_parts = []
+        for i, c in enumerate(retrieved_chunks, start=1):
+            if isinstance(c, dict):
+                content = c.get("content", "")
+                src = c.get("metadata", {}).get("source") or c.get("metadata", {}).get("filename", "Tài liệu")
+            else:
+                content = getattr(c, "content", str(c))
+                meta = getattr(c, "metadata", {})
+                src = meta.get("source") or meta.get("filename", "Tài liệu")
+            context_parts.append(f"[{i}] ({src}):\n{content}")
+            
+        context_str = "\n\n".join(context_parts) if context_parts else "Không tìm thấy ngữ cảnh nào."
+        
+        return f"""Bạn là trợ lý AI thông minh NotebookLM Mini. Nhiệm vụ của bạn là trả lời câu hỏi dựa trên các tài liệu đã được cung cấp.
+
+TÀI LIỆU THAM KHẢO:
+{context_str}
+
+CÂU HỎI:
+{query}
+
+HƯỚNG DẪN TRẢ LỜI:
+- Trả lời bằng tiếng Việt rõ ràng, mạch lạc, chính xác dựa trên tài liệu.
+- Trích dẫn số hiệu nguồn như [1], [2] tương ứng với thông tin bạn sử dụng.
+- Nếu tài liệu không chứa đủ thông tin, hãy nói rõ bạn không tìm thấy trong tài liệu.
+"""
+
 
 
 # ==============================================================================
@@ -19608,6 +20227,67 @@ class SearchEngine:
             
         return "\n\n---\n\n".join(context_parts), results
 
+    def search(
+        self, 
+        query: str, 
+        top_k: int = 5, 
+        notebook_id: Optional[str] = None,
+        selected_documents: Optional[List[str]] = None
+    ) -> List[Dict[str, Any]]:
+        """Tìm kiếm các đoạn văn bản liên quan nhất qua Hybrid Search + Reranker."""
+        target_nb = notebook_id or getattr(self.vector_store, "notebook_id", "default")
+        
+        # 1. Tìm kiếm thô qua HybridSearcher
+        try:
+            candidates = self.hybrid_searcher.search(
+                query=query, 
+                k=max(top_k * 3, 10), 
+                notebook_id=target_nb
+            )
+        except Exception as e:
+            logger.warning(f"Lỗi tìm kiếm Hybrid trong search: {e}. Fallback sang Vector search.")
+            candidates = self.vector_store.search(
+                query=query, 
+                limit=max(top_k * 3, 10), 
+                notebook_id=target_nb
+            )
+
+        # Lọc theo selected_documents nếu có
+        if selected_documents:
+            candidates = [
+                c for c in candidates
+                if c.get("metadata", {}).get("source_file") in selected_documents
+                or c.get("metadata", {}).get("filename") in selected_documents
+                or c.get("metadata", {}).get("title") in selected_documents
+                or c.get("metadata", {}).get("source") in selected_documents
+            ]
+
+        if not candidates:
+            return []
+
+        # 2. Rerank
+        try:
+            reranked = self.reranker.rerank(
+                query=query, 
+                documents=candidates, 
+                top_k=top_k
+            )
+            return reranked
+        except Exception as e:
+            logger.warning(f"Lỗi reranking: {e}")
+            return candidates[:top_k]
+
+
+
+
+# ==============================================================================
+# FILE: src/retrieval/vector_store.py
+# ==============================================================================
+
+from src.ingestion.indexing import VectorStoreManager
+
+__all__ = ["VectorStoreManager"]
+
 
 
 # ==============================================================================
@@ -19851,123 +20531,1680 @@ if __name__ == "__main__":
 
 
 # ==============================================================================
-# FILE: storage/bm25/1792000299911/bm25_docs.json
+# FILE: src/utils/logger.py
+# ==============================================================================
+
+import logging
+import sys
+
+# Đảm bảo console UTF-8 trên Windows / macOS
+if sys.stdout.encoding != 'utf-8':
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+)
+logger = logging.getLogger("notebooklm")
+
+
+
+# ==============================================================================
+# FILE: storage/bm25/1792087666310/bm25_docs.json
 # ==============================================================================
 
 [
   {
-    "chunk_id": "95e86e6a-e819-4619-8065-9ef763f462f8",
-    "text": "FPT SOFTWARE\nJOB DESCRIPTION\nABOUT COMPANY\nWe are a Next Generation Technology unit, focusing primarily on AI, Cloud, and Machine Learning.\nOur mission is to pioneer the application of emerging technolsogies to deliver breakthrough solutions\nthat drive digital transformation for global clients.\nWe believe that diversity is key to fostering innovation. That’s why we actively seek diverse talents,\nincluding expatriates and international professionals, to enrich our team with unique perspectives that\ncontribute to our sustainable growth and success.\nIf you are an expatriate or global-minded professional looking for an inclusive and international\nworkplace, we welcome you to join us – let’s shape the future of technology together.\nJOB OVERVIEW\nWe are seeking a talented AI Engineer to join our innovative engineering team. The successful\ncandidate will be responsible for developing, deploying, and maintaining AI/ML solutions while\nworking closely with data scientists and engineering teams",
+    "chunk_id": "d31b6ee7-903d-440c-878f-2beb379acc96",
+    "text": "Deep Learning\nComputer Vision\nNLP\nThang Nguyen\nViet Nguyen\nyoutube.com/@vietnh1009",
     "metadata": {
-      "source_file": "[FPT Software] AI Engineer Intern.pdf",
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
       "parser": "MarkItDownParser",
-      "notebook_id": "1792000299911",
-      "filename": "[FPT Software] AI Engineer Intern.pdf"
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
     }
   },
   {
-    "chunk_id": "de278807-6e7d-49d5-9ec1-746af530bba2",
-    "text": "will be responsible for developing, deploying, and maintaining AI/ML solutions while\nworking closely with data scientists and engineering teams to build intelligent, scalable applications\nthat solve complex business problems.\nRESPONSIBILITIES\n• Develop, test, and deploy AI models using Python\n• Work collaboratively with data scientists and other AI frameworks to build intelligent solutions\n• Manage the end-to-end model lifecycle, from development to deployment and monitoring\n• Validate and monitor model performance, accuracy, and reliability\n• Integrate AI models into existing systems and support application lifecycles\n• Implement Infrastructure as Code using AWS CDK (TypeScript) and develop Backend\nLambdas with TypeScript for serverless, event-driven AI solutions\n• Utilize AWS services including Lambda, DynamoDB, API Gateway, Cognito, SageMaker,\nBedrock, Comprehend, and related AI/ML tools for scalable and secure implementations\n• Design and architect scalable ML systems and",
+    "chunk_id": "4b672a25-e011-431c-8dca-3f4b6c572abe",
+    "text": "Nội dung\nDeep Learning Image Classification\n01 04\nTổng quan về Deep\nBài toán phân loại ảnh\nLearning\nNeural Network Object detection\n02 Cấu trúc của Neural 05 Bài toán định vị đối\nnetwork tượng\nConvolutional NN Other topics\n03 06\nImage segmentation,\nCấu trúc của CNN\nGANs",
     "metadata": {
-      "source_file": "[FPT Software] AI Engineer Intern.pdf",
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
       "parser": "MarkItDownParser",
-      "notebook_id": "1792000299911",
-      "filename": "[FPT Software] AI Engineer Intern.pdf"
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
     }
   },
   {
-    "chunk_id": "82377216-cb46-4740-90e1-0dce224b9e02",
-    "text": "SageMaker,\nBedrock, Comprehend, and related AI/ML tools for scalable and secure implementations\n• Design and architect scalable ML systems and infrastructure to handle high-volume AI\nworkloads\n• Manage containerization with Docker and orchestration with Kubernetes for ML model\ndeployment\n• Build and optimize CI/CD pipelines for AI/ML model deployment and infrastructure\nautomation\n\nFPT SOFTWARE [legal entity/location]\n• Document processes, characteristics, and metrics to support reproducibility and compliance\n• Implement monitoring and alerting systems for AI/ML models in production\n• Participate in incident response and model performance troubleshooting\nREQUIREMENTS\nBasic Qualification\n• Proficiency in Python for AI and machine learning development\n• Strong experience with AI/ML frameworks (TensorFlow/PyTorch) and core ML concepts\n• Knowledge of model performance validation, accuracy assessment, and reliability testing\n• Experience with AWS CDK (TypeScript) for Infrastructure as",
+    "chunk_id": "d7050cec-7d53-47a0-9fed-fc46c60afe35",
+    "text": "Tổng quan về Deep Learning",
     "metadata": {
-      "source_file": "[FPT Software] AI Engineer Intern.pdf",
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
       "parser": "MarkItDownParser",
-      "notebook_id": "1792000299911",
-      "filename": "[FPT Software] AI Engineer Intern.pdf"
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
     }
   },
   {
-    "chunk_id": "0e7b4bf2-a88e-4e24-801b-da9e3e162aed",
-    "text": "Knowledge of model performance validation, accuracy assessment, and reliability testing\n• Experience with AWS CDK (TypeScript) for Infrastructure as Code\n• Experience with Lambda (TypeScript) for serverless backend development\n• Knowledge of AWS AI/ML services: SageMaker, Bedrock, Comprehend\n• Hands-on experience with Docker and Kubernetes for ML model containerization and\norchestration (KubeFlow)\n• Experience building CI/CD pipelines for AI/ML model deployment and infrastructure\nautomation\n• System design skills for scalable ML architectures and high-volume AI workloads\n• Experience with monitoring and alerting systems for AI/ML models in production\nNice to have\n• Professional certifications\n• Languages (Japanese N2/German B2/…)\n• Experience in specific industries (fintech, healthcare, e-commerce)\n• Knowledge of compliance frameworks (GDPR, SOC2, ISO 27001)\n• Knowledge of emerging AI trends and technologies\n• Team management and technical leadership experience\n• Client consulting and",
+    "chunk_id": "79c8e022-04c3-432a-b9e6-e551777ee314",
+    "text": "Tổng quan về Deep Learning",
     "metadata": {
-      "source_file": "[FPT Software] AI Engineer Intern.pdf",
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
       "parser": "MarkItDownParser",
-      "notebook_id": "1792000299911",
-      "filename": "[FPT Software] AI Engineer Intern.pdf"
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
     }
   },
   {
-    "chunk_id": "91b5f71f-ae02-43aa-817f-32d9930c24ae",
-    "text": "SOC2, ISO 27001)\n• Knowledge of emerging AI trends and technologies\n• Team management and technical leadership experience\n• Client consulting and stakeholder management skills\nWHAT COMPANY OFFERS\n• Competitive salary and comprehensive benefits package\n• FPT Care insurance plan tailored for FPT employees\n• Opportunity to work on cutting-edge AI/ML projects with global impact\n• International and diverse work environment\n• Professional development and certification support\n\nFPT SOFTWARE [legal entity/location]\n\n•  Flexible working arrangements and modern technology stack\n•  Career growth opportunities in a rapidly expanding technology unit\nCONTACT\n| Title mail    | [AI Engineer Intern] Full name - Phone  |     |\n| ------------- | --------------------------------------- | --- |\n| Email         | HuyenNV2@fpt.com                        |     |\n| Phone number  | 0389 289 922                            |     |\n\nFPT Software – You Can Make IT",
+    "chunk_id": "94b0d8d9-3080-4960-a5b2-b854cef00075",
+    "text": "Deep Learning for Computer Vision",
     "metadata": {
-      "source_file": "[FPT Software] AI Engineer Intern.pdf",
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
       "parser": "MarkItDownParser",
-      "notebook_id": "1792000299911",
-      "filename": "[FPT Software] AI Engineer Intern.pdf"
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
     }
   },
   {
-    "chunk_id": "e0a97a98-17c4-4288-8a30-48fc766d90b9",
-    "text": "W–Am: Hi, Charlie. The driver who usually delivers our **..** **merchandise.** to the J.M. Cuisine store is out today. Do you think you could make his four o’clock **.** **delivery..** for him this afternoon?\nM–Cn: Alright, but I’ve never made any **.** **deliveries..** to that store before, so I’ll need some **..** **directions.**. How do I get there from our **..** **warehouse.**?\nW–Am: I **..** **suggest.** taking **..** **Route 5.** and getting off at the **...** **6th Street exit** **...**. Once you’re there, don’t forget to have the store **..** **manager.** sign the delivery **...** confirmation form**...**.\n\n###",
+    "chunk_id": "06104575-9c32-489f-9bf8-3650fb5a86fc",
+    "text": "Deep Learning for Computer Vision",
     "metadata": {
-      "source_file": "BT_SCRIPT IN CLASS 10.docx",
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
       "parser": "MarkItDownParser",
-      "heading_level": 3,
-      "notebook_id": "1792000299911",
-      "filename": "BT_SCRIPT IN CLASS 10.docx"
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
     }
   },
   {
-    "chunk_id": "d0a78ae8-0992-47ec-a0b5-30c11e52c677",
-    "text": "M–Cn: Hi Tricia, I was just looking over the **..** **advertisement.** that you finished for Jenning Bank, and you did a wonderful job.\nW–Am: Thanks, it was a great **..** **campaign.** to work on.\nM–Cn: Would you consider joining my team for our new **...** with Circle Bookings? They’re a popular travel Web site, and they’re looking to **..** **expand.** their **..** **market.** with some new **..** **advertisements.**.\nW–Am: It sounds **.** **exciting..**, but at this point I really can’t say. I have a meeting with my **..** **manager.** tomorrow morning though.\nM–Cn: OK. Would it help if I stop by your **.** **meeting..** and go over the **..** **details.** with both of you? This way, your manager will know what the **..** **project entails.** **...**.\nW–Am: That sounds good.\n\n###",
+    "chunk_id": "4d6f38f0-8233-4389-a8eb-0659ac9f7d39",
+    "text": "Deep Learning for Computer Vision",
     "metadata": {
-      "source_file": "BT_SCRIPT IN CLASS 10.docx",
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
       "parser": "MarkItDownParser",
-      "heading_level": 3,
-      "notebook_id": "1792000299911",
-      "filename": "BT_SCRIPT IN CLASS 10.docx"
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
     }
   },
   {
-    "chunk_id": "3dfe68a4-07de-4e84-aaa5-43e8ae5e3261",
-    "text": "W–Br: Mr. Colson, I’m a **.** journalist**..** for Health and **..** Wellness**.** Magazine. May I ask you a few questions about the new employee wellness program that you **.** introduced**..** at your company? I’ve heard wonderful things about it.\nM–Cn: Sure, thank you! Well, **..** basically**.** we focused on changes to our employee **..** cafeteria**.**. We hired Capers **..** Caterers**.** to create **..** healthy**.** menu **..** options**.**. They now **..** provide**.** all of the food for the cafeteria.\nW–Br: So what about costs? Doesn’t that make the program very **..** expensive**.**?\nM–Cn: Well, yes it does. But we feel the increase in cost is worth it in terms of employee health and morale.\n\n###",
+    "chunk_id": "8c27d5fc-1723-4af3-9be3-bad3b5012c76",
+    "text": "Neural Network vs Deep Learning",
     "metadata": {
-      "source_file": "BT_SCRIPT IN CLASS 10.docx",
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
       "parser": "MarkItDownParser",
-      "heading_level": 3,
-      "notebook_id": "1792000299911",
-      "filename": "BT_SCRIPT IN CLASS 10.docx"
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
     }
   },
   {
-    "chunk_id": "fc08cbc0-0af8-4329-8777-0cb59db64fc7",
-    "text": "W–Am: I can’t wait to hear William McGraw’s **..** speech**.** today! I’ve read so many of his articles on **..** risk management**.**.\n I think this is one of the best business management **.** conferences**..** I’ve ever attended.\nM–Au: I know, and there are so many people here!\n It looks like the only **..** available seats**.** **...** are here in the back. Let’s just sit in this row.\nW–Am: The last row? I think we can do better.\n I’d like to see the **..** slides**.** that go with the **..** presentation**.** up close.\nM–Au: Oh, don’t worry about that. Look over there!\n There’re presentation **.** handouts**..** piled up close to the front **..** entrance**.**. I’ll get a **..** copy**.** for you if you’d like.",
+    "chunk_id": "d9a40963-c0fc-4abf-84d7-73eb1e69f428",
+    "text": "Image Classification",
     "metadata": {
-      "source_file": "BT_SCRIPT IN CLASS 10.docx",
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
       "parser": "MarkItDownParser",
-      "heading_level": 3,
-      "notebook_id": "1792000299911",
-      "filename": "BT_SCRIPT IN CLASS 10.docx"
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
     }
   },
   {
-    "chunk_id": "712a8bbb-91b5-4acd-9893-f60722a6dac8",
-    "text": "W–Am: Hello, Mr. Tan.\n Didn’t your company use Zane **.** Staffing**..** Company to find a lot of your employees? Are you happy with the service they provide?\n M–Au: Yes, we’ve used Zane several times to find **..** qualified temporary help**.** **...**.\n W–Am: Now that it’s summer, my **..** landscaping**.** business is getting pretty busy. I’d like to hire a few **.** part time**..** employees to help with some of our larger **..** outdoor jobs**.** **...**.\n M–Au: Oh, actually Zane **.** focuses**..** on filling **.** office**..** jobs, so I don’t think that their company would be the right one for you. I’m sure if you look on the **..** internet**.**, you’ll find a company that specializes in staffing for landscaping work, though.",
+    "chunk_id": "c5b11b63-a172-42da-96e8-e1b280775158",
+    "text": "Dataset",
     "metadata": {
-      "source_file": "BT_SCRIPT IN CLASS 10.docx",
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
       "parser": "MarkItDownParser",
-      "heading_level": 3,
-      "notebook_id": "1792000299911",
-      "filename": "BT_SCRIPT IN CLASS 10.docx"
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "8b3fa18a-e023-4213-8f48-669ce3ce7a4c",
+    "text": "Linear Classifier - score function\nMatrix multiplication\nElement-wise multiplication",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "8d5373f4-c14a-41a6-95de-154440854db5",
+    "text": "Linear Classifier explanation\nMNIST dataset",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "5a805cc3-c235-4188-8219-2c20ef18faa2",
+    "text": "Linear Classifier - Weight visualization",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "968a864c-60d8-4877-876a-5674cdd24f0e",
+    "text": "Linear Classifier - Weight visualization",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "facfa2cc-9fd8-438d-ac60-a9aef142ec73",
+    "text": "Linear Classifier - Weight visualization",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "1a51bdfb-5490-413d-8e22-86f10913ea2f",
+    "text": "Linear Classifier - Weight visualization\nCIFAR dataset",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "da1bdcb8-7715-4a28-8726-61594be41c2c",
+    "text": "Biological Neuron vs Artificial Neuron\nNeuron = linear classifier + activation function",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "fa659e34-b168-4b2b-b313-3627e4727b1e",
+    "text": "From linear classifier to neuron",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "ddf71d79-6841-4fb3-a03b-b06871daf872",
+    "text": "Activation function",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "802267f3-0e92-4700-bebe-394ed418c00e",
+    "text": "Neural Network Architecture",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "3c27522a-0b5f-4fe0-8414-d9bbec5639bf",
+    "text": "Neural Network\nForward propagation\nFeedforward neural network\nDemo\nForward pass",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "5bc3231f-5f46-477d-815f-8776d7c8c72e",
+    "text": "Complete example of Neural Network\nDemo",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "d95f0280-4fff-49fa-a7aa-bd211e7bd63a",
+    "text": "Deep Neural Network\nDemo",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "c865f75f-91d0-4913-becc-93561d8adf9a",
+    "text": "Loss function",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "d2baff74-83d9-434e-a2d7-329a12139134",
+    "text": "Loss function\nRegression Classification\nCross-Entropy Loss\nMean Absolute Error Loss\nMean Squared Error Loss\nHuber Loss",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "a95adbd2-2c5e-44f3-bff0-caae84afe351",
+    "text": "Loss function\nMean Absolute Error Loss",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "42adbff8-8616-487f-9dec-c782f35edd39",
+    "text": "Loss function\nMean Squared Error Loss",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "4e1cdd9f-c008-42b3-8332-5f8459c39c94",
+    "text": "Loss function\nCross-Entropy Loss",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "2550999b-d4dd-4557-9926-a123985b1bfc",
+    "text": "Gradient",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "caa2874b-8c07-4625-8f22-28b4b1831e84",
+    "text": "Optimization function\nGradient Descent",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "b45fb781-ee23-4eb0-9f82-1ff58e8e70fd",
+    "text": "Optimization function\nGradient Descent in Linear Classifier vs Neural network",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "9d5a3f55-aed6-4ebc-9ba1-58c27b0ccd00",
+    "text": "Gradient Descent: Different versions\n(Stochastic ) Mini-batch\n| Batch Gradient Descent | Stochastic Gradient Descent  |     |\n| ---------------------- | ---------------------------- | --- |\nGradient Descent\nTất cả datapoints  Từng datapoint một sẽ  N datapoint sẽ được đưa\nđược đưa vào mô hình  được đưa vào mô hình để  vào mô hình cùng lúc  để\n| cùng 1 lúc để tính  | tính gradient | tính gradient |\n| ------------------- | ------------- | ------------- |\ngradient",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "346f1d72-2749-4ad0-9c06-da72feba31f7",
+    "text": "How parameters are updated?",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "3f12a563-5a1b-45ed-aa46-096838ba8ade",
+    "text": "Challenge with Gradient Descent: Loss function",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "cf5a7b85-194e-42e9-9355-8b66363112c9",
+    "text": "Challenge with Gradient Descent: Local minima",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "30d356aa-447e-480e-84f6-0b41f1e994b0",
+    "text": "Challenge with Gradient Descent: Saddle points",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "94aebad8-2f33-4660-bd3b-aec44467ea32",
+    "text": "Challenge with Gradient Descent: Ravines",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "4078765e-1293-4bf5-9e7e-01d6a4408eb5",
+    "text": "Momentum",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "8a64de29-a82c-4d70-8e5d-d18cb8deca17",
+    "text": "Momentum",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "3b4c117f-b22f-40b4-9fd4-6e9f72696227",
+    "text": "Adaptive Gradient Descent (1)",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "21a67427-925c-4672-aa7d-b10b0df197d5",
+    "text": "Adaptive Gradient Descent (2)",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "7cb53948-f053-4ec0-acff-8fdf1d78ef1a",
+    "text": "Adaptive Gradient Descent (3)",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "cae089db-69d8-47c4-8ee0-1a714ef957b1",
+    "text": "Adaptive Gradient Descent (4)",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "82f0cd25-1357-4545-a4e1-6dc630216061",
+    "text": "Adaptive Gradient Descent (4)",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "4e632424-126e-4f62-8e48-b90589910ef9",
+    "text": "Root Mean Square Propagation",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "fa02ff72-52ef-4649-a689-627e6a3ac449",
+    "text": "BackPropagation",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "f2253792-1ab0-4f77-97e9-e12e897e9114",
+    "text": "BackPropagation",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "53b6c2ac-bfe8-4e46-bead-f029610f5cc4",
+    "text": "Backpropagation",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "ff0310af-e38a-469f-b0bb-5e229a048f4d",
+    "text": "BackPropagation - example\nforward\nbackward",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "4cb5afec-c75b-4fdb-b2e8-45e4d1225cb5",
+    "text": "BackPropagation - example\nforward\nbackward",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "1d524de7-1877-42aa-b831-eda0a107cff9",
+    "text": "BackPropagation - example\nforward\nbackward",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "d169121b-b9b6-40c7-9290-fc7e6002f51e",
+    "text": "BackPropagation - example\nforward\nbackward",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "44276c1d-4699-4998-83bb-5f0bcf50c0e8",
+    "text": "BackPropagation - example\nforward\nbackward",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "0a166a1d-2616-4074-aa64-64a3967346ed",
+    "text": "BackPropagation - example\nforward\nbackward",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "65f04c6f-ca90-4f1e-9bfe-67d865c2ec2d",
+    "text": "BackPropagation - example\nforward\nbackward",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "56111172-f2ee-472c-aff8-1a40ad1a2dc1",
+    "text": "BackPropagation - explanation",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "c39732ce-d9e8-412c-911b-111101f4d021",
+    "text": "Neural network’s learning process\nDemo",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "3a362221-bce5-4dda-9c0f-aa2adebb9986",
+    "text": "Parameters vs Hyperparameters",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "55239500-3aba-425f-aa59-cbb9c2ff3df8",
+    "text": "Neural Network",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "830ea4b5-dbbe-482c-9c89-97d99100dcfa",
+    "text": "Gray image is represented in Computer Vision",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "2312794c-afff-4692-9d1b-c7e830f21018",
+    "text": "Color image is represented in Computer Vision",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "697dba3d-255c-4017-9894-d842a45b9d2f",
+    "text": "Data preprocessing",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "44064367-30a4-4433-ab52-08fc8c80cad9",
+    "text": "Train a (Convolutional) Neural Network in Pytorch\n|                        | 01     |                    | 02       |                     | 03     |                  | 04  |\n| ---------------------- | ------ | ------------------ | -------- | ------------------- | ------ | ---------------- | --- |\n| Step 1                 |        | Step 2             |          | Step 3              |        | Step 4           |     |\n|                        |        |                    |          | Define a loss       |        | Define an        |     |\n| Setup a dataset        |        | Define a model     |          |                     |        |                  |     |\n|                        |        |                    |          | function            |        | optimizer        |     |\n| Xây dựng 1 dataset từ  |        |                    |          | Chọn/tự xây dựng 1  |        |                  |     |\n|                        |        | Định nghĩa mô hình |          |              ",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "815bfa31-6f28-431a-aa44-459fb08ff55c",
+    "text": "         | Chọn/tự xây dựng 1  |        |                  |     |\n|                        |        | Định nghĩa mô hình |          |                     |        | Chọn 1 optimizer |     |\n| tập ảnh                |        |                    |          | hay nhiều hàm loss  |        |                  |     |\n|                        |        | 05                 |          | 06                  |        | 07               |     |\n|                        | Step 5 |                    | Step 6   |                     | Step 7 |                  |     |\n|                        | Train  |                    | Validate |                     | Test   |                  |     |\nĐánh giá trong quá\n|     | Huấn luyện mô hình  |     |     |     | Đánh giá mô hình cuối  |     |     |\n| --- | ------------------- | --- | --- | --- | ---------------------- | --- | --- |\ntrình huấn luyện với\n|     | với training data |     |     |     | cùng với test data |     |     |\n| --- |",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "d69db1f5-f890-48b9-9294-c6cc742ae6c9",
+    "text": "| ---------------------- | --- | --- |\ntrình huấn luyện với\n|     | với training data |     |     |     | cùng với test data |     |     |\n| --- | ----------------- | --- | --- | --- | ------------------ | --- | --- |\nvalidation data",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "82bd4819-5f81-4d38-8ede-883ac38ac0a4",
+    "text": "Pytorch: tensor\nTensor in Pytorch is equivalent to Array in Numpy",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "2cf088d4-737a-4991-a13f-35c47ddbe4df",
+    "text": "Pytorch: tensor",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "e62a1e46-ae7b-4a3d-8a23-eb6d11162a8f",
+    "text": "Pytorch: tensor",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "6235da85-26e3-468e-942f-c117546e6061",
+    "text": "Pytorch: Image to tensor",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "49634269-9131-4aa0-bf14-8d677bec004b",
+    "text": "Pytorch: Datasets\nBuilt-in datasets CIFAR dataset",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "de2ff127-d2db-4336-9873-c2395c5bf4b5",
+    "text": "Pytorch: Datasets\nImageFolder Butterfly dataset",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "197c264e-f28c-4ab6-a270-989bd8a4e6ba",
+    "text": "Pytorch: Built-in datasets\nPytorch all built-in datasets",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "710c47c5-237e-4d80-91df-cc81b9c4bcf6",
+    "text": "Pytorch: Datasets",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "e895c24f-c05a-4d71-a15b-df8b55c515ff",
+    "text": "Step 1: Setup a dataset",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "ad3905bd-b491-4d7e-ab47-a7a8096e7a00",
+    "text": "Step 2: Define a Neural Network",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "44d1f982-b67b-47fb-990f-ea67259bc714",
+    "text": "Step 3: Define a loss function and an optimizer",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "36fe302e-7463-433a-83ed-a47f2db850bf",
+    "text": "Step 4: Train the network",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "a8e3da96-c3f1-4368-9185-aa4e26837cc8",
+    "text": "Step 4: Train the network",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "f24c354b-7e4c-4f8c-a52b-ca7cf9e72b12",
+    "text": "Convolutional Neural Network",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "3ab5079a-6685-4cb5-a940-da7a4963b0e3",
+    "text": "Problems in Neural Network\nVariations\nScalable\n● Position\n● Memory\n● Orientation\n● Calculation\n● Scale",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "16b2872a-1ffd-45bb-a0eb-c32dfdec7622",
+    "text": "Convolutional Neural Network",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "cddd23f5-43cf-46bf-944b-7577761ce64a",
+    "text": "Convolutional Neural Network",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "5ca0ecff-a849-4cb4-95f2-9d2a4e5de2c1",
+    "text": "Convolutional operation",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "5b02974b-fe92-4f77-b122-c3243882fac8",
+    "text": "Convolutional operation",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "2712eb1d-87bf-460e-bb79-674fd1cde78c",
+    "text": "Convolutional operation on Volume",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "7d86846d-8b1a-44df-8d46-da290f3204dc",
+    "text": "Convolutional operation on Volume",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "fffff218-2e4d-4a56-b67a-84fc6cce8de3",
+    "text": "Convolutional operation with multiple Filters/Kernels",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "92a8da65-9001-4f57-b45a-26deb4487bbf",
+    "text": "1x1 Convolutional operation",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "56406396-2267-4636-a29e-f86143b5de7a",
+    "text": "Convolutional layer",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "335e0acc-bb58-48a0-b2a5-dd9665cd43af",
+    "text": "Convolutional layer’s advantage\nLocal Connectivity Parameter Sharing",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "5115ee66-fbb1-4761-b255-94929ec35f27",
+    "text": "Convolutional layer’s advantage",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "77372a71-452b-4b70-a1a1-06b410589c5a",
+    "text": "Pooling layer",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "7dd4cdbc-94a6-4629-ac92-66d1d983384a",
+    "text": "Internal Covariate Shift",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "3d76c657-7967-403a-b596-26dc34f12e59",
+    "text": "Batch Normalization layer\nBatch Normalization",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "c893a92f-30dd-4492-b75f-9da617347a28",
+    "text": "Why Normalization helps?",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "bd44792e-4f0d-4a87-b8f7-86cb7395406b",
+    "text": "Batch Normalization: Training phase",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "11858100-c771-4bb5-8fbd-80fd919de869",
+    "text": "Batch Normalization: Inference phase",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "f1d36835-6c28-423f-ae94-1999c043f50b",
+    "text": "Normalization layer",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "845a3bbe-bc57-41c1-b1ec-5005e3190e9f",
+    "text": "Dropout layer",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "19d8c2fd-a3e5-4d0f-81f0-e673f880c581",
+    "text": "Common CNN’s layer pattern (part 1)\nHình thức phổ biến nhất của CNN: Các layer lần lượt được sắp xếp theo thứ tự sau:\n1. Một vài block của Conv->(BatchNorm)->ReLU\n2. Max-pooling\n3. Lặp lại bước 1 và 2 cho đến khi feature map đủ bé\n4. Flatten (làm phẳng) feature map\n5. Một (vài) fully connected layer",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "780cf895-96fd-4aae-9f37-bbda55c6878d",
+    "text": "Receptive Field",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "74ef3364-f600-4a60-a92e-3bb12d88e1d4",
+    "text": "Receptive Field",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "7169a5d7-2666-4265-a39d-cf3ea9326236",
+    "text": "Receptive Field\nAdd more Conv layers How to increase Receptive field\n01\nMake the network deeper\nAdd pooling layers\n02\nsub-sampling\nUse Dilated Conv\n03\nUse Depth-wise Conv\n04",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "4143faf8-ccb3-4e99-a0e7-3b787bfb9dcf",
+    "text": "Common CNN’s layer pattern (part 2)\nNhiều Conv layer với filter/kernel bé tốt hơn 1 Conv layer với filter/kernel lớn\n2 3x3-kernel Conv layers 1 5x5 kernel Conv layer\nReceptive field of last layer 5x5\n| Number of parameters        | 2*3*3 | 5*5 |\n| --------------------------- | ----- | --- |\n| Number of non-linear layers | 2     | 1   |",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "4a53bc93-e759-453c-8802-6829228c0627",
+    "text": "Effective Receptive Field",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "dd72ca9e-8dd2-41a5-9ea5-96011846cc46",
+    "text": "Use Pooling layer",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "59ecddff-65a9-4f89-a140-abe9769b5bc1",
+    "text": "Dilated/Atrous Convolutions",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "a6801e37-4743-42d9-a897-65254e7c40f4",
+    "text": "Common CNN’s layer pattern (part 3)\nLàm sao để thiết kế CNN architecture?\nRule 1: Don’t be a hero. Use whatever works best one ImageNet",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "dd765e2a-7320-487f-8fe4-00abf5a3b1e4",
+    "text": "Common CNN’s layer pattern (part 3)\nLàm sao để thiết kế CNN architecture?\nRule 2: If rule 1 does not work, you could consider the following question\n● Mô hình nên có bao nhiêu layer?\n● Mỗi layer nên có parameter như thế nào?\n○ Convolutional có bao nhiêu channel? Kernel size là bao nhiêu?\n○ Nên dùng activation function gì?\n○ Pooling nên có kernel size là bao nhiêu?\n○ Nên flatten feature map ở đâu?\n○ Nên có bao nhiêu fully connected layer?\n○ Có nên dùng Batchnorm, Dropout, …?",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "6a6d1bc2-a87f-488c-a35e-85fd4a61bd92",
+    "text": "Common CNN architectures",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "96d891a8-ce6a-491f-ac91-edde163c845e",
+    "text": "ImageNet Large Scale Visual Recognition Challenge",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "84407a0f-4364-48c3-890c-10ff8d455cc5",
+    "text": "LeNet (1998)",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "ec368bc9-e2da-4601-9b0c-0540cf611535",
+    "text": "AlexNet (2012)",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "f55bea94-c462-4bd7-aa39-2792d37332b0",
+    "text": "LeNet vs AlexNet",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "a013a4ac-00a5-47cc-bdd6-d8fece13923c",
+    "text": "VGGNet (2014)",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "5a51648e-f7a9-4d9e-a1a5-496fe7634f6a",
+    "text": "VGGNet (2014)",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "bccd60b7-2fd2-4f30-abf0-05bd57574fec",
+    "text": "Universal Approximation Theorem",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "21345146-2b80-4c47-8f66-356dc54c76a7",
+    "text": "ResNet (2015)",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "4a267109-63d8-4b09-97ef-850a2eab82b0",
+    "text": "ResNet (2015)",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "27c9e138-3fe5-4ce2-81a0-86d74c97c86e",
+    "text": "Problems in Neural Network: Vanishing gradients",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "105ea7f2-cc1b-4d36-aa3f-f81adeaf3e67",
+    "text": "Sigmoid vs Vanishing gradients",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "dd5a4d3c-3ad3-4996-b26c-395b6af48194",
+    "text": "ReLU vs Vanishing gradients",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "c3e8b8e7-8fce-4a46-8b35-aa47727ccc9b",
+    "text": "Leaky ReLU vs Vanishing gradients",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "eed58168-8c5d-4891-948e-e91fecc56f5f",
+    "text": "Các biến thể khác của ReLU",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "b154e45a-d9f1-4f83-b12d-63d7e98ddc3d",
+    "text": "SWISH",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "a2185676-5dd0-4e60-82c5-ad0353f59dd0",
+    "text": "Problems in Neural Network: Exploding gradients\nNgược lại với vanishing gradient\nDấu hiệu\n● Model’s parameter tăng rất nhanh (exponential growth)\n● Model’s parameter có thể thành NaN trong quá trình training\n● Loss trở thành NaN trong quá trình training\n● Loss lớn dù train lâu\nNguyên nhân\n● Improper initial weights => large weight update\n● Poor initial learning rate\n● Poor loss function => large loss value => large weight update",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "7cb9ab1f-4b8f-4694-8125-05331700e8f7",
+    "text": "Solutions for Vanishing/Exploding gradients\n● Proper activation functions, like ReLU and its derivative\n● Batch Normalization\n● Regularization\n● Proper weight initialization\n● Gradient clipping (against exploding gradients)\n○ By values\n○ By norm",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "8f5be69a-88c3-44a4-8cc3-376199926ff5",
+    "text": "Weight initialization\n● Performance của CNN/NN phụ thuộc vào weight initialization\n● Các lợi ích của good weight initialization:\n○ Reproducible model\n○ Model converge faster\n○ Tránh được vanishing/exploding gradients\n● Các cách phổ biến:\n○ Zero/Constant/Random initialization",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "48570d7e-b44d-45db-bcd3-dfa76cbbc02a",
+    "text": "Weight initialization: Zero/Constant initialization\n● Tất cả các parameter đều được khởi tạo là 0 hoặc 1 giá trị cố định\n● Tất cả các node sẽ học theo cùng 1 cách/1 kiểu => fail to break\nsymmetry\n● Luôn dẫn đến kết quả tồi",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "dc316de5-e329-4343-8fab-06b9845918ad",
+    "text": "Weight initialization: Random initialization\n● Giải quyết được vấn đề break the symmetry\n● Có thể dẫn đến vấn đề mới: Vanishing/exploding gradients\n● Random initialization from a distribution:\n○ Random Normal\n○ Random Uniform",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "bedef20c-bbf1-4cfc-946a-498c249abe5e",
+    "text": "Weight initialization: Xavier/Glorot initialization\n● Được áp dụng cho các layers (fully connected layers, Conv layers) mà\nsử dụng activation function là sigmoid hay tanh\n● Có 2 phiên bản:",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "b619219f-9e8d-482f-8e21-f2e04577367b",
+    "text": "Weight initialization: He/Kaiming initialization\n● Được áp dụng cho các layers (fully connected layers, Conv layers) mà\nsử dụng activation function là ReLU và các biến thể của nó\n● Có 2 phiên bản:",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "8f4cde3b-71d4-47c7-a824-985ced841f31",
+    "text": "Gradient clipping",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "e52f71b3-224c-4a02-832e-275c7cdaa9b0",
+    "text": "Transfer Learning",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "888838f7-c49c-4519-b8a0-f6fd9c0caf36",
+    "text": "Transfer Learning: Use CNN as fixed feature extractor",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "2062cb4d-a839-4e9f-b7ee-dd94d5d12ba8",
+    "text": "Transfer Learning: Fine-tune CNN",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "738abd9c-b7c9-4d5a-a829-d5fea518d3e0",
+    "text": "Transfer Learning: How to choose approach",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "ea572c12-26f3-4320-88d3-e40f70392acc",
+    "text": "Data augmentation",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "39d723a7-b76b-4070-827d-62bd2ed51a2b",
+    "text": "Data augmentation: Position manipulation\nAnother name: Geometric transformations",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "1c2280a5-7ff4-4c4d-9b59-03dc54a9c39b",
+    "text": "Data augmentation: Color manipulation\nAnother name: Color distortion",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "db54d85b-387c-4297-a4ba-601ada42182c",
+    "text": "Data augmentation: Example",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "1474f804-eab9-414b-9977-66f1e7e855cc",
+    "text": "Data augmentation: Example",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "b7426563-88e1-415c-ab95-bd4b06a95075",
+    "text": "Object Detection",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "af7005d0-7a1d-4e03-aaa1-d3515c2e11bf",
+    "text": "Image Classification vs Object Detection",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "25e731f5-d95a-4ab9-acd8-c573b4906a16",
+    "text": "Object Detection",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "e262369f-6ddd-4323-ab8b-07cbe74023dc",
+    "text": "Object Detection - Single Object",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "53c36bf2-c2b4-455c-bf22-7d41184ee0b8",
+    "text": "Object Detection - Multiple Objects",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "f9d7f22f-eb56-476e-9e46-a6be330a1981",
+    "text": "Sliding Windows",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "1625defe-5bbb-4d28-908b-1d34b1ded8c3",
+    "text": "Selective Search",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "d26ee489-733a-4b83-b3b0-31d8a950604f",
+    "text": "R-CNN -> Fast R-CNN -> Faster R-CNN",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "1a35e8fe-60a1-4f8b-8acb-7244fb6e58eb",
+    "text": "R-CNN -> Fast R-CNN -> Faster R-CNN",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "eb5b7f03-65df-45d1-bce7-5dba5c982793",
+    "text": "R-CNN -> Fast R-CNN -> Faster R-CNN",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "1f8c177c-1f44-4240-8437-b9459a26be92",
+    "text": "Bounding box regression\npredict\nlabel\np: region proposals (anchors)\ng: actual bbox\nĝ: predicted bbox",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "be6df7d0-b018-4c2a-9a29-c24f5e7e9282",
+    "text": "Intersection over Union",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "8efa7e42-e398-479b-8c2c-751fa94e56be",
+    "text": "Non-maximum Suppression",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "48937c57-b6cd-476a-90c7-efb46a87d6b0",
+    "text": "Mean Average Precision",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "475b8a78-0244-439c-a3df-0ad4152c2102",
+    "text": "R-CNN -> Fast R-CNN -> Faster R-CNN",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "93523ddf-b06d-4b20-a6ec-cc312239f015",
+    "text": "RoI Pooling",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "f1e71536-b167-4f8d-bbcd-8042193d90ba",
+    "text": "R-CNN -> Fast R-CNN -> Faster R-CNN",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "ade3b7ba-a9ca-4407-91b5-42c02385ab50",
+    "text": "R-CNN -> Fast R-CNN -> Faster R-CNN",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "f32bf7b6-f6f3-41b3-9fa9-ab20fbed2f88",
+    "text": "Anchors",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "aec3013d-6938-441f-9dd3-8f0f015b2feb",
+    "text": "Region Proposal Network (RPN)",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "49f1b326-2cec-4d5f-87ab-c5bd6a0dde27",
+    "text": "Faster R-CNN losses",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
+    }
+  },
+  {
+    "chunk_id": "42488390-103e-42b4-b7d2-a41cf72bb964",
+    "text": "Comparison",
+    "metadata": {
+      "source_file": "Deep Learning_Computer Vision (khoahochatde.com).pdf",
+      "parser": "MarkItDownParser",
+      "notebook_id": "1792087666310",
+      "filename": "Deep Learning_Computer Vision (khoahochatde.com).pdf"
     }
   }
 ]
 
 
 # ==============================================================================
-# FILE: storage/bm25/1792000299911/bm25_index.pkl
+# FILE: storage/bm25/1792087666310/bm25_index.pkl
 # ==============================================================================
 
-# Error reading storage/bm25/1792000299911/bm25_index.pkl: 'utf-8' codec can't decode byte 0x80 in position 0: invalid start byte
+# Error reading storage/bm25/1792087666310/bm25_index.pkl: 'utf-8' codec can't decode byte 0x80 in position 0: invalid start byte
 
 
 
@@ -40040,6 +42277,338 @@ if __name__ == "__main__":
       "title": "Trí tuệ nhân tạo – Wikipedia tiếng Việt",
       "heading_level": 2
     }
+  },
+  {
+    "chunk_id": "78a55ea6-343f-4775-accf-ca6760b73807",
+    "text": "[📓 NotebookLM-Mini (Local AI Edition)]\nNotebookLM-Mini là một trợ lý học tập cá nhân dựa trên kiến trúc **Retrieval-Augmented Generation (RAG)**. Phiên bản này đã được thiết kế lại hoàn toàn để chạy **100% Offline (Không cần Internet)** sử dụng trí tuệ nhân tạo cục bộ (Local AI), đảm bảo bảo mật tuyệt đối dữ liệu cá nhân của bạn.",
+    "metadata": {
+      "source": "Tài liệu",
+      "type": "text",
+      "breadcrumbs": "📓 NotebookLM-Mini (Local AI Edition)",
+      "page": 1,
+      "notebook_id": "default"
+    }
+  },
+  {
+    "chunk_id": "31938424-e8e3-4dcb-b1f2-d3c3496e03a1",
+    "text": "[📓 NotebookLM-Mini (Local AI Edition)]\nDự án cho phép bạn tải lên tài liệu cá nhân (PDF, DOCX, PPTX, HTML...), tự động phân tích và tương tác qua:\n- 💬 **Hỏi đáp siêu tốc** với trích dẫn chính xác.\n- 📝 **Tóm tắt thông minh** sử dụng kỹ thuật Map-Reduce.\n- 🎯 **Tạo bài trắc nghiệm (Quiz) & Flashcards** tự động để ôn tập.\n---",
+    "metadata": {
+      "source": "Tài liệu",
+      "type": "text",
+      "breadcrumbs": "📓 NotebookLM-Mini (Local AI Edition)",
+      "page": 1,
+      "notebook_id": "default"
+    }
+  },
+  {
+    "chunk_id": "13a7b578-e6f4-4050-83bb-8029442d13bf",
+    "text": "[📓 NotebookLM-Mini (Local AI Edition) > 🌟 Tính Năng Nổi Bật]\n1. **🚀 1-Click Run (Chạy 1 chạm):** Tự động hóa hoàn toàn quá trình tải Model và cấu hình hệ thống trên cả Windows và macOS. Không cần biết code vẫn chạy được! 2. **🧠 Local AI Cực Mạnh:** Sử dụng mô hình `Qwen2.5-3B-Instruct` dạng nén GGUF qua Llama.cpp. Đủ thông minh để hiểu tiếng Việt xuất sắc, nhưng đủ nhẹ để chạy trên máy RAM 8GB. 3.",
+    "metadata": {
+      "source": "Tài liệu",
+      "type": "text",
+      "breadcrumbs": "📓 NotebookLM-Mini (Local AI Edition) > 🌟 Tính Năng Nổi Bật",
+      "page": 1,
+      "notebook_id": "default"
+    }
+  },
+  {
+    "chunk_id": "d09cd6c1-1812-48bc-9c9a-b3030717d623",
+    "text": "[📓 NotebookLM-Mini (Local AI Edition) > 🌟 Tính Năng Nổi Bật]\nuất sắc, nhưng đủ nhẹ để chạy trên máy RAM 8GB. 3. **⚡ Hardware Acceleration (Ép xung phần cứng):** Tự động nhận diện và tận dụng tối đa sức mạnh của **Apple Silicon (Metal)** trên Mac và **Card rời NVIDIA (CUDA 12.1)** trên Windows. 4. **🔍 Hybrid Search & Reranking:** Kết hợp tìm kiếm ngữ nghĩa (GreenNode) và từ khóa (BM25), sau đó lọc lại bằng Cross-Encoder (BAAI Reranker) để đảm bảo không trượt phát nào.\n---",
+    "metadata": {
+      "source": "Tài liệu",
+      "type": "text",
+      "breadcrumbs": "📓 NotebookLM-Mini (Local AI Edition) > 🌟 Tính Năng Nổi Bật",
+      "page": 1,
+      "notebook_id": "default"
+    }
+  },
+  {
+    "chunk_id": "d3f3498c-9c0d-4969-8333-f768fceec2db",
+    "text": "[📓 NotebookLM-Mini (Local AI Edition) > 📖 HƯỚNG DẪN SỬ DỤNG CHI TIẾT > 1. Yêu Cầu Cấu Hình Máy]\n- **RAM:** Tối thiểu 8GB (Khuyến nghị 16GB để mượt mà nhất).\n- **Hệ điều hành:** Windows 10/11 hoặc macOS (Khuyên dùng dòng chip Apple M1, M2, M3...).\n- **Ổ cứng:** Trống ít nhất 5GB (để lưu trữ AI Model và dữ liệu vector).\n- **Mạng internet:** Chỉ cần mạng cho **lần chạy đầu tiên** để tải AI (Khoảng 2GB). Sau đó có thể tắt mạng chạy Offline hoàn toàn.",
+    "metadata": {
+      "source": "Tài liệu",
+      "type": "text",
+      "breadcrumbs": "📓 NotebookLM-Mini (Local AI Edition) > 📖 HƯỚNG DẪN SỬ DỤNG CHI TIẾT > 1. Yêu Cầu Cấu Hình Máy",
+      "page": 1,
+      "notebook_id": "default"
+    }
+  },
+  {
+    "chunk_id": "59c2c1cb-f934-4d73-9484-0c77967291b2",
+    "text": "[📓 NotebookLM-Mini (Local AI Edition) > 📖 HƯỚNG DẪN SỬ DỤNG CHI TIẾT > 2. Cài Đặt & Khởi Động (Chỉ với 1 cú click)]\n**Đối với người dùng Mac (macOS):**\n1. Giải nén/Tải thư mục dự án này về máy.\n2. Tìm file có tên `run_mac.command` và **nhấp đúp chuột**.\n3. Cửa sổ Terminal màu đen sẽ hiện lên. Nếu là lần đầu, hệ thống sẽ mất 1-2 phút để tải bộ não AI về máy.\n4. Giao diện Web (Streamlit) sẽ tự động mở ra ở trình duyệt khi hệ thống sẵn sàng.",
+    "metadata": {
+      "source": "Tài liệu",
+      "type": "text",
+      "breadcrumbs": "📓 NotebookLM-Mini (Local AI Edition) > 📖 HƯỚNG DẪN SỬ DỤNG CHI TIẾT > 2. Cài Đặt & Khởi Động (Chỉ với 1 cú click)",
+      "page": 1,
+      "notebook_id": "default"
+    }
+  },
+  {
+    "chunk_id": "c50b17a3-056c-40b0-9acd-064f1b594e39",
+    "text": "[📓 NotebookLM-Mini (Local AI Edition) > 📖 HƯỚNG DẪN SỬ DỤNG CHI TIẾT > 2. Cài Đặt & Khởi Động (Chỉ với 1 cú click)]\n**Đối với người dùng Windows:**\n1. Cài đặt Python 3.10+ (Nhớ tick vào ô *\"Add Python to PATH\"* lúc cài).\n2. Giải nén/Tải thư mục dự án này về máy.\n3. Tìm file có tên `run_windows.bat` và **nhấp đúp chuột**.\n4. Hệ thống sẽ tự cài cấu hình (nếu có Card NVIDIA sẽ tự kích hoạt nhân CUDA). Trình duyệt Web sẽ tự động mở lên.\n---",
+    "metadata": {
+      "source": "Tài liệu",
+      "type": "text",
+      "breadcrumbs": "📓 NotebookLM-Mini (Local AI Edition) > 📖 HƯỚNG DẪN SỬ DỤNG CHI TIẾT > 2. Cài Đặt & Khởi Động (Chỉ với 1 cú click)",
+      "page": 1,
+      "notebook_id": "default"
+    }
+  },
+  {
+    "chunk_id": "c21b6f39-8a85-4093-9729-4e7fe34ebfbb",
+    "text": "[📓 NotebookLM-Mini (Local AI Edition) > 📖 HƯỚNG DẪN SỬ DỤNG CHI TIẾT > 3. Cách Thao Tác Trực Tiếp Trên Web > Bước 1: Tạo thẻ làm việc (Notebook)]\n- Ngay khi vào màn hình chính, gõ tên cho Thẻ (Ví dụ: *Luật Kinh Tế* hoặc *Giáo trình AI*) và ấn **+ Tạo Thẻ Mới**.\n- Hệ thống hỗ trợ nhiều Thẻ (Notebook) độc lập. Dữ liệu Thẻ này không bị lẫn vào Thẻ kia.",
+    "metadata": {
+      "source": "Tài liệu",
+      "type": "text",
+      "breadcrumbs": "📓 NotebookLM-Mini (Local AI Edition) > 📖 HƯỚNG DẪN SỬ DỤNG CHI TIẾT > 3. Cách Thao Tác Trực Tiếp Trên Web > Bước 1: Tạo thẻ làm việc (Notebook)",
+      "page": 1,
+      "notebook_id": "default"
+    }
+  },
+  {
+    "chunk_id": "9127edce-d844-4a90-b21e-30f6278f4930",
+    "text": "[📓 NotebookLM-Mini (Local AI Edition) > 📖 HƯỚNG DẪN SỬ DỤNG CHI TIẾT > 3. Cách Thao Tác Trực Tiếp Trên Web > Bước 2: Tải tài liệu lên]\n- Bấm vào tên Thẻ bạn vừa tạo.\n- Ở cột menu bên tay trái, tìm khu vực **Nguồn (Tài liệu đã nạp)**.\n- Kéo thả file PDF, DOCX, hoặc PPTX vào ô tải lên. Hệ thống sẽ mất vài giây để đọc, cắt nhỏ và phân tích nội dung lưu vào não bộ.",
+    "metadata": {
+      "source": "Tài liệu",
+      "type": "text",
+      "breadcrumbs": "📓 NotebookLM-Mini (Local AI Edition) > 📖 HƯỚNG DẪN SỬ DỤNG CHI TIẾT > 3. Cách Thao Tác Trực Tiếp Trên Web > Bước 2: Tải tài liệu lên",
+      "page": 1,
+      "notebook_id": "default"
+    }
+  },
+  {
+    "chunk_id": "a5d1950b-3626-46fb-8e41-52ce42687540",
+    "text": "[📓 NotebookLM-Mini (Local AI Edition) > 📖 HƯỚNG DẪN SỬ DỤNG CHI TIẾT > 3. Cách Thao Tác Trực Tiếp Trên Web > Bước 3: Tương tác với tài liệu]\nỞ giữa màn hình có 4 tab tính năng chính:\n1. **💬 Hỏi đáp (Chat):**\n   - Đặt bất kỳ câu hỏi nào liên quan đến tài liệu.\n   - AI sẽ mất khoảng 4-8 giây để \"đọc tài liệu\" (xoay vòng tròn) và sau đó sẽ gõ chữ trả lời cực nhanh. Cuối câu trả lời sẽ có trích dẫn nguồn cụ thể (Trích từ file nào).\n2. **📝 Tóm tắt:**\n   - Ấn một nút, AI sẽ tự động đọc lướt toàn bộ tài liệu bạn đã tải lên, tóm tắt các ý chính và gạch đầu dòng những điểm quan trọng nhất.",
+    "metadata": {
+      "source": "Tài liệu",
+      "type": "text",
+      "breadcrumbs": "📓 NotebookLM-Mini (Local AI Edition) > 📖 HƯỚNG DẪN SỬ DỤNG CHI TIẾT > 3. Cách Thao Tác Trực Tiếp Trên Web > Bước 3: Tương tác với tài liệu",
+      "page": 1,
+      "notebook_id": "default"
+    }
+  },
+  {
+    "chunk_id": "fccd7a6f-d464-4e4d-ab4d-db2ba09e02b6",
+    "text": "[📓 NotebookLM-Mini (Local AI Edition) > 📖 HƯỚNG DẪN SỬ DỤNG CHI TIẾT > 3. Cách Thao Tác Trực Tiếp Trên Web > Bước 3: Tương tác với tài liệu]\n3. **🧠 Trắc nghiệm (Quiz):**\n   - AI sẽ tự động soi tài liệu và tạo ra 1 bộ câu hỏi trắc nghiệm A-B-C-D. Bạn có thể tự test kiến thức của mình và xem đáp án giải thích ngay bên dưới.\n4. **⚡ Flashcards:**\n   - Tạo ra các thẻ lật (Mặt trước câu hỏi - Mặt sau khái niệm) để bạn học thuộc lòng từ vựng hoặc khái niệm nhanh chóng.\n---",
+    "metadata": {
+      "source": "Tài liệu",
+      "type": "text",
+      "breadcrumbs": "📓 NotebookLM-Mini (Local AI Edition) > 📖 HƯỚNG DẪN SỬ DỤNG CHI TIẾT > 3. Cách Thao Tác Trực Tiếp Trên Web > Bước 3: Tương tác với tài liệu",
+      "page": 1,
+      "notebook_id": "default"
+    }
+  },
+  {
+    "chunk_id": "e2267a8d-ce93-41f0-b362-b339ab79c0d4",
+    "text": "[📓 NotebookLM-Mini (Local AI Edition) > 📖 HƯỚNG DẪN SỬ DỤNG CHI TIẾT > 4. Xử Lý Lỗi Thường Gặp (Troubleshooting)]\n- **Lỗi Terminal báo \"Connection refused\" / \"Lỗi từ Backend\":**\n  Do bạn lỡ tắt cửa sổ Terminal màu đen (cái cửa sổ đang gánh cái Backend của AI). Đừng bao giờ tắt nó khi đang xài web! Để sửa, hãy đóng web đi và nhấp đúp chạy lại file `run_mac.command` / `run_windows.bat`.",
+    "metadata": {
+      "source": "Tài liệu",
+      "type": "text",
+      "breadcrumbs": "📓 NotebookLM-Mini (Local AI Edition) > 📖 HƯỚNG DẪN SỬ DỤNG CHI TIẾT > 4. Xử Lý Lỗi Thường Gặp (Troubleshooting)",
+      "page": 1,
+      "notebook_id": "default"
+    }
+  },
+  {
+    "chunk_id": "90cae82f-c395-4206-9dff-c89fa15a9d16",
+    "text": "[📓 NotebookLM-Mini (Local AI Edition) > 📖 HƯỚNG DẪN SỬ DỤNG CHI TIẾT > 4. Xử Lý Lỗi Thường Gặp (Troubleshooting)]\n- **Trả lời có vẻ hơi chậm?**\n  Mô hình AI này là 3 Tỷ tham số, nên quá trình \"tiêu hoá\" hàng nghìn chữ trong tài liệu ở 3-5 giây đầu tiên sẽ khá nặng. Hãy kiên nhẫn đợi 1 chút, khi nó đã suy nghĩ xong thì tốc độ nhả chữ sẽ rất nhanh. Trên Windows, nếu có Card NVIDIA, tốc độ sẽ khủng khiếp hơn nhiều.\n- **Trình duyệt không tự mở?**\n  Bạn hãy mở Chrome/Safari và tự gõ đường dẫn: `http://localhost:8501`.\n---",
+    "metadata": {
+      "source": "Tài liệu",
+      "type": "text",
+      "breadcrumbs": "📓 NotebookLM-Mini (Local AI Edition) > 📖 HƯỚNG DẪN SỬ DỤNG CHI TIẾT > 4. Xử Lý Lỗi Thường Gặp (Troubleshooting)",
+      "page": 1,
+      "notebook_id": "default"
+    }
+  },
+  {
+    "chunk_id": "09e04ab0-be64-4a05-8cd8-917e2b0ca7e2",
+    "text": "[📓 NotebookLM-Mini (Local AI Edition) > 🏗️ Kiến Trúc Hệ Thống (Dành cho Developer)]\nĐoạn mã (text):\n```text\n┌─────────────────────────────────────────────────────────────────────┐\n│  Tầng Giao diện & Định tuyến API                                    │\n│  ┌──────────────────────┐  ┌──────────────────────────────────┐     │\n│  │  Streamlit Web UI    │◄─►│  FastAPI Backend (SSE Support)  │     │\n│  └──────────────────────┘  └──────────┬───────────────────────┘     │\n└───────────────────────────────────────┬─────────────────────────────┘\n                                        ▼\n┌─────────────────────────────────────────────────────────────────────┐\n│  Tầng Trí Tuệ Nhân Tạo (Local AI Engine)                            │\n│  ┌──────────────────────┐  ┌──────────────────────────────────┐     │\n│  │ Llama.cpp Engine     │  │ Qwen2.5-3B-Instruct (GGUF 4-bit) │     │\n│  │ (Metal / CUDA 12)    │  │ 100% Offline, Privacy First      │     │\n│  └──────────┬───────────┘  └──────────────────────────────────┘     │\n└─────────────┼───────────────────────────────────────────────────────┘\n              ▼\n┌─────────────────────────────────────────────────────────────────────┐\n│  Tầng Xử lý Dữ liệu & RAG Pipeline                                  │\n│  ┌────────────────┐  ┌───────────────┐  ┌──────────────────────┐    │\n│  │ MarkItDown     │─►│ Hybrid Search │─►│ Cross-Encoder        │    │\n│  │ Parser (OCR)   │  │ (Qdrant+BM25) │  │ Reranker (BGE-m3)    │    │\n│  └────────────────┘  └───────────────┘  └──────────────────────┘    │\n└─────────────────────────────────────────────────────────────────────┘\n```",
+    "metadata": {
+      "source": "Tài liệu",
+      "type": "code",
+      "language": "text",
+      "breadcrumbs": "📓 NotebookLM-Mini (Local AI Edition) > 🏗️ Kiến Trúc Hệ Thống (Dành cho Developer)",
+      "page": 1,
+      "notebook_id": "default"
+    }
+  },
+  {
+    "chunk_id": "f6fcfe6d-158d-4af6-bb3e-866affb51ed2",
+    "text": "[📓 NotebookLM-Mini (Local AI Edition) > 🏗️ Kiến Trúc Hệ Thống (Dành cho Developer)]\nBạn có thể thay đổi cách hệ thống hoạt động thông qua file `.env` ẩn:\n- `RAG_LLM_TEMPERATURE`: Khuyên dùng 0.4 - 0.6.\n- `RAG_HYBRID_INITIAL_K` và `RAG_HYBRID_RERANK_K`: Số đoạn văn lấy ra, giảm xuống sẽ đẩy nhanh tốc độ đọc.\n---\n*Dự án tối ưu hóa trải nghiệm Local AI 1-Click.*",
+    "metadata": {
+      "source": "Tài liệu",
+      "type": "text",
+      "breadcrumbs": "📓 NotebookLM-Mini (Local AI Edition) > 🏗️ Kiến Trúc Hệ Thống (Dành cho Developer)",
+      "page": 1,
+      "notebook_id": "default"
+    }
+  },
+  {
+    "chunk_id": "fc05843f-5b8f-4cf8-b137-d2d318227944",
+    "text": "[📓 NotebookLM-Mini (Local AI Edition)]\nNotebookLM-Mini là một trợ lý học tập cá nhân dựa trên kiến trúc **Retrieval-Augmented Generation (RAG)**. Phiên bản này đã được thiết kế lại hoàn toàn để chạy **100% Offline (Không cần Internet)** sử dụng trí tuệ nhân tạo cục bộ (Local AI), đảm bảo bảo mật tuyệt đối dữ liệu cá nhân của bạn.",
+    "metadata": {
+      "source": "Tài liệu",
+      "type": "text",
+      "breadcrumbs": "📓 NotebookLM-Mini (Local AI Edition)",
+      "page": 1,
+      "notebook_id": "default"
+    }
+  },
+  {
+    "chunk_id": "34cd21fd-e62d-4863-9a79-85367af55aba",
+    "text": "[📓 NotebookLM-Mini (Local AI Edition)]\nDự án cho phép bạn tải lên tài liệu cá nhân (PDF, DOCX, PPTX, HTML...), tự động phân tích và tương tác qua:\n- 💬 **Hỏi đáp siêu tốc** với trích dẫn chính xác.\n- 📝 **Tóm tắt thông minh** sử dụng kỹ thuật Map-Reduce.\n- 🎯 **Tạo bài trắc nghiệm (Quiz) & Flashcards** tự động để ôn tập.\n---",
+    "metadata": {
+      "source": "Tài liệu",
+      "type": "text",
+      "breadcrumbs": "📓 NotebookLM-Mini (Local AI Edition)",
+      "page": 1,
+      "notebook_id": "default"
+    }
+  },
+  {
+    "chunk_id": "b7e4266b-b201-4caf-9799-d5b4bbe17e31",
+    "text": "[📓 NotebookLM-Mini (Local AI Edition) > 🌟 Tính Năng Nổi Bật]\n1. **🚀 1-Click Run (Chạy 1 chạm):** Tự động hóa hoàn toàn quá trình tải Model và cấu hình hệ thống trên cả Windows và macOS. Không cần biết code vẫn chạy được! 2. **🧠 Local AI Cực Mạnh:** Sử dụng mô hình `Qwen2.5-3B-Instruct` dạng nén GGUF qua Llama.cpp. Đủ thông minh để hiểu tiếng Việt xuất sắc, nhưng đủ nhẹ để chạy trên máy RAM 8GB. 3.",
+    "metadata": {
+      "source": "Tài liệu",
+      "type": "text",
+      "breadcrumbs": "📓 NotebookLM-Mini (Local AI Edition) > 🌟 Tính Năng Nổi Bật",
+      "page": 1,
+      "notebook_id": "default"
+    }
+  },
+  {
+    "chunk_id": "07195223-9cef-4fd1-b15a-c5ffe2e5c0a1",
+    "text": "[📓 NotebookLM-Mini (Local AI Edition) > 🌟 Tính Năng Nổi Bật]\nuất sắc, nhưng đủ nhẹ để chạy trên máy RAM 8GB. 3. **⚡ Hardware Acceleration (Ép xung phần cứng):** Tự động nhận diện và tận dụng tối đa sức mạnh của **Apple Silicon (Metal)** trên Mac và **Card rời NVIDIA (CUDA 12.1)** trên Windows. 4. **🔍 Hybrid Search & Reranking:** Kết hợp tìm kiếm ngữ nghĩa (GreenNode) và từ khóa (BM25), sau đó lọc lại bằng Cross-Encoder (BAAI Reranker) để đảm bảo không trượt phát nào.\n---",
+    "metadata": {
+      "source": "Tài liệu",
+      "type": "text",
+      "breadcrumbs": "📓 NotebookLM-Mini (Local AI Edition) > 🌟 Tính Năng Nổi Bật",
+      "page": 1,
+      "notebook_id": "default"
+    }
+  },
+  {
+    "chunk_id": "c08ef0ea-c17a-4954-b061-4ae5dcfd11e1",
+    "text": "[📓 NotebookLM-Mini (Local AI Edition) > 📖 HƯỚNG DẪN SỬ DỤNG CHI TIẾT > 1. Yêu Cầu Cấu Hình Máy]\n- **RAM:** Tối thiểu 8GB (Khuyến nghị 16GB để mượt mà nhất).\n- **Hệ điều hành:** Windows 10/11 hoặc macOS (Khuyên dùng dòng chip Apple M1, M2, M3...).\n- **Ổ cứng:** Trống ít nhất 5GB (để lưu trữ AI Model và dữ liệu vector).\n- **Mạng internet:** Chỉ cần mạng cho **lần chạy đầu tiên** để tải AI (Khoảng 2GB). Sau đó có thể tắt mạng chạy Offline hoàn toàn.",
+    "metadata": {
+      "source": "Tài liệu",
+      "type": "text",
+      "breadcrumbs": "📓 NotebookLM-Mini (Local AI Edition) > 📖 HƯỚNG DẪN SỬ DỤNG CHI TIẾT > 1. Yêu Cầu Cấu Hình Máy",
+      "page": 1,
+      "notebook_id": "default"
+    }
+  },
+  {
+    "chunk_id": "128cda5f-2fea-409e-9b97-1ec74e2397fa",
+    "text": "[📓 NotebookLM-Mini (Local AI Edition) > 📖 HƯỚNG DẪN SỬ DỤNG CHI TIẾT > 2. Cài Đặt & Khởi Động (Chỉ với 1 cú click)]\n**Đối với người dùng Mac (macOS):**\n1. Giải nén/Tải thư mục dự án này về máy.\n2. Tìm file có tên `run_mac.command` và **nhấp đúp chuột**.\n3. Cửa sổ Terminal màu đen sẽ hiện lên. Nếu là lần đầu, hệ thống sẽ mất 1-2 phút để tải bộ não AI về máy.\n4. Giao diện Web (Streamlit) sẽ tự động mở ra ở trình duyệt khi hệ thống sẵn sàng.",
+    "metadata": {
+      "source": "Tài liệu",
+      "type": "text",
+      "breadcrumbs": "📓 NotebookLM-Mini (Local AI Edition) > 📖 HƯỚNG DẪN SỬ DỤNG CHI TIẾT > 2. Cài Đặt & Khởi Động (Chỉ với 1 cú click)",
+      "page": 1,
+      "notebook_id": "default"
+    }
+  },
+  {
+    "chunk_id": "0510e8f1-b40a-4607-a6d3-78b80ca1ce4d",
+    "text": "[📓 NotebookLM-Mini (Local AI Edition) > 📖 HƯỚNG DẪN SỬ DỤNG CHI TIẾT > 2. Cài Đặt & Khởi Động (Chỉ với 1 cú click)]\n**Đối với người dùng Windows:**\n1. Cài đặt Python 3.10+ (Nhớ tick vào ô *\"Add Python to PATH\"* lúc cài).\n2. Giải nén/Tải thư mục dự án này về máy.\n3. Tìm file có tên `run_windows.bat` và **nhấp đúp chuột**.\n4. Hệ thống sẽ tự cài cấu hình (nếu có Card NVIDIA sẽ tự kích hoạt nhân CUDA). Trình duyệt Web sẽ tự động mở lên.\n---",
+    "metadata": {
+      "source": "Tài liệu",
+      "type": "text",
+      "breadcrumbs": "📓 NotebookLM-Mini (Local AI Edition) > 📖 HƯỚNG DẪN SỬ DỤNG CHI TIẾT > 2. Cài Đặt & Khởi Động (Chỉ với 1 cú click)",
+      "page": 1,
+      "notebook_id": "default"
+    }
+  },
+  {
+    "chunk_id": "349b19ef-eee8-4a8a-888e-11cc9c1346ab",
+    "text": "[📓 NotebookLM-Mini (Local AI Edition) > 📖 HƯỚNG DẪN SỬ DỤNG CHI TIẾT > 3. Cách Thao Tác Trực Tiếp Trên Web > Bước 1: Tạo thẻ làm việc (Notebook)]\n- Ngay khi vào màn hình chính, gõ tên cho Thẻ (Ví dụ: *Luật Kinh Tế* hoặc *Giáo trình AI*) và ấn **+ Tạo Thẻ Mới**.\n- Hệ thống hỗ trợ nhiều Thẻ (Notebook) độc lập. Dữ liệu Thẻ này không bị lẫn vào Thẻ kia.",
+    "metadata": {
+      "source": "Tài liệu",
+      "type": "text",
+      "breadcrumbs": "📓 NotebookLM-Mini (Local AI Edition) > 📖 HƯỚNG DẪN SỬ DỤNG CHI TIẾT > 3. Cách Thao Tác Trực Tiếp Trên Web > Bước 1: Tạo thẻ làm việc (Notebook)",
+      "page": 1,
+      "notebook_id": "default"
+    }
+  },
+  {
+    "chunk_id": "5fd8886a-e1eb-421f-9163-a080be6c3637",
+    "text": "[📓 NotebookLM-Mini (Local AI Edition) > 📖 HƯỚNG DẪN SỬ DỤNG CHI TIẾT > 3. Cách Thao Tác Trực Tiếp Trên Web > Bước 2: Tải tài liệu lên]\n- Bấm vào tên Thẻ bạn vừa tạo.\n- Ở cột menu bên tay trái, tìm khu vực **Nguồn (Tài liệu đã nạp)**.\n- Kéo thả file PDF, DOCX, hoặc PPTX vào ô tải lên. Hệ thống sẽ mất vài giây để đọc, cắt nhỏ và phân tích nội dung lưu vào não bộ.",
+    "metadata": {
+      "source": "Tài liệu",
+      "type": "text",
+      "breadcrumbs": "📓 NotebookLM-Mini (Local AI Edition) > 📖 HƯỚNG DẪN SỬ DỤNG CHI TIẾT > 3. Cách Thao Tác Trực Tiếp Trên Web > Bước 2: Tải tài liệu lên",
+      "page": 1,
+      "notebook_id": "default"
+    }
+  },
+  {
+    "chunk_id": "99210918-61e9-4530-b34e-4c61a35ab3b3",
+    "text": "[📓 NotebookLM-Mini (Local AI Edition) > 📖 HƯỚNG DẪN SỬ DỤNG CHI TIẾT > 3. Cách Thao Tác Trực Tiếp Trên Web > Bước 3: Tương tác với tài liệu]\nỞ giữa màn hình có 4 tab tính năng chính:\n1. **💬 Hỏi đáp (Chat):**\n   - Đặt bất kỳ câu hỏi nào liên quan đến tài liệu.\n   - AI sẽ mất khoảng 4-8 giây để \"đọc tài liệu\" (xoay vòng tròn) và sau đó sẽ gõ chữ trả lời cực nhanh. Cuối câu trả lời sẽ có trích dẫn nguồn cụ thể (Trích từ file nào).\n2. **📝 Tóm tắt:**\n   - Ấn một nút, AI sẽ tự động đọc lướt toàn bộ tài liệu bạn đã tải lên, tóm tắt các ý chính và gạch đầu dòng những điểm quan trọng nhất.",
+    "metadata": {
+      "source": "Tài liệu",
+      "type": "text",
+      "breadcrumbs": "📓 NotebookLM-Mini (Local AI Edition) > 📖 HƯỚNG DẪN SỬ DỤNG CHI TIẾT > 3. Cách Thao Tác Trực Tiếp Trên Web > Bước 3: Tương tác với tài liệu",
+      "page": 1,
+      "notebook_id": "default"
+    }
+  },
+  {
+    "chunk_id": "28bda923-c266-41a9-b481-9ec4deb901bc",
+    "text": "[📓 NotebookLM-Mini (Local AI Edition) > 📖 HƯỚNG DẪN SỬ DỤNG CHI TIẾT > 3. Cách Thao Tác Trực Tiếp Trên Web > Bước 3: Tương tác với tài liệu]\n3. **🧠 Trắc nghiệm (Quiz):**\n   - AI sẽ tự động soi tài liệu và tạo ra 1 bộ câu hỏi trắc nghiệm A-B-C-D. Bạn có thể tự test kiến thức của mình và xem đáp án giải thích ngay bên dưới.\n4. **⚡ Flashcards:**\n   - Tạo ra các thẻ lật (Mặt trước câu hỏi - Mặt sau khái niệm) để bạn học thuộc lòng từ vựng hoặc khái niệm nhanh chóng.\n---",
+    "metadata": {
+      "source": "Tài liệu",
+      "type": "text",
+      "breadcrumbs": "📓 NotebookLM-Mini (Local AI Edition) > 📖 HƯỚNG DẪN SỬ DỤNG CHI TIẾT > 3. Cách Thao Tác Trực Tiếp Trên Web > Bước 3: Tương tác với tài liệu",
+      "page": 1,
+      "notebook_id": "default"
+    }
+  },
+  {
+    "chunk_id": "12df5171-eef8-4e43-9d53-d9e182f91989",
+    "text": "[📓 NotebookLM-Mini (Local AI Edition) > 📖 HƯỚNG DẪN SỬ DỤNG CHI TIẾT > 4. Xử Lý Lỗi Thường Gặp (Troubleshooting)]\n- **Lỗi Terminal báo \"Connection refused\" / \"Lỗi từ Backend\":**\n  Do bạn lỡ tắt cửa sổ Terminal màu đen (cái cửa sổ đang gánh cái Backend của AI). Đừng bao giờ tắt nó khi đang xài web! Để sửa, hãy đóng web đi và nhấp đúp chạy lại file `run_mac.command` / `run_windows.bat`.",
+    "metadata": {
+      "source": "Tài liệu",
+      "type": "text",
+      "breadcrumbs": "📓 NotebookLM-Mini (Local AI Edition) > 📖 HƯỚNG DẪN SỬ DỤNG CHI TIẾT > 4. Xử Lý Lỗi Thường Gặp (Troubleshooting)",
+      "page": 1,
+      "notebook_id": "default"
+    }
+  },
+  {
+    "chunk_id": "1bf36a47-dc02-452f-9867-d8b436f9c7ba",
+    "text": "[📓 NotebookLM-Mini (Local AI Edition) > 📖 HƯỚNG DẪN SỬ DỤNG CHI TIẾT > 4. Xử Lý Lỗi Thường Gặp (Troubleshooting)]\n- **Trả lời có vẻ hơi chậm?**\n  Mô hình AI này là 3 Tỷ tham số, nên quá trình \"tiêu hoá\" hàng nghìn chữ trong tài liệu ở 3-5 giây đầu tiên sẽ khá nặng. Hãy kiên nhẫn đợi 1 chút, khi nó đã suy nghĩ xong thì tốc độ nhả chữ sẽ rất nhanh. Trên Windows, nếu có Card NVIDIA, tốc độ sẽ khủng khiếp hơn nhiều.\n- **Trình duyệt không tự mở?**\n  Bạn hãy mở Chrome/Safari và tự gõ đường dẫn: `http://localhost:8501`.\n---",
+    "metadata": {
+      "source": "Tài liệu",
+      "type": "text",
+      "breadcrumbs": "📓 NotebookLM-Mini (Local AI Edition) > 📖 HƯỚNG DẪN SỬ DỤNG CHI TIẾT > 4. Xử Lý Lỗi Thường Gặp (Troubleshooting)",
+      "page": 1,
+      "notebook_id": "default"
+    }
+  },
+  {
+    "chunk_id": "c9971046-030f-47f8-977c-a313e9ac7754",
+    "text": "[📓 NotebookLM-Mini (Local AI Edition) > 🏗️ Kiến Trúc Hệ Thống (Dành cho Developer)]\nĐoạn mã (text):\n```text\n┌─────────────────────────────────────────────────────────────────────┐\n│  Tầng Giao diện & Định tuyến API                                    │\n│  ┌──────────────────────┐  ┌──────────────────────────────────┐     │\n│  │  Streamlit Web UI    │◄─►│  FastAPI Backend (SSE Support)  │     │\n│  └──────────────────────┘  └──────────┬───────────────────────┘     │\n└───────────────────────────────────────┬─────────────────────────────┘\n                                        ▼\n┌─────────────────────────────────────────────────────────────────────┐\n│  Tầng Trí Tuệ Nhân Tạo (Local AI Engine)                            │\n│  ┌──────────────────────┐  ┌──────────────────────────────────┐     │\n│  │ Llama.cpp Engine     │  │ Qwen2.5-3B-Instruct (GGUF 4-bit) │     │\n│  │ (Metal / CUDA 12)    │  │ 100% Offline, Privacy First      │     │\n│  └──────────┬───────────┘  └──────────────────────────────────┘     │\n└─────────────┼───────────────────────────────────────────────────────┘\n              ▼\n┌─────────────────────────────────────────────────────────────────────┐\n│  Tầng Xử lý Dữ liệu & RAG Pipeline                                  │\n│  ┌────────────────┐  ┌───────────────┐  ┌──────────────────────┐    │\n│  │ MarkItDown     │─►│ Hybrid Search │─►│ Cross-Encoder        │    │\n│  │ Parser (OCR)   │  │ (Qdrant+BM25) │  │ Reranker (BGE-m3)    │    │\n│  └────────────────┘  └───────────────┘  └──────────────────────┘    │\n└─────────────────────────────────────────────────────────────────────┘\n```",
+    "metadata": {
+      "source": "Tài liệu",
+      "type": "code",
+      "language": "text",
+      "breadcrumbs": "📓 NotebookLM-Mini (Local AI Edition) > 🏗️ Kiến Trúc Hệ Thống (Dành cho Developer)",
+      "page": 1,
+      "notebook_id": "default"
+    }
+  },
+  {
+    "chunk_id": "61a05aad-c886-4989-92b0-01fff83f5f73",
+    "text": "[📓 NotebookLM-Mini (Local AI Edition) > 🏗️ Kiến Trúc Hệ Thống (Dành cho Developer)]\nBạn có thể thay đổi cách hệ thống hoạt động thông qua file `.env` ẩn:\n- `RAG_LLM_TEMPERATURE`: Khuyên dùng 0.4 - 0.6.\n- `RAG_HYBRID_INITIAL_K` và `RAG_HYBRID_RERANK_K`: Số đoạn văn lấy ra, giảm xuống sẽ đẩy nhanh tốc độ đọc.\n---\n*Dự án tối ưu hóa trải nghiệm Local AI 1-Click.*",
+    "metadata": {
+      "source": "Tài liệu",
+      "type": "text",
+      "breadcrumbs": "📓 NotebookLM-Mini (Local AI Edition) > 🏗️ Kiến Trúc Hệ Thống (Dành cho Developer)",
+      "page": 1,
+      "notebook_id": "default"
+    }
   }
 ]
 
@@ -40056,7 +42625,7 @@ if __name__ == "__main__":
 # FILE: storage/qdrant/meta.json
 # ==============================================================================
 
-{"collections": {"rag_chunks_v2": {"vectors": {"size": 384, "distance": "Cosine", "hnsw_config": null, "quantization_config": null, "on_disk": null, "datatype": null, "multivector_config": null}, "shard_number": null, "sharding_method": null, "replication_factor": null, "write_consistency_factor": null, "on_disk_payload": null, "hnsw_config": null, "wal_config": null, "optimizers_config": null, "quantization_config": null, "sparse_vectors": null, "strict_mode_config": null, "metadata": null}}, "aliases": {}}
+{"collections": {"rag_chunks_v2": {"vectors": {"size": 384, "distance": "Cosine", "hnsw_config": null, "quantization_config": null, "on_disk": null, "memory": null, "datatype": null, "multivector_config": null}, "shard_number": null, "sharding_method": null, "replication_factor": null, "write_consistency_factor": null, "on_disk_payload": null, "payload": null, "hnsw_config": null, "wal_config": null, "optimizers_config": null, "quantization_config": null, "sparse_vectors": null, "strict_mode_config": null, "metadata": null}}, "aliases": {}}
 
 
 # ==============================================================================

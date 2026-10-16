@@ -1,132 +1,50 @@
-﻿"""
-Typer CLI â€” Command-line interface for Simple NotebookLM v2.0
-"""
-import json
+import sys
+import os
 import typer
-from typing import Optional
-from src.indexing import ingest as ingest_data_dir
-from src.rag import answer, retrieve
-from src.learning import summarize as summarize_learning, generate_quiz, generate_flashcards
-from src.export import export
+from rich.console import Console
+from rich.markdown import Markdown
 
-app = typer.Typer(help="Simple NotebookLM Command Line Interface v2.0")
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-def _parse_filters(filters_str: Optional[str]):
-    if not filters_str:
-        return None
-    d = {}
-    for part in filters_str.split(","):
-        if "=" in part:
-            k, v = part.split("=", 1)
-            k = k.strip()
-            v = v.strip()
-            if k == "page":
-                d[k] = int(v)
-            else:
-                d[k] = v
-    return d
+from src.ingestion.router import DocumentRouter
+from src.ingestion.chunking import AdaptiveChunker
+from src.retrieval.vector_store import VectorStoreManager
+from src.retrieval.search_engine import SearchEngine
+from src.llm.llm_client import LLMEngine
+from src.llm.prompt_builder import PromptBuilder
 
-def _print_answer(ans: str):
-    typer.secho("\nAnswer:", fg=typer.colors.GREEN, bold=True)
-    typer.echo(ans)
+app = typer.Typer(help="NotebookLM Mini CLI (New Architecture)")
+console = Console()
 
-def _print_sources(chunks):
-    typer.secho("\nSources:", fg=typer.colors.BLUE, bold=True)
-    for i, c in enumerate(chunks, start=1):
-        typer.echo(f"[{i}] {c.metadata.filename} (Page {c.metadata.page}, Score: {c.score:.4f})")
-        typer.echo(f"    {c.text[:200]}...")
-
-def _emit(result, output: Optional[str], fmt: str):
-    out = export(result, fmt=fmt, output=output)
-    if output is None:
-        typer.echo(out)
-    else:
-        typer.secho(f"\nResult exported to {output}", fg=typer.colors.CYAN)
 
 @app.command()
-def ingest(recreate: bool = False):
-    """Index all documents in the data folder (PDF, DOCX, PPTX, etc.)."""
-    typer.echo("Starting document ingestion (MarkItDown + BM25 + Qdrant)...")
-    count = ingest_data_dir(recreate=recreate)
-    typer.secho(f"Success! Done. {count} chunks indexed.", fg=typer.colors.GREEN)
+def add(source: str, notebook_id: str = "default"):
+    """Bóc tách và nạp một file hoặc URL vào Notebook."""
+    with console.status(f"[bold green]Đang xử lý '{source}'...[/bold green]"):
+        parser = DocumentRouter.get_parser(source)
+        doc_tree = parser.parse(source)
+        chunker = AdaptiveChunker(chunk_size=1000, chunk_overlap=200)
+        chunks = chunker.process_document(doc_tree)
+        store = VectorStoreManager(notebook_id=notebook_id)
+        store.index_chunks(chunks)
+    console.print(f"[bold green]✔ Hoàn tất![/bold green] Đã nạp [cyan]{len(chunks)}[/cyan] chunks vào sổ tay '{notebook_id}'.")
+
 
 @app.command()
-def ask(
-    question: str, 
-    k: Optional[int] = None, 
-    filters: Optional[str] = None
-):
-    """Ask a question grounded in the indexed documents (Hybrid Search + Reranker)."""
-    parsed = _parse_filters(filters)
-    typer.echo(f"Searching index for: '{question}'...")
-    result = answer(question, k=k, filters=parsed)
-    _print_answer(result.answer)
-    _print_sources(result.chunks)
+def ask(question: str, notebook_id: str = "default"):
+    """Đặt câu hỏi trực tiếp trên Terminal với trích dẫn nguồn."""
+    store = VectorStoreManager(notebook_id=notebook_id)
+    search_engine = SearchEngine(store)
+    llm = LLMEngine()
 
-@app.command("debug-retrieval")
-def debug_retrieval(
-    question: str, 
-    k: Optional[int] = None, 
-    filters: Optional[str] = None
-):
-    """Retrieve raw chunks related to a query without calling the LLM."""
-    parsed = _parse_filters(filters)
-    chunks = retrieve(question, k=k, filters=parsed)
-    typer.echo(json.dumps([c.model_dump() for c in chunks], ensure_ascii=False, indent=2))
+    with console.status("[bold cyan]Đang truy xuất Hybrid Search + Rerank và suy luận...[/bold cyan]"):
+        retrieved_chunks = search_engine.search(query=question, top_k=5)
+        prompt = PromptBuilder.build_rag_prompt(query=question, retrieved_chunks=retrieved_chunks)
+        response = llm.generate(prompt)
 
-@app.command("summarize")
-def summarize(
-    document: Optional[str] = None,
-    query: Optional[str] = None,
-    filters: Optional[str] = None,
-    k: Optional[int] = None,
-    output: Optional[str] = None,
-    fmt: str = "text"
-):
-    """Generate a multi-point document summary using Map-Reduce."""
-    parsed = _parse_filters(filters)
-    typer.echo("Generating summary...")
-    result = summarize_learning(document=document, query=query, filters=parsed, k=k)
-    _emit(result, output, fmt)
+    console.print("\n[bold blue]Trả lời:[/bold blue]")
+    console.print(Markdown(response))
 
-@app.command("quiz")
-def quiz(
-    document: Optional[str] = None,
-    query: Optional[str] = None,
-    filters: Optional[str] = None,
-    count: Optional[int] = None,
-    k: Optional[int] = None,
-    output: Optional[str] = None,
-    fmt: str = "text"
-):
-    """Create a multiple-choice quiz based on document content."""
-    parsed = _parse_filters(filters)
-    typer.echo("Generating quiz...")
-    result = generate_quiz(document=document, query=query, filters=parsed, count=count, k=k)
-    _emit(result, output, fmt)
-
-@app.command("flashcards")
-def flashcards(
-    document: Optional[str] = None,
-    query: Optional[str] = None,
-    filters: Optional[str] = None,
-    count: Optional[int] = None,
-    k: Optional[int] = None,
-    output: Optional[str] = None,
-    fmt: str = "text"
-):
-    """Create interactive flashcards based on document content."""
-    parsed = _parse_filters(filters)
-    typer.echo("Generating flashcards...")
-    result = generate_flashcards(document=document, query=query, filters=parsed, count=count, k=k)
-    _emit(result, output, fmt)
-
-@app.command("cache-clear")
-def cache_clear():
-    """Clear the Redis semantic cache."""
-    from src.cache import get_cache
-    get_cache().flush_all()
-    typer.secho("Cache cleared.", fg=typer.colors.YELLOW)
 
 if __name__ == "__main__":
     app()

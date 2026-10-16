@@ -136,3 +136,54 @@ class SearchEngine:
             context_parts.append(f"[Source {i+1} - {source}{heading_info}]:\n{content}")
             
         return "\n\n---\n\n".join(context_parts), results
+
+    def search(
+        self, 
+        query: str, 
+        top_k: int = 5, 
+        notebook_id: Optional[str] = None,
+        selected_documents: Optional[List[str]] = None
+    ) -> List[Dict[str, Any]]:
+        """Tìm kiếm các đoạn văn bản liên quan nhất qua Hybrid Search + Reranker."""
+        target_nb = notebook_id or getattr(self.vector_store, "notebook_id", "default")
+        
+        # 1. Tìm kiếm thô qua HybridSearcher
+        try:
+            candidates = self.hybrid_searcher.search(
+                query=query, 
+                k=max(top_k * 3, 10), 
+                notebook_id=target_nb
+            )
+        except Exception as e:
+            logger.warning(f"Lỗi tìm kiếm Hybrid trong search: {e}. Fallback sang Vector search.")
+            candidates = self.vector_store.search(
+                query=query, 
+                limit=max(top_k * 3, 10), 
+                notebook_id=target_nb
+            )
+
+        # Lọc theo selected_documents nếu có
+        if selected_documents:
+            candidates = [
+                c for c in candidates
+                if c.get("metadata", {}).get("source_file") in selected_documents
+                or c.get("metadata", {}).get("filename") in selected_documents
+                or c.get("metadata", {}).get("title") in selected_documents
+                or c.get("metadata", {}).get("source") in selected_documents
+            ]
+
+        if not candidates:
+            return []
+
+        # 2. Rerank
+        try:
+            reranked = self.reranker.rerank(
+                query=query, 
+                documents=candidates, 
+                top_k=top_k
+            )
+            return reranked
+        except Exception as e:
+            logger.warning(f"Lỗi reranking: {e}")
+            return candidates[:top_k]
+

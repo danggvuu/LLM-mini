@@ -6,7 +6,7 @@ import {
   Link as LinkIcon, Plus, ArrowLeft, Settings, Cpu, Cloud, Award, Sparkles,
   Copy, Download, Eye, SlidersHorizontal, FileDown, Sun, Moon, Mic, MicOff,
   Search, HelpCircle, Network, Scale, Clock, Share2, Flame, ArrowUp, ArrowDown,
-  Square
+  Square, ShieldAlert, ClipboardCheck
 } from 'lucide-react';
 import SettingsModal from '../components/SettingsModal';
 import QuizletModal from '../components/QuizletModal';
@@ -134,6 +134,21 @@ function Studio() {
   // Citation highlight snippet in preview
   const [highlightSnippet, setHighlightSnippet] = useState(null);
 
+  // Source Inspector Modal State (Chunks viewer)
+  const [inspectDoc, setInspectDoc] = useState(null);
+  const [docChunks, setDocChunks] = useState([]);
+  const [loadingChunks, setLoadingChunks] = useState(false);
+  const [chunkSearch, setChunkSearch] = useState('');
+
+  // Critique & Action Plan State
+  const [critiqueModal, setCritiqueModal] = useState({ isOpen: false, type: '', title: '', content: '', loading: false });
+
+  // Tools definition for Studio Analysis
+  const tools = [
+    { id: 'critique', name: 'Phản biện AI', desc: 'Tìm lỗ hổng & góc nhìn phản biện', icon: ShieldAlert, endpoint: '/api/studio/critique', color: 'text-rose-600', bg: 'bg-rose-50' },
+    { id: 'action_plan', name: 'Kế hoạch hành động', desc: 'Action Matrix & Checklist thực thi', icon: ClipboardCheck, endpoint: '/api/studio/action-plan', color: 'text-lime-600', bg: 'bg-lime-50' },
+  ];
+
   // Suggested questions extracted from studyGuide.faq
   const suggestedQuestions = useMemo(() => {
     if (!studyGuide?.faq) return [];
@@ -182,6 +197,8 @@ function Studio() {
         setShowShareModal(false);
         setShowModelManagerModal(false);
         setShowPasteTextModal(false);
+        setInspectDoc(null);
+        setCritiqueModal(prev => ({ ...prev, isOpen: false }));
         return;
       }
 
@@ -739,6 +756,56 @@ function Studio() {
     }
   };
 
+  const handleInspectChunks = async (sourceName, e) => {
+    if (e) e.stopPropagation();
+    setInspectDoc(sourceName);
+    setLoadingChunks(true);
+    setChunkSearch('');
+    try {
+      const res = await fetch(`/api/documents/chunks?source=${encodeURIComponent(sourceName)}&notebook_id=${activeNotebook?.id || ''}`);
+      if (res.ok) {
+        const data = await res.json();
+        setDocChunks(data.chunks || []);
+      } else {
+        setDocChunks([]);
+      }
+    } catch (err) {
+      console.error("Lỗi tải chunks:", err);
+      setDocChunks([]);
+    } finally {
+      setLoadingChunks(false);
+    }
+  };
+
+  const handleRunStudioTool = async (toolId) => {
+    const isCritique = toolId === 'critique';
+    const endpoint = isCritique ? '/api/studio/critique' : '/api/studio/action-plan';
+    const title = isCritique ? 'Báo Cáo Phản Biện & Tìm Lỗ Hổng (Peer Review)' : 'Kế Hoạch Hành Động Thực Tiễn (Action Plan)';
+    
+    setCritiqueModal({ isOpen: true, type: toolId, title, content: '', loading: true });
+    
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          notebook_id: activeNotebook?.id,
+          source_filter: selectedDocs.size === 1 ? Array.from(selectedDocs)[0] : null,
+          selected_documents: Array.from(selectedDocs)
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setCritiqueModal({ isOpen: true, type: toolId, title, content: data.content || data.error || 'Không có kết quả phân tích.', loading: false });
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setCritiqueModal({ isOpen: true, type: toolId, title, content: err.detail || 'Lỗi khi gọi API phân tích.', loading: false });
+      }
+    } catch (e) {
+      setCritiqueModal({ isOpen: true, type: toolId, title, content: 'Lỗi kết nối máy chủ: ' + e.message, loading: false });
+    }
+  };
+
   const deleteNotebook = async () => {
     if (!activeNotebook) return;
     if (!window.confirm("Bạn có chắc chắn muốn xóa sổ tay này và toàn bộ dữ liệu bên trong không?")) return;
@@ -1197,11 +1264,18 @@ function Studio() {
                     </div>
                     <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition shrink-0" onClick={e => e.stopPropagation()}>
                       <button 
-                        onClick={() => handlePreviewDocument(doc.filename)}
-                        className="p-1.5 rounded text-gray-400 hover:text-blue-400 hover:bg-white/10 transition"
-                        title="Xem nội dung trích xuất"
+                        onClick={(e) => handleInspectChunks(doc.filename, e)}
+                        className="p-1.5 rounded text-gray-400 hover:text-emerald-400 hover:bg-emerald-500/10 transition"
+                        title="Xem các đoạn (Chunks) đã bóc tách"
                       >
                         <Eye size={13} />
+                      </button>
+                      <button 
+                        onClick={() => handlePreviewDocument(doc.filename)}
+                        className="p-1.5 rounded text-gray-400 hover:text-blue-400 hover:bg-white/10 transition"
+                        title="Xem toàn văn trích xuất"
+                      >
+                        <FileText size={13} />
                       </button>
                       <button 
                         onClick={() => deleteDocument(doc.filename)}
@@ -2129,6 +2203,44 @@ function Studio() {
           )}
         </div>
 
+        {/* Feature: Phản biện AI (Deep Critique) */}
+        <div className="p-4 rounded-2xl bg-[#181a20] border border-white/10">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-sm font-bold text-rose-400 flex items-center gap-1.5">
+              <ShieldAlert size={16} /> Phản Biện AI (Peer Review)
+            </h3>
+          </div>
+          <p className="text-xs text-gray-400 mb-3 leading-relaxed">
+            Tìm điểm mù, lỗ hổng lập luận, thiếu sót dữ liệu và các câu hỏi phản biện sắc bén.
+          </p>
+          <button
+            onClick={() => handleRunStudioTool('critique')}
+            disabled={documents.length === 0}
+            className="w-full bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 font-semibold text-xs py-2.5 rounded-xl transition disabled:opacity-40 flex justify-center items-center gap-2 cursor-pointer"
+          >
+            <ShieldAlert size={14} /> Tạo Báo cáo Phản biện
+          </button>
+        </div>
+
+        {/* Feature: Kế hoạch hành động (Action Plan) */}
+        <div className="p-4 rounded-2xl bg-[#181a20] border border-white/10">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-sm font-bold text-lime-400 flex items-center gap-1.5">
+              <ClipboardCheck size={16} /> Kế Hoạch Hành Động
+            </h3>
+          </div>
+          <p className="text-xs text-gray-400 mb-3 leading-relaxed">
+            Chuyển hóa lý thuyết thành ma trận hành động (Action Matrix) và checklist thực thi.
+          </p>
+          <button
+            onClick={() => handleRunStudioTool('action_plan')}
+            disabled={documents.length === 0}
+            className="w-full bg-lime-500/10 hover:bg-lime-500/20 text-lime-300 border border-lime-500/30 font-semibold text-xs py-2.5 rounded-xl transition disabled:opacity-40 flex justify-center items-center gap-2 cursor-pointer"
+          >
+            <ClipboardCheck size={14} /> Lập Kế hoạch Thực thi
+          </button>
+        </div>
+
       </div>
 
       {/* MODAL: QUIZ */}
@@ -2717,6 +2829,111 @@ function Studio() {
               >
                 Nạp vào Sổ tay
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Xem Chunks Gốc của Tài liệu (Source Inspector Modal) */}
+      {inspectDoc && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in font-sans">
+          <div className="bg-[#181a20] rounded-2xl max-w-3xl w-full max-h-[85vh] flex flex-col shadow-2xl border border-white/15 overflow-hidden">
+            <div className="p-4 bg-white/[0.03] border-b border-white/10 flex items-center justify-between">
+              <div className="flex items-center space-x-2.5 truncate">
+                <Eye className="w-5 h-5 text-emerald-400 shrink-0" />
+                <div className="truncate">
+                  <h3 className="font-bold text-sm text-white truncate">Chi tiết Phân mảnh (Chunks): {inspectDoc}</h3>
+                  <p className="text-[11px] text-gray-400">Tổng cộng {docChunks.length} đoạn dữ liệu đã lưu trong Vector & BM25</p>
+                </div>
+              </div>
+              <button onClick={() => setInspectDoc(null)} className="p-1.5 text-gray-400 hover:text-white rounded-lg">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-3 border-b border-white/10 bg-white/[0.02]">
+              <input
+                type="text"
+                value={chunkSearch}
+                onChange={(e) => setChunkSearch(e.target.value)}
+                placeholder="Lọc nhanh nội dung chunk theo từ khóa..."
+                className="w-full px-3 py-1.5 text-xs bg-black/40 text-white border border-white/15 rounded-lg focus:outline-none focus:border-blue-500"
+              />
+            </div>
+
+            <div className="p-4 overflow-y-auto flex-1 space-y-3 scrollbar-hide">
+              {loadingChunks ? (
+                <div className="flex items-center justify-center py-12 text-gray-400 text-sm">
+                  <Loader className="w-5 h-5 animate-spin mr-2 text-blue-500" /> Đang tải các đoạn văn bản...
+                </div>
+              ) : docChunks.length === 0 ? (
+                <div className="text-center py-12 text-gray-500 text-xs">Không tìm thấy chunk nào cho tài liệu này.</div>
+              ) : (
+                docChunks
+                  .filter(c => !chunkSearch.trim() || (c.content && c.content.toLowerCase().includes(chunkSearch.toLowerCase())))
+                  .map((chunk, i) => (
+                    <div key={chunk.chunk_id || i} className="bg-white/[0.03] p-3.5 rounded-xl border border-white/10 shadow-sm">
+                      <div className="flex items-center justify-between text-[11px] text-gray-400 mb-1.5 pb-1.5 border-b border-white/5">
+                        <span className="font-semibold text-blue-400">Chunk #{i + 1} ({chunk.type || 'text'})</span>
+                        <div className="flex items-center gap-2">
+                          {chunk.breadcrumbs && (
+                            <span className="text-[10px] bg-white/5 px-2 py-0.5 rounded text-gray-300 max-w-[200px] truncate" title={chunk.breadcrumbs}>
+                              {chunk.breadcrumbs}
+                            </span>
+                          )}
+                          <span>Trang: {chunk.page || 1} • {(chunk.content || '').length} ký tự</span>
+                        </div>
+                      </div>
+                      <pre className="text-xs text-gray-300 whitespace-pre-wrap font-sans leading-relaxed">{chunk.content}</pre>
+                    </div>
+                  ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Phản biện AI & Kế hoạch hành động */}
+      {critiqueModal.isOpen && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in font-sans">
+          <div className="bg-[#181a20] rounded-2xl max-w-3xl w-full max-h-[85vh] flex flex-col shadow-2xl border border-white/15 overflow-hidden">
+            <div className={`p-4 border-b border-white/10 flex items-center justify-between ${critiqueModal.type === 'critique' ? 'bg-rose-500/10' : 'bg-lime-500/10'}`}>
+              <div className="flex items-center space-x-2.5 truncate">
+                {critiqueModal.type === 'critique' ? (
+                  <ShieldAlert className="w-5 h-5 text-rose-400 shrink-0" />
+                ) : (
+                  <ClipboardCheck className="w-5 h-5 text-lime-400 shrink-0" />
+                )}
+                <h3 className="font-bold text-sm text-white truncate">{critiqueModal.title}</h3>
+              </div>
+              <div className="flex items-center gap-2">
+                {critiqueModal.content && !critiqueModal.loading && (
+                  <button 
+                    onClick={() => {
+                      navigator.clipboard.writeText(critiqueModal.content);
+                      alert("Đã sao chép nội dung vào Clipboard!");
+                    }}
+                    className="p-1.5 text-gray-400 hover:text-white rounded-lg hover:bg-white/10 transition"
+                    title="Sao chép nội dung"
+                  >
+                    <Copy size={16} />
+                  </button>
+                )}
+                <button onClick={() => setCritiqueModal(prev => ({ ...prev, isOpen: false }))} className="p-1.5 text-gray-400 hover:text-white rounded-lg">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="p-5 overflow-y-auto flex-1 scrollbar-hide text-sm text-gray-200">
+              {critiqueModal.loading ? (
+                <div className="flex flex-col items-center justify-center py-16 gap-3 text-gray-400">
+                  <Loader className="w-7 h-7 animate-spin text-purple-400" />
+                  <p className="text-xs">Đang đọc tài liệu và phân tích chuyên sâu...</p>
+                </div>
+              ) : (
+                <MarkdownRenderer content={critiqueModal.content} isDark={isDark} />
+              )}
             </div>
           </div>
         </div>
