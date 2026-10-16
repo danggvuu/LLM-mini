@@ -1,5 +1,5 @@
 ================================================================================
-NOTEBOOKLM MINI - CONSOLIDATED SOURCE CODE REPOSITORY
+NOTEBOOKLM MINI - FULL PROJECT SOURCE CODE CONSOLIDATED
 TOTAL FILES: 100
 ================================================================================
 
@@ -6473,12 +6473,14 @@ export default function ShortcutsModal({ isOpen, onClose, isDark = true }) {
 
   const shortcuts = [
     { key: "Ctrl / ⌘ + Enter", desc: "Gửi tin nhắn trong khung trò chuyện" },
+    { key: "Ctrl / ⌘ + B", desc: "Ẩn / Hiện thanh Nguồn tài liệu bên trái" },
+    { key: "Ctrl / ⌘ + J", desc: "Ẩn / Hiện thanh Studio Học tập bên phải" },
     { key: "Ctrl / ⌘ + K", desc: "Mở bảng chọn nhanh Mô hình AI (Model Picker)" },
     { key: "Ctrl / ⌘ + F", desc: "Mở thanh tìm kiếm tin nhắn trong lịch sử chat" },
     { key: "Ctrl / ⌘ + /", desc: "Tập trung con trỏ (Focus) vào ô nhập tin nhắn" },
     { key: "Ctrl / ⌘ + Shift + S", desc: "Mở Cài đặt hệ thống (Settings)" },
     { key: "Ctrl / ⌘ + Shift + Q", desc: "Mở Bộ thẻ ghi nhớ & Ôn tập Quizlet" },
-    { key: "Escape", desc: "Đóng cửa sổ modal đang mở" }
+    { key: "Escape", desc: "Đóng cửa sổ modal đang mở / Dừng tạo câu trả lời" }
   ];
 
   return (
@@ -7494,7 +7496,8 @@ import {
   Link as LinkIcon, Plus, ArrowLeft, Settings, Cpu, Cloud, Award, Sparkles,
   Copy, Download, Eye, SlidersHorizontal, FileDown, Sun, Moon, Mic, MicOff,
   Search, HelpCircle, Network, Scale, Clock, Share2, Flame, ArrowUp, ArrowDown,
-  Square, ShieldAlert, ClipboardCheck, Volume2, VolumeX, Bookmark, BookmarkPlus, Shield
+  Square, ShieldAlert, ClipboardCheck, Volume2, VolumeX, Bookmark, BookmarkPlus, Shield,
+  PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, ChevronDown, ChevronUp, LayoutGrid
 } from 'lucide-react';
 import SettingsModal from '../components/SettingsModal';
 import QuizletModal from '../components/QuizletModal';
@@ -7522,6 +7525,28 @@ function Studio() {
   
   // Document selection for chat & generation context
   const [selectedDocs, setSelectedDocs] = useState(new Set());
+
+  // Sidebar Visibility & Persistence
+  const [showLeftSidebar, setShowLeftSidebar] = useState(() => {
+    const saved = localStorage.getItem('notebooklm_show_left_sidebar');
+    return saved !== null ? saved === 'true' : true;
+  });
+  const [showRightSidebar, setShowRightSidebar] = useState(() => {
+    const saved = localStorage.getItem('notebooklm_show_right_sidebar');
+    return saved !== null ? saved === 'true' : true;
+  });
+
+  // Studio tab state ('tools' | 'guide') & suggestions drawer toggle
+  const [studioTab, setStudioTab] = useState('tools');
+  const [showSuggestionsDrawer, setShowSuggestionsDrawer] = useState(false);
+
+  useEffect(() => {
+    localStorage.setItem('notebooklm_show_left_sidebar', String(showLeftSidebar));
+  }, [showLeftSidebar]);
+
+  useEffect(() => {
+    localStorage.setItem('notebooklm_show_right_sidebar', String(showRightSidebar));
+  }, [showRightSidebar]);
 
   // Settings & Model Switching State
   const [showSettings, setShowSettings] = useState(false);
@@ -7953,7 +7978,13 @@ function Studio() {
       const isCmdOrCtrl = e.metaKey || e.ctrlKey;
       if (!isCmdOrCtrl) return;
 
-      if (e.key === 'k' || e.key === 'K') {
+      if (e.key === 'b' || e.key === 'B') {
+        e.preventDefault();
+        setShowLeftSidebar(prev => !prev);
+      } else if (e.key === 'j' || e.key === 'J') {
+        e.preventDefault();
+        setShowRightSidebar(prev => !prev);
+      } else if (e.key === 'k' || e.key === 'K') {
         e.preventDefault();
         setShowModelPicker(prev => !prev);
       } else if (e.key === 'f' || e.key === 'F') {
@@ -8930,22 +8961,36 @@ function Studio() {
     }`}>
       
       {/* Cột 1: Left Sidebar (Sources) */}
-      <div className={`w-64 xl:w-72 flex-shrink-0 h-full border-r flex flex-col p-4 z-20 relative transition-colors ${
+      <div className={`${
+        showLeftSidebar ? 'w-64 xl:w-72 flex' : 'hidden'
+      } flex-shrink-0 h-full border-r flex-col p-4 z-20 relative transition-all duration-200 ${
         isDark ? 'bg-[#14161a] border-white/5' : 'bg-white border-slate-200'
-      } ${mobileActiveTab === 'docs' ? 'flex fixed inset-0 z-40 w-full md:relative md:w-64 xl:md:w-72' : 'hidden lg:flex'}`}>
+      } ${mobileActiveTab === 'docs' ? '!flex fixed inset-0 z-40 w-full md:relative md:w-64 xl:md:w-72' : ''}`}>
         
         <div className="flex items-center justify-between pb-3.5 border-b border-white/10 mb-4 min-h-[44px]">
-          <button onClick={() => navigate('/dashboard')} className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors text-sm font-medium">
+          <button onClick={() => navigate('/dashboard')} className={`flex items-center gap-2 transition-colors text-sm font-medium ${isDark ? 'text-gray-400 hover:text-white' : 'text-slate-500 hover:text-slate-900'}`}>
             <ArrowLeft size={16} /> Quay lại
           </button>
-          {mobileActiveTab === 'docs' && (
-            <button 
-              onClick={() => setMobileActiveTab('chat')}
-              className="lg:hidden text-xs px-2.5 py-1 rounded-lg bg-white/10 text-white"
-            >
-              Đóng
-            </button>
-          )}
+          <div className="flex items-center gap-1">
+            {mobileActiveTab === 'docs' ? (
+              <button 
+                onClick={() => setMobileActiveTab('chat')}
+                className="lg:hidden text-xs px-2.5 py-1 rounded-lg bg-white/10 text-white"
+              >
+                Đóng
+              </button>
+            ) : (
+              <button
+                onClick={() => setShowLeftSidebar(false)}
+                className={`hidden lg:flex items-center justify-center p-1.5 rounded-lg border transition cursor-pointer ${
+                  isDark ? 'text-gray-400 hover:text-white bg-white/5 border-white/10 hover:bg-white/10' : 'text-slate-500 hover:text-slate-900 bg-slate-100 border-slate-200 hover:bg-slate-200'
+                }`}
+                title="Thu gọn thanh Nguồn (Ctrl+B)"
+              >
+                <PanelLeftClose size={15} />
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="flex items-center justify-between mb-2">
@@ -9102,13 +9147,28 @@ function Studio() {
       </div>
 
       {/* Cột 2: Center (Chat) */}
-      <div className="flex-1 min-w-0 flex flex-col h-full border-r border-white/5 p-4 max-w-4xl mx-auto relative z-10">
+      <div className={`flex-1 min-w-0 flex flex-col h-full border-r border-white/5 p-4 mx-auto relative z-10 transition-all duration-200 ${
+        (!showLeftSidebar && !showRightSidebar) ? 'max-w-5xl' : 'max-w-4xl'
+      }`}>
         
         {/* Chat Header */}
         <div className="flex items-center justify-between pb-3.5 border-b border-white/10 mb-4 gap-2 flex-nowrap min-h-[44px]">
-          <div className="flex items-center gap-2.5 shrink-0 min-w-0">
-            <h2 className="text-sm sm:text-base font-bold flex items-center gap-2 text-white truncate max-w-[130px] sm:max-w-[180px]" title={activeNotebook.title}>
-              <FileText className="text-blue-500 shrink-0" size={18}/>
+          <div className="flex items-center gap-2 shrink-0 min-w-0">
+            {/* Toggle Left Sidebar Button */}
+            <button
+              onClick={() => setShowLeftSidebar(prev => !prev)}
+              className={`h-8 w-8 rounded-xl border transition flex items-center justify-center font-medium shrink-0 cursor-pointer ${
+                !showLeftSidebar
+                  ? 'border-blue-500/50 bg-blue-500/20 text-blue-400 shadow-sm'
+                  : (isDark ? 'border-white/10 bg-white/5 text-gray-400 hover:text-white hover:bg-white/10' : 'border-slate-200 bg-slate-100 text-slate-600 hover:text-slate-900 hover:bg-slate-200')
+              }`}
+              title={showLeftSidebar ? "Thu gọn thanh Nguồn (Ctrl+B)" : "Mở thanh Nguồn (Ctrl+B)"}
+            >
+              {showLeftSidebar ? <PanelLeftClose size={15} /> : <PanelLeft size={15} />}
+            </button>
+
+            <h2 className="text-sm sm:text-base font-bold flex items-center gap-2 text-white truncate max-w-[120px] sm:max-w-[170px]" title={activeNotebook.title}>
+              <FileText className="text-blue-500 shrink-0" size={17}/>
               <span className="truncate">{activeNotebook.title}</span>
             </h2>
 
@@ -9447,6 +9507,22 @@ function Studio() {
             >
               <Trash2 size={14} />
             </button>
+
+            {/* Divider */}
+            <div className={`w-[1px] h-4 my-auto shrink-0 mx-0.5 ${isDark ? 'bg-white/10' : 'bg-slate-200'}`} />
+
+            {/* Toggle Right Sidebar Button */}
+            <button
+              onClick={() => setShowRightSidebar(prev => !prev)}
+              className={`h-8 w-8 rounded-xl border transition flex items-center justify-center font-medium shrink-0 cursor-pointer ${
+                !showRightSidebar
+                  ? 'border-purple-500/50 bg-purple-500/20 text-purple-400 shadow-sm'
+                  : (isDark ? 'border-white/10 bg-white/5 text-gray-400 hover:text-white hover:bg-white/10' : 'border-slate-200 bg-slate-100 text-slate-600 hover:text-slate-900 hover:bg-slate-200')
+              }`}
+              title={showRightSidebar ? "Thu gọn Studio Học Tập (Ctrl+J)" : "Mở Studio Học Tập (Ctrl+J)"}
+            >
+              {showRightSidebar ? <PanelRightClose size={15} /> : <PanelRight size={15} />}
+            </button>
           </div>
         </div>
 
@@ -9676,48 +9752,97 @@ function Studio() {
 
         {/* Input Bar with Feature #10: Voice Input */}
         <div className="pt-2">
-          {/* Active Document Context Pill */}
-          {documents.length > 0 && (
-            <div className="flex items-center justify-between px-2 pb-1.5 text-[11px]">
-              <div className="flex items-center gap-1.5 text-gray-400">
-                <span className={`w-2 h-2 rounded-full ${
-                  selectedDocs.size === 0 
-                    ? 'bg-amber-400 animate-pulse' 
-                    : selectedDocs.size === documents.length 
-                      ? 'bg-blue-400' 
-                      : 'bg-emerald-400'
-                }`}></span>
-                <span className="font-medium">Ngữ cảnh:</span>
-                {selectedDocs.size === 0 ? (
-                  <span className="text-amber-400 font-semibold">Chưa chọn tài liệu nào (Hỏi đáp kiến thức chung)</span>
-                ) : selectedDocs.size === documents.length ? (
-                  <span className="text-blue-300 font-semibold">Tất cả tài liệu ({selectedDocs.size}/{documents.length})</span>
-                ) : (
-                  <span className="text-emerald-300 font-semibold">Đã chọn lọc {selectedDocs.size}/{documents.length} tài liệu</span>
-                )}
-              </div>
-              
-              <div className="flex items-center gap-2">
-                {selectedDocs.size < documents.length ? (
+          {/* Consolidated Single Control Bar */}
+          <div className="flex items-center justify-between pb-2 px-1 gap-2 flex-wrap text-xs">
+            {/* Left: Persona Pills */}
+            <div className="flex items-center gap-1 shrink-0">
+              {[
+                { id: 'strict', name: 'Bám sát', icon: Shield, activeClass: 'bg-blue-500/20 text-blue-300 border-blue-500/50' },
+                { id: 'socratic', name: 'Gia sư', icon: Sparkles, activeClass: 'bg-amber-500/20 text-amber-300 border-amber-500/50' },
+                { id: 'critic', name: 'Phản biện', icon: Flame, activeClass: 'bg-rose-500/20 text-rose-300 border-rose-500/50' },
+              ].map(p => {
+                const Icon = p.icon;
+                const isSelected = chatPersona === p.id;
+                return (
                   <button
-                    onClick={handleSelectAllDocs}
-                    className="text-blue-400 hover:text-blue-300 hover:underline transition font-medium"
-                    title="Dùng tất cả tài liệu làm ngữ cảnh"
+                    key={p.id}
+                    type="button"
+                    onClick={() => setChatPersona(p.id)}
+                    className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition cursor-pointer ${
+                      isSelected 
+                        ? p.activeClass 
+                        : (isDark ? 'bg-white/5 border-white/10 text-gray-400 hover:text-white hover:bg-white/10' : 'bg-slate-100 border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-200')
+                    }`}
+                    title={PERSONA_CONFIGS[p.id]?.desc}
                   >
-                    Dùng tất cả
+                    <Icon size={12} />
+                    <span>{p.name}</span>
                   </button>
-                ) : (
-                  <button
-                    onClick={handleDeselectAllDocs}
-                    className="text-gray-400 hover:text-gray-300 hover:underline transition"
-                    title="Bỏ chọn tất cả tài liệu"
-                  >
-                    Bỏ chọn
-                  </button>
-                )}
-              </div>
+                );
+              })}
             </div>
-          )}
+
+            {/* Right: Quick Tools (Context badge, Suggestions toggle, Notes) */}
+            <div className="flex items-center gap-1.5 shrink-0 ml-auto">
+              {/* Document Context Pill */}
+              {documents.length > 0 && (
+                <button
+                  type="button"
+                  onClick={selectedDocs.size < documents.length ? handleSelectAllDocs : handleDeselectAllDocs}
+                  className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition cursor-pointer ${
+                    selectedDocs.size === 0
+                      ? 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+                      : (isDark ? 'bg-white/5 border-white/10 text-gray-300 hover:text-white' : 'bg-slate-100 border-slate-200 text-slate-700 hover:text-slate-900')
+                  }`}
+                  title={selectedDocs.size < documents.length ? "Bấm để chọn tất cả tài liệu" : "Bấm để bỏ chọn tất cả"}
+                >
+                  <span className={`w-1.5 h-1.5 rounded-full ${
+                    selectedDocs.size === 0 ? 'bg-amber-400' : selectedDocs.size === documents.length ? 'bg-blue-400' : 'bg-emerald-400'
+                  }`} />
+                  <span>
+                    {selectedDocs.size === 0 
+                      ? 'Chung' 
+                      : selectedDocs.size === documents.length 
+                        ? `Tất cả (${documents.length})` 
+                        : `${selectedDocs.size}/${documents.length} tệp`}
+                  </span>
+                </button>
+              )}
+
+              {/* Suggestions toggle chip */}
+              {suggestedQuestions.length > 0 && !loading && (
+                <button
+                  type="button"
+                  onClick={() => setShowSuggestionsDrawer(prev => !prev)}
+                  className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium border transition cursor-pointer ${
+                    showSuggestionsDrawer
+                      ? 'bg-yellow-500/20 text-yellow-300 border-yellow-500/40 shadow-sm'
+                      : (isDark ? 'bg-white/5 border-white/10 text-gray-400 hover:text-yellow-300' : 'bg-slate-100 border-slate-200 text-slate-600 hover:text-yellow-700')
+                  }`}
+                  title="Xem các câu hỏi gợi ý từ tài liệu"
+                >
+                  <Sparkles size={11} className="text-yellow-400" />
+                  <span>Gợi ý ({suggestedQuestions.length})</span>
+                  {showSuggestionsDrawer ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+                </button>
+              )}
+
+              {/* Pinned Notes shortcut button */}
+              <button
+                type="button"
+                onClick={() => setShowNotesModal(true)}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition cursor-pointer ${
+                  pinnedNotes.length > 0 
+                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' 
+                    : (isDark ? 'bg-white/5 border-white/10 text-gray-400 hover:text-white' : 'bg-slate-100 border-slate-200 text-slate-600 hover:text-slate-900')
+                }`}
+                title="Xem và quản lý các ghi chú đã ghim của sổ tay này"
+              >
+                <Bookmark size={12} className="text-amber-400" />
+                <span>Ghi chú {pinnedNotes.length > 0 && `(${pinnedNotes.length})`}</span>
+              </button>
+            </div>
+          </div>
 
           {/* Floating Stop Generating Indicator */}
           {loading && (
@@ -9725,17 +9850,18 @@ function Studio() {
               <button
                 type="button"
                 onClick={handleStopGenerating}
-                className="flex items-center gap-2 px-4 py-1.5 rounded-full bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-300 hover:text-white text-xs font-medium shadow-lg transition backdrop-blur-sm cursor-pointer"
+                className="flex items-center gap-2 px-3.5 py-1 rounded-full bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-300 hover:text-white text-xs font-medium shadow-lg transition backdrop-blur-sm cursor-pointer"
                 title="Bấm hoặc nhấn Escape để dừng ngay lập tức"
               >
-                <Square size={12} className="fill-current text-red-400" />
+                <Square size={11} className="fill-current text-red-400" />
                 <span>Dừng tạo câu trả lời</span>
-                <span className="text-[10px] bg-black/40 px-1.5 py-0.5 rounded text-gray-300 font-mono">Esc</span>
+                <span className="text-[10px] bg-black/40 px-1.5 py-0.2 rounded text-gray-300 font-mono">Esc</span>
               </button>
             </div>
           )}
-          {/* Suggested Questions Chips from FAQ */}
-          {suggestedQuestions.length > 0 && !loading && (
+
+          {/* Collapsible Suggested Questions Chips Drawer */}
+          {(showSuggestionsDrawer || (messages.length === 0 && suggestedQuestions.length > 0)) && !loading && (
             <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-hide pb-2 px-1 animate-fade-in">
               <span className="text-[10px] text-gray-400 uppercase tracking-wider shrink-0 flex items-center gap-1 font-semibold">
                 <Sparkles size={11} className="text-yellow-400" /> Gợi ý:
@@ -9755,54 +9881,6 @@ function Studio() {
               ))}
             </div>
           )}
-
-          {/* Feature: AI Persona Mode Bar & Pinned Notes button */}
-          <div className="flex items-center justify-between pb-2 px-1 text-xs gap-2 overflow-x-auto scrollbar-hide">
-            <div className="flex items-center gap-1.5 shrink-0">
-              <span className={`text-[11px] font-medium mr-1 flex items-center gap-1 ${isDark ? 'text-gray-400' : 'text-slate-500'}`}>
-                <Bot size={13} className="text-blue-500" /> Chế độ:
-              </span>
-              {[
-                { id: 'strict', name: 'Bám sát nguồn', desc: 'Trực tiếp 100% tài liệu', icon: Shield, activeClass: 'bg-blue-500/20 text-blue-300 border-blue-500/50' },
-                { id: 'socratic', name: 'Gia sư Socratic', desc: 'Gợi mở, hướng dẫn tư duy', icon: Sparkles, activeClass: 'bg-amber-500/20 text-amber-300 border-amber-500/50' },
-                { id: 'critic', name: 'Phản biện sâu', desc: 'Đánh giá đa chiều & điểm mù', icon: Flame, activeClass: 'bg-rose-500/20 text-rose-300 border-rose-500/50' },
-              ].map(p => {
-                const Icon = p.icon;
-                const isSelected = chatPersona === p.id;
-                return (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() => setChatPersona(p.id)}
-                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium border transition cursor-pointer ${
-                      isSelected 
-                        ? p.activeClass 
-                        : (isDark ? 'bg-white/5 border-white/10 text-gray-400 hover:text-white hover:bg-white/10' : 'bg-slate-100 border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-200')
-                    }`}
-                    title={p.desc}
-                  >
-                    <Icon size={12} />
-                    <span>{p.name}</span>
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Pinned Notes shortcut button */}
-            <button
-              type="button"
-              onClick={() => setShowNotesModal(true)}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium border transition cursor-pointer shrink-0 ${
-                pinnedNotes.length > 0 
-                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' 
-                  : (isDark ? 'bg-white/5 border-white/10 text-gray-400 hover:text-white' : 'bg-slate-100 border-slate-200 text-slate-600 hover:text-slate-900')
-              }`}
-              title="Xem và quản lý các ghi chú đã ghim của sổ tay này"
-            >
-              <Bookmark size={12} className="text-amber-400" />
-              <span>Ghi chú ({pinnedNotes.length})</span>
-            </button>
-          </div>
 
           <div className={`p-2 flex items-end gap-2 rounded-2xl relative group focus-within:border-blue-500/60 transition-all duration-300 border ${
             isDark ? 'bg-[#181a20] border-white/15' : 'bg-white border-slate-300 shadow-sm'
@@ -9865,7 +9943,7 @@ function Studio() {
               className={`flex-1 bg-transparent border-none px-2 py-2.5 text-sm focus:outline-none resize-none min-h-[44px] max-h-[140px] scrollbar-hide ${
                 isDark ? 'text-white placeholder-gray-500' : 'text-slate-900 placeholder-slate-400'
               }`}
-              placeholder="Đặt câu hỏi về tài liệu của bạn (Nhấn Ctrl+/ để focus)..."
+              placeholder="Đặt câu hỏi về tài liệu (Enter để gửi, Shift+Enter xuống dòng)..."
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
@@ -9911,285 +9989,418 @@ function Studio() {
               </button>
             )}
           </div>
-          <div className={`text-center mt-2 text-[11px] ${isDark ? 'text-gray-500' : 'text-slate-400'}`}>
-            NotebookLM Mini • Nhấn Ctrl+Enter để gửi • Ctrl+K đổi mô hình AI • Ctrl+F tìm kiếm
-          </div>
         </div>
       </div>
 
       {/* Cột 3: Right Sidebar (Study Guide, Podcast, Mindmap, Timeline) */}
-      <div className={`w-80 xl:w-88 flex-shrink-0 h-full p-4 overflow-y-auto scrollbar-hide flex flex-col gap-4 border-l transition-colors ${
+      <div className={`${
+        showRightSidebar ? 'w-80 xl:w-96 flex' : 'hidden'
+      } flex-shrink-0 h-full p-3.5 overflow-y-auto scrollbar-hide flex-col gap-3 border-l transition-all duration-200 ${
         isDark ? 'bg-[#14161a] border-white/5' : 'bg-white border-slate-200'
-      } ${mobileActiveTab === 'studio' ? 'flex fixed inset-0 z-40 w-full md:relative md:w-80 xl:md:w-88' : 'hidden lg:flex'}`}>
+      } ${mobileActiveTab === 'studio' ? '!flex fixed inset-0 z-40 w-full md:relative md:w-80 xl:md:w-96' : ''}`}>
         
         {/* Top Header Bar - aligned with Col 1 & Col 2 */}
-        <div className={`flex justify-between items-center pb-3.5 mb-1 min-h-[44px] border-b ${
+        <div className={`flex justify-between items-center pb-3 mb-0.5 min-h-[44px] border-b ${
           isDark ? 'border-white/10' : 'border-slate-200'
         }`}>
           <div className="flex items-center gap-2">
-            <Sparkles size={16} className="text-purple-400" />
-            <span className={`font-bold text-sm ${isDark ? 'text-gray-200' : 'text-slate-800'}`}>Studio Học Tập</span>
+            <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-purple-500 to-blue-500 flex items-center justify-center text-white shadow-sm">
+              <Sparkles size={14} />
+            </div>
+            <div>
+              <h3 className={`font-bold text-sm leading-none ${isDark ? 'text-gray-100' : 'text-slate-800'}`}>Studio Học Tập</h3>
+              <span className="text-[10px] text-gray-400">Trợ lý AI & Bộ công cụ</span>
+            </div>
           </div>
-          {mobileActiveTab === 'studio' ? (
-            <button onClick={() => setMobileActiveTab('chat')} className="lg:hidden text-xs px-2.5 py-1 rounded-lg bg-white/10 text-white">
-              Đóng
-            </button>
-          ) : (
-            <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full border ${
-              isDark ? 'text-gray-400 bg-white/5 border-white/10' : 'text-slate-500 bg-slate-100 border-slate-200'
-            }`}>
-              AI Copilot
-            </span>
-          )}
+          
+          <div className="flex items-center gap-1">
+            {mobileActiveTab === 'studio' ? (
+              <button onClick={() => setMobileActiveTab('chat')} className="lg:hidden text-xs px-2.5 py-1 rounded-lg bg-white/10 text-white">
+                Đóng
+              </button>
+            ) : (
+              <button
+                onClick={() => setShowRightSidebar(false)}
+                className={`hidden lg:flex items-center justify-center p-1.5 rounded-lg border transition cursor-pointer ${
+                  isDark ? 'text-gray-400 hover:text-white bg-white/5 border-white/10 hover:bg-white/10' : 'text-slate-500 hover:text-slate-900 bg-slate-100 border-slate-200 hover:bg-slate-200'
+                }`}
+                title="Thu gọn Studio (Ctrl+J)"
+              >
+                <PanelRightClose size={15} />
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Segmented Tab Switcher */}
+        <div className={`p-1 rounded-xl flex items-center gap-1 border shrink-0 ${
+          isDark ? 'bg-[#181a20] border-white/10' : 'bg-slate-100 border-slate-200'
+        }`}>
+          <button
+            onClick={() => setStudioTab('tools')}
+            className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition cursor-pointer ${
+              studioTab === 'tools'
+                ? (isDark ? 'bg-purple-600 text-white shadow-sm' : 'bg-white text-purple-700 shadow-sm')
+                : (isDark ? 'text-gray-400 hover:text-white' : 'text-slate-600 hover:text-slate-900')
+            }`}
+          >
+            <Sparkles size={13} />
+            <span>Công cụ AI</span>
+          </button>
+          <button
+            onClick={() => setStudioTab('guide')}
+            className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition cursor-pointer ${
+              studioTab === 'guide'
+                ? (isDark ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-blue-700 shadow-sm')
+                : (isDark ? 'text-gray-400 hover:text-white' : 'text-slate-600 hover:text-slate-900')
+            }`}
+          >
+            <BookOpen size={13} />
+            <span>Cẩm nang học</span>
+          </button>
         </div>
         
-        {/* Study Guide Card */}
-        <div className={`p-4 rounded-2xl border ${
-          isDark ? 'bg-[#181a20] border-white/10 text-white' : 'bg-slate-50 border-slate-200 text-slate-800 shadow-sm'
-        }`}>
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-bold text-blue-500 flex items-center gap-1.5">
-              <BookOpen size={16} /> Cẩm Nang Học Tập
-            </h3>
-            {documents.length > 0 && (
-              <div className="flex items-center gap-1">
-                <button 
-                  onClick={() => setShowGuideConfigModal(true)}
-                  disabled={regeneratingGuide}
-                  className="text-[11px] bg-blue-500/10 hover:bg-blue-500/20 text-blue-500 border border-blue-500/30 px-2 py-0.5 rounded-lg flex items-center gap-1 transition cursor-pointer"
-                  title="Tùy chỉnh số lượng câu hỏi, flashcards và chủ đề"
-                >
-                  <SlidersHorizontal size={11} /> Tùy chỉnh
-                </button>
-                <button 
-                  onClick={handleRegenerateStudyGuide}
-                  disabled={regeneratingGuide}
-                  className={`text-[11px] p-1 rounded-lg transition cursor-pointer ${
-                    isDark ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-slate-500 hover:text-slate-900 hover:bg-slate-200'
-                  }`}
-                  title="Làm mới nhanh"
-                >
-                  <RefreshCw size={12} className={regeneratingGuide ? 'animate-spin' : ''} />
-                </button>
+        {/* TAB 1: CÔNG CỤ AI (QUICK ACTION GRID) */}
+        {studioTab === 'tools' && (
+          <div className="space-y-3">
+            {documents.length === 0 ? (
+              <div className={`p-6 rounded-2xl border text-center text-xs leading-relaxed ${
+                isDark ? 'bg-[#181a20] border-white/10 text-gray-400' : 'bg-slate-50 border-slate-200 text-slate-500'
+              }`}>
+                <Sparkles size={24} className="mx-auto text-purple-400 mb-2 opacity-80" />
+                <p className="font-semibold mb-1 text-sm text-gray-200">Chưa có tài liệu nào</p>
+                Tải lên tài liệu ở thanh bên trái để mở khóa toàn bộ 8 công cụ AI phân tích chuyên sâu!
               </div>
+            ) : (
+              <>
+                {/* Podcast AI Banner Card (Full Width) */}
+                <div className={`p-3 rounded-2xl border transition ${
+                  isDark ? 'bg-[#181a20] border-purple-500/30 text-white' : 'bg-purple-50/50 border-purple-200 text-slate-800'
+                }`}>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-1.5">
+                      <Headphones size={15} className="text-purple-400 shrink-0" />
+                      <span className="font-bold text-xs">Podcast AI (2 Giọng đọc)</span>
+                    </div>
+                    <button 
+                      onClick={() => setShowPodcastModal(true)}
+                      disabled={podcastGenerating}
+                      className="text-[10px] bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 border border-purple-500/30 px-2 py-0.5 rounded-lg flex items-center gap-1 transition cursor-pointer"
+                      title="Tùy chỉnh chủ đề, giọng đọc và phong cách"
+                    >
+                      <SlidersHorizontal size={10} /> Tùy chỉnh
+                    </button>
+                  </div>
+
+                  {!audioUrl ? (
+                    <button 
+                      onClick={generatePodcast}
+                      disabled={podcastGenerating}
+                      className="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:opacity-95 text-white font-semibold text-xs py-2 rounded-xl transition disabled:opacity-40 flex justify-center items-center gap-1.5 cursor-pointer shadow"
+                    >
+                      {podcastGenerating ? <RefreshCw className="animate-spin" size={13} /> : <Headphones size={13} />}
+                      <span>{podcastGenerating ? "Đang tạo âm thanh (vui lòng đợi)..." : "Tạo Podcast AI"}</span>
+                    </button>
+                  ) : (
+                    <div className="space-y-1.5">
+                      <audio controls className="w-full h-8 rounded outline-none" src={audioUrl} />
+                      <div className="flex justify-between items-center text-[10px] text-gray-400 px-1">
+                        <span>Đã tạo sẵn sàng</span>
+                        <button 
+                          onClick={() => setShowPodcastModal(true)}
+                          className="text-purple-400 hover:underline cursor-pointer"
+                        >
+                          Tạo bản thu khác
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* 2-Column Grid for All Remaining AI Tools */}
+                <div className="grid grid-cols-2 gap-2">
+                  
+                  {/* Tool 1: Mind Map */}
+                  <div className={`p-2.5 rounded-xl border flex flex-col justify-between ${
+                    isDark ? 'bg-[#181a20] border-white/10' : 'bg-slate-50 border-slate-200 shadow-sm'
+                  }`}>
+                    <div className="flex items-start justify-between mb-2">
+                      <div className="flex items-center gap-1.5">
+                        <Network size={14} className="text-indigo-400 shrink-0" />
+                        <span className="font-bold text-xs truncate">Sơ Đồ Tư Duy</span>
+                      </div>
+                      <button
+                        onClick={() => handleRegenerateMindmap()}
+                        disabled={loadingMindmap}
+                        className={`p-1 rounded transition cursor-pointer ${
+                          isDark ? 'text-gray-400 hover:text-white' : 'text-slate-400 hover:text-slate-800'
+                        }`}
+                        title="Tái tạo sơ đồ"
+                      >
+                        <RefreshCw size={11} className={loadingMindmap ? 'animate-spin' : ''} />
+                      </button>
+                    </div>
+                    <button
+                      onClick={handleOpenMindmap}
+                      className="w-full bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 font-semibold text-[11px] py-1.5 rounded-lg transition flex items-center justify-center gap-1 cursor-pointer"
+                    >
+                      <Network size={12} /> Mở Sơ đồ 2D
+                    </button>
+                  </div>
+
+                  {/* Tool 2: Timeline */}
+                  <div className={`p-2.5 rounded-xl border flex flex-col justify-between ${
+                    isDark ? 'bg-[#181a20] border-white/10' : 'bg-slate-50 border-slate-200 shadow-sm'
+                  }`}>
+                    <div className="flex items-start justify-between mb-2">
+                      <div className="flex items-center gap-1.5">
+                        <Clock size={14} className="text-emerald-400 shrink-0" />
+                        <span className="font-bold text-xs truncate">Dòng Thời Gian</span>
+                      </div>
+                      <button
+                        onClick={() => handleRegenerateTimeline()}
+                        disabled={loadingTimeline}
+                        className={`p-1 rounded transition cursor-pointer ${
+                          isDark ? 'text-gray-400 hover:text-white' : 'text-slate-400 hover:text-slate-800'
+                        }`}
+                        title="Tái tạo tiến trình"
+                      >
+                        <RefreshCw size={11} className={loadingTimeline ? 'animate-spin' : ''} />
+                      </button>
+                    </div>
+                    <button
+                      onClick={handleOpenTimeline}
+                      className="w-full bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-semibold text-[11px] py-1.5 rounded-lg transition flex items-center justify-center gap-1 cursor-pointer"
+                    >
+                      <Clock size={12} /> Xem Niên biểu
+                    </button>
+                  </div>
+
+                  {/* Tool 3: Phản biện AI */}
+                  <div className={`p-2.5 rounded-xl border flex flex-col justify-between ${
+                    isDark ? 'bg-[#181a20] border-white/10' : 'bg-slate-50 border-slate-200 shadow-sm'
+                  }`}>
+                    <div className="flex items-center gap-1.5 mb-2">
+                      <ShieldAlert size={14} className="text-rose-400 shrink-0" />
+                      <span className="font-bold text-xs truncate">Phản Biện AI</span>
+                    </div>
+                    <button
+                      onClick={() => handleRunStudioTool('critique')}
+                      className="w-full bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 font-semibold text-[11px] py-1.5 rounded-lg transition flex items-center justify-center gap-1 cursor-pointer"
+                    >
+                      <ShieldAlert size={12} /> Báo cáo phản biện
+                    </button>
+                  </div>
+
+                  {/* Tool 4: Kế hoạch hành động */}
+                  <div className={`p-2.5 rounded-xl border flex flex-col justify-between ${
+                    isDark ? 'bg-[#181a20] border-white/10' : 'bg-slate-50 border-slate-200 shadow-sm'
+                  }`}>
+                    <div className="flex items-center gap-1.5 mb-2">
+                      <ClipboardCheck size={14} className="text-lime-500 shrink-0" />
+                      <span className="font-bold text-xs truncate">Kế Hoạch Thực Thi</span>
+                    </div>
+                    <button
+                      onClick={() => handleRunStudioTool('action_plan')}
+                      className="w-full bg-lime-500/10 hover:bg-lime-500/20 text-lime-500 border border-lime-500/30 font-semibold text-[11px] py-1.5 rounded-lg transition flex items-center justify-center gap-1 cursor-pointer"
+                    >
+                      <ClipboardCheck size={12} /> Lập Kế hoạch
+                    </button>
+                  </div>
+
+                  {/* Tool 5: Trắc nghiệm */}
+                  <div className={`p-2.5 rounded-xl border flex flex-col justify-between ${
+                    isDark ? 'bg-[#181a20] border-white/10' : 'bg-slate-50 border-slate-200 shadow-sm'
+                  }`}>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-1.5">
+                        <Brain size={14} className="text-blue-400 shrink-0" />
+                        <span className="font-bold text-xs truncate">Trắc Nghiệm</span>
+                      </div>
+                      <span className="text-[10px] font-mono text-blue-400 font-semibold">
+                        {studyGuide?.quiz?.length || 0} câu
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => setShowQuiz(true)}
+                      disabled={!studyGuide?.quiz || studyGuide.quiz.length === 0}
+                      className="w-full bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/30 font-semibold text-[11px] py-1.5 rounded-lg transition disabled:opacity-40 flex items-center justify-center gap-1 cursor-pointer"
+                    >
+                      <Brain size={12} /> Làm bài thi
+                    </button>
+                  </div>
+
+                  {/* Tool 6: Quizlet / Flashcards */}
+                  <div className={`p-2.5 rounded-xl border flex flex-col justify-between ${
+                    isDark ? 'bg-[#181a20] border-white/10' : 'bg-slate-50 border-slate-200 shadow-sm'
+                  }`}>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-1.5">
+                        <Layers size={14} className="text-purple-400 shrink-0" />
+                        <span className="font-bold text-xs truncate">Thẻ Quizlet</span>
+                      </div>
+                      <span className="text-[10px] font-mono text-purple-400 font-semibold">
+                        {studyGuide?.flashcards?.length || 0} thẻ
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => setShowFlashcards(true)}
+                      disabled={!studyGuide?.flashcards || studyGuide.flashcards.length === 0}
+                      className="w-full bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 border border-purple-500/30 font-semibold text-[11px] py-1.5 rounded-lg transition disabled:opacity-40 flex items-center justify-center gap-1 cursor-pointer"
+                    >
+                      <Layers size={12} /> Học thẻ 3D
+                    </button>
+                  </div>
+
+                  {/* Tool 7: So sánh tài liệu */}
+                  <div className={`p-2.5 rounded-xl border flex flex-col justify-between ${
+                    isDark ? 'bg-[#181a20] border-white/10' : 'bg-slate-50 border-slate-200 shadow-sm'
+                  }`}>
+                    <div className="flex items-center gap-1.5 mb-2">
+                      <Scale size={14} className="text-amber-400 shrink-0" />
+                      <span className="font-bold text-xs truncate">So Sánh Tài Liệu</span>
+                    </div>
+                    <button
+                      onClick={() => setShowDocCompareModal(true)}
+                      disabled={documents.length < 2}
+                      className="w-full bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 font-semibold text-[11px] py-1.5 rounded-lg transition disabled:opacity-40 flex items-center justify-center gap-1 cursor-pointer"
+                      title={documents.length < 2 ? "Cần tối thiểu 2 tài liệu để so sánh" : "So sánh đối chiếu tài liệu"}
+                    >
+                      <Scale size={12} /> So sánh đối chiếu
+                    </button>
+                  </div>
+
+                  {/* Tool 8: Cấu hình đề thi */}
+                  <div className={`p-2.5 rounded-xl border flex flex-col justify-between ${
+                    isDark ? 'bg-[#181a20] border-white/10' : 'bg-slate-50 border-slate-200 shadow-sm'
+                  }`}>
+                    <div className="flex items-center gap-1.5 mb-2">
+                      <SlidersHorizontal size={14} className="text-cyan-400 shrink-0" />
+                      <span className="font-bold text-xs truncate">Cấu Hình Đề Thi</span>
+                    </div>
+                    <button
+                      onClick={() => setShowGuideConfigModal(true)}
+                      className="w-full bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 font-semibold text-[11px] py-1.5 rounded-lg transition flex items-center justify-center gap-1 cursor-pointer"
+                    >
+                      <SlidersHorizontal size={12} /> Tùy chỉnh câu hỏi
+                    </button>
+                  </div>
+
+                </div>
+
+                {/* Bottom Quick Bar */}
+                <div className={`p-2.5 rounded-xl border flex items-center justify-between text-xs ${
+                  isDark ? 'bg-white/[0.02] border-white/10 text-gray-400' : 'bg-slate-50 border-slate-200 text-slate-600'
+                }`}>
+                  <span className="text-[11px]">Cẩm nang & Đề thi AI</span>
+                  <button 
+                    onClick={handleRegenerateStudyGuide}
+                    disabled={regeneratingGuide}
+                    className="flex items-center gap-1 text-[11px] text-blue-400 hover:text-blue-300 transition font-medium cursor-pointer"
+                  >
+                    <RefreshCw size={11} className={regeneratingGuide ? 'animate-spin' : ''} />
+                    <span>{regeneratingGuide ? "Đang tạo lại..." : "Làm mới tất cả"}</span>
+                  </button>
+                </div>
+              </>
             )}
           </div>
-          
-          {documents.length === 0 ? (
-            <div className={`text-xs py-6 text-center leading-relaxed ${isDark ? 'text-gray-500' : 'text-slate-400'}`}>
-              Tải lên tài liệu ở cột bên trái để AI tự động trích xuất bản tóm tắt và câu hỏi ôn tập.
-            </div>
-          ) : !studyGuide ? (
-            <div className={`flex flex-col items-center justify-center py-8 gap-2.5 ${isDark ? 'text-gray-400' : 'text-slate-500'}`}>
-              <Loader className="animate-spin text-blue-500" size={20} />
-              <span className="text-xs">Đang đọc & phân tích tài liệu...</span>
-            </div>
-          ) : (
-            <div className="space-y-3.5 text-xs">
-              {studyGuide.summary && (
-                <div>
-                  <h4 className={`font-semibold mb-1 ${isDark ? 'text-gray-300' : 'text-slate-700'}`}>Tóm tắt cốt lõi:</h4>
-                  <div className={`leading-relaxed max-h-36 overflow-y-auto scrollbar-hide text-xs ${isDark ? 'text-gray-300' : 'text-slate-700'}`}>
-                    <MarkdownRenderer content={studyGuide.summary.replace(/^#+\s*(Tóm tắt|Summary)[^\n]*\n+/i, '').trim()} isDark={isDark} />
-                  </div>
-                </div>
-              )}
-              {studyGuide.faq && (
-                <div className={`pt-2 border-t ${isDark ? 'border-white/10' : 'border-slate-200'}`}>
-                  <h4 className={`font-semibold mb-1 ${isDark ? 'text-gray-300' : 'text-slate-700'}`}>Câu hỏi thường gặp:</h4>
-                  <div className={`leading-relaxed max-h-36 overflow-y-auto scrollbar-hide text-xs ${isDark ? 'text-gray-300' : 'text-slate-700'}`}>
-                    <MarkdownRenderer content={studyGuide.faq.replace(/^#+\s*(Câu hỏi thường gặp|FAQ)[^\n]*\n+/i, '').trim()} isDark={isDark} />
-                  </div>
-                </div>
-              )}
-              {studyGuide.glossary && studyGuide.glossary !== "N/A" && !studyGuide.glossary.startsWith("⚠️") && (
-                <div className={`pt-2 border-t ${isDark ? 'border-white/10' : 'border-slate-200'}`}>
-                  <h4 className={`font-semibold mb-1 ${isDark ? 'text-gray-300' : 'text-slate-700'}`}>Thuật ngữ cốt lõi (Glossary):</h4>
-                  <div className={`leading-relaxed max-h-32 overflow-y-auto scrollbar-hide text-xs ${isDark ? 'text-gray-300' : 'text-slate-700'}`}>
-                    <MarkdownRenderer content={studyGuide.glossary.replace(/^#+\s*(Thuật ngữ|Glossary)[^\n]*\n+/i, '').trim()} isDark={isDark} />
-                  </div>
-                </div>
-              )}
+        )}
 
-              <div className={`pt-3 grid grid-cols-2 gap-2 border-t ${isDark ? 'border-white/10' : 'border-slate-200'}`}>
-                <button 
-                  onClick={() => setShowQuiz(true)}
-                  disabled={!studyGuide.quiz || studyGuide.quiz.length === 0}
-                  className="min-w-0 bg-blue-500/10 hover:bg-blue-500/20 text-blue-500 border border-blue-500/30 py-2 px-2 rounded-xl transition flex items-center justify-center gap-1.5 font-semibold text-xs disabled:opacity-40 cursor-pointer"
-                >
-                  <Brain size={14} className="shrink-0" /> 
-                  <span className="truncate">Trắc nghiệm ({studyGuide.quiz?.length || 0})</span>
-                </button>
-                <button 
-                  onClick={() => setShowFlashcards(true)}
-                  disabled={!studyGuide.flashcards || studyGuide.flashcards.length === 0}
-                  className="min-w-0 bg-purple-500/10 hover:bg-purple-500/20 text-purple-500 border border-purple-500/30 py-2 px-2 rounded-xl transition flex items-center justify-center gap-1.5 font-semibold text-xs disabled:opacity-40 cursor-pointer"
-                  title="Mở bộ thẻ lật 3D, game ghép thẻ và xuất Quizlet"
-                >
-                  <Layers size={14} className="shrink-0" /> 
-                  <span className="truncate">Quizlet ({studyGuide.flashcards?.length || 0})</span>
-                </button>
+        {/* TAB 2: CẨM NANG HỌC TẬP (READING & REFERENCE GUIDE) */}
+        {studioTab === 'guide' && (
+          <div className="space-y-3">
+            <div className={`p-4 rounded-2xl border ${
+              isDark ? 'bg-[#181a20] border-white/10 text-white' : 'bg-slate-50 border-slate-200 text-slate-800 shadow-sm'
+            }`}>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-bold text-blue-500 flex items-center gap-1.5">
+                  <BookOpen size={16} /> Cẩm Nang Học Tập
+                </h3>
+                {documents.length > 0 && (
+                  <div className="flex items-center gap-1">
+                    <button 
+                      onClick={() => setShowGuideConfigModal(true)}
+                      disabled={regeneratingGuide}
+                      className="text-[11px] bg-blue-500/10 hover:bg-blue-500/20 text-blue-500 border border-blue-500/30 px-2 py-0.5 rounded-lg flex items-center gap-1 transition cursor-pointer"
+                      title="Tùy chỉnh số lượng câu hỏi, flashcards và chủ đề"
+                    >
+                      <SlidersHorizontal size={11} /> Tùy chỉnh
+                    </button>
+                    <button 
+                      onClick={handleRegenerateStudyGuide}
+                      disabled={regeneratingGuide}
+                      className={`text-[11px] p-1 rounded-lg transition cursor-pointer ${
+                        isDark ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-slate-500 hover:text-slate-900 hover:bg-slate-200'
+                      }`}
+                      title="Làm mới nhanh"
+                    >
+                      <RefreshCw size={12} className={regeneratingGuide ? 'animate-spin' : ''} />
+                    </button>
+                  </div>
+                )}
               </div>
+              
+              {documents.length === 0 ? (
+                <div className={`text-xs py-6 text-center leading-relaxed ${isDark ? 'text-gray-500' : 'text-slate-400'}`}>
+                  Tải lên tài liệu ở cột bên trái để AI tự động trích xuất bản tóm tắt và câu hỏi ôn tập.
+                </div>
+              ) : !studyGuide ? (
+                <div className={`flex flex-col items-center justify-center py-8 gap-2.5 ${isDark ? 'text-gray-400' : 'text-slate-500'}`}>
+                  <Loader className="animate-spin text-blue-500" size={20} />
+                  <span className="text-xs">Đang đọc & phân tích tài liệu...</span>
+                </div>
+              ) : (
+                <div className="space-y-3.5 text-xs">
+                  {studyGuide.summary && (
+                    <div>
+                      <h4 className={`font-semibold mb-1 ${isDark ? 'text-gray-300' : 'text-slate-700'}`}>Tóm tắt cốt lõi:</h4>
+                      <div className={`leading-relaxed max-h-48 overflow-y-auto scrollbar-hide text-xs ${isDark ? 'text-gray-300' : 'text-slate-700'}`}>
+                        <MarkdownRenderer content={studyGuide.summary.replace(/^#+\s*(Tóm tắt|Summary)[^\n]*\n+/i, '').trim()} isDark={isDark} />
+                      </div>
+                    </div>
+                  )}
+                  {studyGuide.faq && (
+                    <div className={`pt-2 border-t ${isDark ? 'border-white/10' : 'border-slate-200'}`}>
+                      <h4 className={`font-semibold mb-1 ${isDark ? 'text-gray-300' : 'text-slate-700'}`}>Câu hỏi thường gặp:</h4>
+                      <div className={`leading-relaxed max-h-48 overflow-y-auto scrollbar-hide text-xs ${isDark ? 'text-gray-300' : 'text-slate-700'}`}>
+                        <MarkdownRenderer content={studyGuide.faq.replace(/^#+\s*(Câu hỏi thường gặp|FAQ)[^\n]*\n+/i, '').trim()} isDark={isDark} />
+                      </div>
+                    </div>
+                  )}
+                  {studyGuide.glossary && studyGuide.glossary !== "N/A" && !studyGuide.glossary.startsWith("⚠️") && (
+                    <div className={`pt-2 border-t ${isDark ? 'border-white/10' : 'border-slate-200'}`}>
+                      <h4 className={`font-semibold mb-1 ${isDark ? 'text-gray-300' : 'text-slate-700'}`}>Thuật ngữ cốt lõi (Glossary):</h4>
+                      <div className={`leading-relaxed max-h-40 overflow-y-auto scrollbar-hide text-xs ${isDark ? 'text-gray-300' : 'text-slate-700'}`}>
+                        <MarkdownRenderer content={studyGuide.glossary.replace(/^#+\s*(Thuật ngữ|Glossary)[^\n]*\n+/i, '').trim()} isDark={isDark} />
+                      </div>
+                    </div>
+                  )}
+
+                  <div className={`pt-3 grid grid-cols-2 gap-2 border-t ${isDark ? 'border-white/10' : 'border-slate-200'}`}>
+                    <button 
+                      onClick={() => setShowQuiz(true)}
+                      disabled={!studyGuide.quiz || studyGuide.quiz.length === 0}
+                      className="min-w-0 bg-blue-500/10 hover:bg-blue-500/20 text-blue-500 border border-blue-500/30 py-2 px-2 rounded-xl transition flex items-center justify-center gap-1.5 font-semibold text-xs disabled:opacity-40 cursor-pointer"
+                    >
+                      <Brain size={14} className="shrink-0" /> 
+                      <span className="truncate">Trắc nghiệm ({studyGuide.quiz?.length || 0})</span>
+                    </button>
+                    <button 
+                      onClick={() => setShowFlashcards(true)}
+                      disabled={!studyGuide.flashcards || studyGuide.flashcards.length === 0}
+                      className="min-w-0 bg-purple-500/10 hover:bg-purple-500/20 text-purple-500 border border-purple-500/30 py-2 px-2 rounded-xl transition flex items-center justify-center gap-1.5 font-semibold text-xs disabled:opacity-40 cursor-pointer"
+                      title="Mở bộ thẻ lật 3D, game ghép thẻ và xuất Quizlet"
+                    >
+                      <Layers size={14} className="shrink-0" /> 
+                      <span className="truncate">Quizlet ({studyGuide.flashcards?.length || 0})</span>
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
-          )}
-        </div>
-
-        {/* Feature #8: Mind Map Card */}
-        <div className={`p-4 rounded-2xl border ${
-          isDark ? 'bg-[#181a20] border-white/10 text-white' : 'bg-slate-50 border-slate-200 text-slate-800 shadow-sm'
-        }`}>
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-sm font-bold text-indigo-400 flex items-center gap-1.5">
-              <Network size={16} /> Sơ Đồ Tư Duy (Mind Map)
-            </h3>
-            {documents.length > 0 && (
-              <button
-                onClick={() => handleRegenerateMindmap()}
-                disabled={loadingMindmap}
-                className={`text-[11px] p-1 rounded-lg transition cursor-pointer ${
-                  isDark ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-slate-500 hover:text-slate-900 hover:bg-slate-200'
-                }`}
-                title="Tái tạo sơ đồ tư duy"
-              >
-                <RefreshCw size={12} className={loadingMindmap ? 'animate-spin' : ''} />
-              </button>
-            )}
           </div>
-          <p className={`text-xs mb-3 leading-relaxed ${isDark ? 'text-gray-400' : 'text-slate-500'}`}>
-            Trực quan hóa mạng lưới khái niệm và luận điểm trọng tâm trong tài liệu.
-          </p>
-          <button
-            onClick={handleOpenMindmap}
-            disabled={documents.length === 0}
-            className="w-full bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 font-semibold text-xs py-2.5 rounded-xl transition disabled:opacity-40 flex justify-center items-center gap-2 cursor-pointer"
-          >
-            <Network size={14} /> Mở Sơ đồ tư duy 2D
-          </button>
-        </div>
-
-        {/* Feature #15: Timeline & Outline Card */}
-        <div className={`p-4 rounded-2xl border ${
-          isDark ? 'bg-[#181a20] border-white/10 text-white' : 'bg-slate-50 border-slate-200 text-slate-800 shadow-sm'
-        }`}>
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-sm font-bold text-emerald-400 flex items-center gap-1.5">
-              <Clock size={16} /> Dòng Thời Gian & Dàn Ý
-            </h3>
-            {documents.length > 0 && (
-              <button
-                onClick={() => handleRegenerateTimeline()}
-                disabled={loadingTimeline}
-                className={`text-[11px] p-1 rounded-lg transition cursor-pointer ${
-                  isDark ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-slate-500 hover:text-slate-900 hover:bg-slate-200'
-                }`}
-                title="Tái tạo tiến trình & dàn ý"
-              >
-                <RefreshCw size={12} className={loadingTimeline ? 'animate-spin' : ''} />
-              </button>
-            )}
-          </div>
-          <p className={`text-xs mb-3 leading-relaxed ${isDark ? 'text-gray-400' : 'text-slate-500'}`}>
-            Xem niên biểu các mốc sự kiện và dàn ý phân cấp cấu trúc của tài liệu.
-          </p>
-          <button
-            onClick={handleOpenTimeline}
-            disabled={documents.length === 0}
-            className="w-full bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-semibold text-xs py-2.5 rounded-xl transition disabled:opacity-40 flex justify-center items-center gap-2 cursor-pointer"
-          >
-            <Clock size={14} /> Xem Niên biểu & Dàn bài
-          </button>
-        </div>
-
-        {/* Podcast Card */}
-        <div className={`p-4 rounded-2xl border ${
-          isDark ? 'bg-[#181a20] border-white/10 text-white' : 'bg-slate-50 border-slate-200 text-slate-800 shadow-sm'
-        }`}>
-          <div className="flex items-center justify-between mb-2.5">
-            <h3 className="text-sm font-bold text-purple-400 flex items-center gap-1.5">
-              <Headphones size={16} /> Trò Chuyện Audio (Podcast)
-            </h3>
-            {documents.length > 0 && (
-              <button 
-                onClick={() => setShowPodcastModal(true)}
-                disabled={podcastGenerating}
-                className="text-[11px] bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 border border-purple-500/30 px-2 py-0.5 rounded-lg flex items-center gap-1 transition cursor-pointer"
-                title="Tùy chỉnh chủ đề và phong cách Podcast"
-              >
-                <SlidersHorizontal size={11} /> Tùy chỉnh
-              </button>
-            )}
-          </div>
-          
-          <p className={`text-xs mb-3 leading-relaxed ${isDark ? 'text-gray-400' : 'text-slate-500'}`}>
-            AI tự động viết kịch bản và thảo luận bằng âm thanh giữa 2 người dẫn chương trình.
-          </p>
-
-          {!audioUrl ? (
-            <button 
-              onClick={generatePodcast}
-              disabled={podcastGenerating || documents.length === 0}
-              className="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:opacity-90 text-white font-semibold text-xs py-2.5 rounded-xl transition disabled:opacity-40 flex justify-center items-center gap-2 cursor-pointer shadow"
-            >
-              {podcastGenerating ? <RefreshCw className="animate-spin" size={14} /> : <Headphones size={14} />}
-              {podcastGenerating ? "Đang tạo âm thanh (vui lòng đợi)..." : "Tạo Podcast AI"}
-            </button>
-          ) : (
-            <div className="space-y-2">
-              <audio controls className="w-full h-9 rounded outline-none" src={audioUrl} />
-              <button 
-                onClick={() => setShowPodcastModal(true)}
-                disabled={podcastGenerating}
-                className={`w-full py-1.5 text-[11px] rounded-lg transition text-center cursor-pointer ${
-                  isDark ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-slate-500 hover:text-slate-900 hover:bg-slate-200'
-                }`}
-              >
-                Tạo bản thu khác (Tùy chỉnh)
-              </button>
-            </div>
-          )}
-        </div>
-
-        {/* Feature: Phản biện AI (Deep Critique) */}
-        <div className={`p-4 rounded-2xl border ${
-          isDark ? 'bg-[#181a20] border-white/10 text-white' : 'bg-slate-50 border-slate-200 text-slate-800 shadow-sm'
-        }`}>
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-sm font-bold text-rose-400 flex items-center gap-1.5">
-              <ShieldAlert size={16} /> Phản Biện AI (Peer Review)
-            </h3>
-          </div>
-          <p className={`text-xs mb-3 leading-relaxed ${isDark ? 'text-gray-400' : 'text-slate-500'}`}>
-            Tìm điểm mù, lỗ hổng lập luận, thiếu sót dữ liệu và các câu hỏi phản biện sắc bén.
-          </p>
-          <button
-            onClick={() => handleRunStudioTool('critique')}
-            disabled={documents.length === 0}
-            className="w-full bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 font-semibold text-xs py-2.5 rounded-xl transition disabled:opacity-40 flex justify-center items-center gap-2 cursor-pointer"
-          >
-            <ShieldAlert size={14} /> Tạo Báo cáo Phản biện
-          </button>
-        </div>
-
-        {/* Feature: Kế hoạch hành động (Action Plan) */}
-        <div className={`p-4 rounded-2xl border ${
-          isDark ? 'bg-[#181a20] border-white/10 text-white' : 'bg-slate-50 border-slate-200 text-slate-800 shadow-sm'
-        }`}>
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-sm font-bold text-lime-500 flex items-center gap-1.5">
-              <ClipboardCheck size={16} /> Kế Hoạch Hành Động
-            </h3>
-          </div>
-          <p className={`text-xs mb-3 leading-relaxed ${isDark ? 'text-gray-400' : 'text-slate-500'}`}>
-            Chuyển hóa lý thuyết thành ma trận hành động (Action Matrix) và checklist thực thi.
-          </p>
-          <button
-            onClick={() => handleRunStudioTool('action_plan')}
-            disabled={documents.length === 0}
-            className="w-full bg-lime-500/10 hover:bg-lime-500/20 text-lime-500 border border-lime-500/30 font-semibold text-xs py-2.5 rounded-xl transition disabled:opacity-40 flex justify-center items-center gap-2 cursor-pointer"
-          >
-            <ClipboardCheck size={14} /> Lập Kế hoạch Thực thi
-          </button>
-        </div>
+        )}
 
       </div>
 
@@ -11244,7 +11455,6 @@ sử dụng kiến trúc Retrieval-Augmented Generation (RAG) để truy xuất 
 quan từ tài liệu đã được nạp trước, sau đó đưa các ngữ cảnh này vào prompt để sinh phản hồi.
 Cách tiếp cận này ... [CẮT BỚT CHO GỌN]
 `
-
 
 # ==============================================================================
 # FILE: pipeline_viewer.html
@@ -12596,7 +12806,6 @@ google-genai>=0.1.0
 # --- Text-to-Speech (Podcast Generator) ---
 edge-tts>=6.1.9
 pyttsx3>=2.90
-
 
 # ==============================================================================
 # FILE: scratch/fix_ingestion.py
@@ -15666,7 +15875,6 @@ class RagasEvaluator:
             logger.error(f"Lỗi khi chấm điểm Ragas: {e}")
             return {"error": str(e)}
 
-
 # ==============================================================================
 # FILE: src/evaluation/run_chunking.py
 # ==============================================================================
@@ -15774,7 +15982,6 @@ if __name__ == "__main__":
 # ==============================================================================
 
 ﻿
-
 
 # ==============================================================================
 # FILE: src/ingestion/chunking.py
@@ -16113,7 +16320,6 @@ class LocalEmbedder:
 # ==============================================================================
 
 ﻿
-
 
 # ==============================================================================
 # FILE: src/ingestion/indexing.py
@@ -16470,13 +16676,11 @@ class VectorStoreManager:
 
 ﻿
 
-
 # ==============================================================================
 # FILE: src/ingestion/layout/reading_order.py
 # ==============================================================================
 
 ﻿
-
 
 # ==============================================================================
 # FILE: src/ingestion/layout/relationship_builder.py
@@ -16484,13 +16688,11 @@ class VectorStoreManager:
 
 ﻿
 
-
 # ==============================================================================
 # FILE: src/ingestion/layout/semantic_classifier.py
 # ==============================================================================
 
 ﻿
-
 
 # ==============================================================================
 # FILE: src/ingestion/markdown_renderer.py
@@ -16557,7 +16759,6 @@ class MarkdownRenderer:
 # ==============================================================================
 
 ﻿
-
 
 # ==============================================================================
 # FILE: src/ingestion/parsers/audio_parser.py
@@ -17384,13 +17585,11 @@ class ListItemNode(Node):
 
 ﻿
 
-
 # ==============================================================================
 # FILE: src/ingestion/vision/local_vision_model.py
 # ==============================================================================
 
 ﻿
-
 
 # ==============================================================================
 # FILE: src/ingestion/vision/tesseract_ocr.py
@@ -17398,13 +17597,11 @@ class ListItemNode(Node):
 
 ﻿
 
-
 # ==============================================================================
 # FILE: src/ingestion/vision/vision_pipeline.py
 # ==============================================================================
 
 ﻿
-
 
 # ==============================================================================
 # FILE: src/interfaces/__init__.py
@@ -20023,7 +20220,6 @@ class LLMEngine:
         if isinstance(chunks, str):
             return chunks
         return "".join(chunks).strip()
-
 
 # ==============================================================================
 # FILE: src/llm/prompt_builder.py

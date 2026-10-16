@@ -6,12 +6,14 @@ export default function ShortcutsModal({ isOpen, onClose, isDark = true }) {
 
   const shortcuts = [
     { key: "Ctrl / ⌘ + Enter", desc: "Gửi tin nhắn trong khung trò chuyện" },
+    { key: "Ctrl / ⌘ + B", desc: "Ẩn / Hiện thanh Nguồn tài liệu bên trái" },
+    { key: "Ctrl / ⌘ + J", desc: "Ẩn / Hiện thanh Studio Học tập bên phải" },
     { key: "Ctrl / ⌘ + K", desc: "Mở bảng chọn nhanh Mô hình AI (Model Picker)" },
     { key: "Ctrl / ⌘ + F", desc: "Mở thanh tìm kiếm tin nhắn trong lịch sử chat" },
     { key: "Ctrl / ⌘ + /", desc: "Tập trung con trỏ (Focus) vào ô nhập tin nhắn" },
     { key: "Ctrl / ⌘ + Shift + S", desc: "Mở Cài đặt hệ thống (Settings)" },
     { key: "Ctrl / ⌘ + Shift + Q", desc: "Mở Bộ thẻ ghi nhớ & Ôn tập Quizlet" },
-    { key: "Escape", desc: "Đóng cửa sổ modal đang mở" }
+    { key: "Escape", desc: "Đóng cửa sổ modal đang mở / Dừng tạo câu trả lời" }
   ];
 
   return (
