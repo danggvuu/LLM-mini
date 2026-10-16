@@ -78,7 +78,8 @@ function Studio() {
   const [showPodcastModal, setShowPodcastModal] = useState(false);
   const [podcastConfig, setPodcastConfig] = useState({
     focus_topic: '',
-    style: 'fun'
+    style: 'fun',
+    voice_mode: 'duo'
   });
 
   // Document preview state
@@ -681,6 +682,7 @@ function Studio() {
           notebook_id: activeNotebook.id,
           focus_topic: podcastConfig.focus_topic,
           style: podcastConfig.style,
+          voice_mode: podcastConfig.voice_mode || 'duo',
           selected_documents: selectedDocs.size > 0 ? Array.from(selectedDocs) : (documents || []).map(d => d.filename)
         })
       });
@@ -3053,6 +3055,38 @@ function Studio() {
                         <div className="text-[10px] text-gray-400">{s.desc}</div>
                       </div>
                       {podcastConfig.style === s.key && <Check size={14} className="text-purple-400" />}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Voice selection */}
+              <div>
+                <label className="font-semibold text-gray-300 block mb-1.5">
+                  Giọng đọc Podcast:
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    { key: 'duo', label: '👫 Song ca Nam & Nữ', desc: 'Minh & My đối thoại tự nhiên, có khoảng ngắt nghỉ' },
+                    { key: 'female', label: '👩 Giọng Nữ (Hoài My)', desc: 'Ngọt ngào, truyền cảm, chuẩn sách nói' },
+                    { key: 'male', label: '👨 Giọng Nam (Nam Minh)', desc: 'Trầm ấm, đĩnh đạc, bản tin phân tích' },
+                    { key: 'gtts', label: '🤖 Chị Google (gTTS)', desc: 'Giọng đọc quen thuộc, hài hước' }
+                  ].map(v => (
+                    <button
+                      key={v.key}
+                      type="button"
+                      onClick={() => setPodcastConfig({...podcastConfig, voice_mode: v.key})}
+                      className={`p-2.5 rounded-xl border text-left transition flex flex-col justify-between ${
+                        (podcastConfig.voice_mode || 'duo') === v.key 
+                          ? 'bg-purple-500/20 border-purple-500 text-white' 
+                          : 'bg-white/5 border-white/10 text-gray-400 hover:bg-white/10'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between w-full">
+                        <span className="font-semibold text-[11px] text-gray-200">{v.label}</span>
+                        {(podcastConfig.voice_mode || 'duo') === v.key && <Check size={12} className="text-purple-400" />}
+                      </div>
+                      <div className="text-[10px] text-gray-400 mt-1 leading-snug">{v.desc}</div>
                     </button>
                   ))}
                 </div>

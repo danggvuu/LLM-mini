@@ -29,9 +29,10 @@ class PodcastGenerator:
         base_url: Optional[str] = None,
         focus_topic: Optional[str] = None,
         style: Optional[str] = "fun",
-        custom_context: Optional[str] = None
+        custom_context: Optional[str] = None,
+        voice_mode: Optional[str] = "duo"
     ) -> str:
-        """Sinh Podcast MP3 2 giọng đọc (MC Nam & MC Nữ) dựa trên tài liệu được chọn hoặc Study Guide."""
+        """Sinh Podcast MP3 đa giọng đọc (Song ca Nam/Nữ, Độc thoại Nữ Hoài My, Nam Nam Minh, hoặc Chị Google) kèm khoảng nghỉ tự nhiên."""
         guide = self.db.get_study_guide(notebook_id)
         summary = ""
         if custom_context and custom_context.strip():
@@ -60,7 +61,7 @@ class PodcastGenerator:
             f"B: [Lời thoại của B]\n"
         )
         
-        logger.info(f"Đang sinh kịch bản Podcast cho notebook {notebook_id} (Focus: '{focus_topic}', Style: '{style}')...")
+        logger.info(f"Đang sinh kịch bản Podcast cho notebook {notebook_id} (Focus: '{focus_topic}', Style: '{style}', Voice: '{voice_mode}')...")
         script_raw = "".join(self.llm.generate(
             prompt, 
             system_prompt="Bạn là biên kịch Podcast chuyên nghiệp. Chỉ xuất ra các dòng thoại bắt đầu bằng 'A:' hoặc 'B:'.",
@@ -94,22 +95,41 @@ class PodcastGenerator:
             
         output_file = os.path.join(self.output_dir, f"{notebook_id}.mp3")
         
-        try:
-            self._generate_with_edge_tts_multi_voice(dialogues, output_file)
-        except Exception as e:
-            logger.warning(f"edge-tts không khả dụng: {e}, chuyển sang phương thức dự phòng...")
+        if voice_mode == "gtts":
             try:
-                self._generate_offline(dialogues, output_file)
-            except Exception as ex:
-                logger.error(f"Tạo audio thất bại: {ex}. Tạo file âm thanh mẫu...")
-                self._create_dummy_audio(output_file)
+                self._generate_with_gtts(dialogues, output_file)
+                return output_file
+            except Exception as ge:
+                logger.warning(f"gTTS thất bại: {ge}, chuyển sang edge-tts...")
+
+        try:
+            self._generate_with_edge_tts_multi_voice(dialogues, output_file, voice_mode=voice_mode)
+        except Exception as e:
+            logger.warning(f"edge-tts không khả dụng: {e}, chuyển sang phương thức dự phòng gTTS...")
+            try:
+                self._generate_with_gtts(dialogues, output_file)
+            except Exception as ge:
+                logger.warning(f"gTTS cũng thất bại: {ge}, chuyển sang offline...")
+                try:
+                    self._generate_offline(dialogues, output_file)
+                except Exception as ex:
+                    logger.error(f"Tạo audio thất bại: {ex}. Tạo file âm thanh mẫu...")
+                    self._create_dummy_audio(output_file)
                 
         return output_file
 
-    def _generate_with_edge_tts_multi_voice(self, dialogues: List[Tuple[str, str]], output_file: str):
-        """Sử dụng edge-tts CLI ghép trực tiếp luồng âm thanh 2 giọng Nam & Nữ chuẩn xác."""
+    def _generate_with_edge_tts_multi_voice(self, dialogues: List[Tuple[str, str]], output_file: str, voice_mode: str = "duo"):
+        """Sử dụng Microsoft Edge Neural TTS ghép âm thanh tự nhiên kèm khoảng ngắt nghỉ 450ms."""
+        # Hoài My: Giọng nữ ngọt ngào, truyền cảm | Nam Minh: Giọng nam trầm ấm, đĩnh đạc
         voice_a = "vi-VN-NamMinhNeural"
         voice_b = "vi-VN-HoaiMyNeural"
+
+        if voice_mode == "female":
+            voice_a = "vi-VN-HoaiMyNeural"
+            voice_b = "vi-VN-HoaiMyNeural"
+        elif voice_mode == "male":
+            voice_a = "vi-VN-NamMinhNeural"
+            voice_b = "vi-VN-NamMinhNeural"
 
         temp_dir = os.path.join(self.output_dir, f"temp_{int(time.time()*1000)}")
         os.makedirs(temp_dir, exist_ok=True)
@@ -120,12 +140,12 @@ class PodcastGenerator:
                     continue
                 voice = voice_a if speaker == 'A' else voice_b
                 chunk_path = os.path.join(temp_dir, f"chunk_{i}.mp3")
-                cmd = [sys.executable, "-m", "edge_tts", "--text", text.strip(), "--voice", voice, "--write-media", chunk_path]
+                cmd = [sys.executable, "-m", "edge_tts", "--text", text.strip(), "--voice", voice, "--rate=-3%", "--write-media", chunk_path]
                 res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=25)
                 if res.returncode != 0 or not os.path.exists(chunk_path) or os.path.getsize(chunk_path) <= 100:
                     edge_bin = shutil.which("edge-tts")
                     if edge_bin:
-                        cmd = [edge_bin, "--text", text.strip(), "--voice", voice, "--write-media", chunk_path]
+                        cmd = [edge_bin, "--text", text.strip(), "--voice", voice, "--rate=-3%", "--write-media", chunk_path]
                         res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=25)
                 if res.returncode == 0 and os.path.exists(chunk_path) and os.path.getsize(chunk_path) > 100:
                     chunk_files.append(chunk_path)
@@ -133,10 +153,58 @@ class PodcastGenerator:
             if not chunk_files:
                 raise RuntimeError("Không sinh được đoạn âm thanh nào từ edge-tts")
             
-            with open(output_file, "wb") as out_f:
+            # Ghép audio có khoảng ngắt nghỉ 450ms giữa 2 MC qua pydub giúp đối thoại chân thực
+            try:
+                from pydub import AudioSegment
+                combined = None
+                silence = AudioSegment.silent(duration=450)
                 for cp in chunk_files:
-                    with open(cp, "rb") as inf:
-                        out_f.write(inf.read())
+                    seg = AudioSegment.from_file(cp)
+                    combined = seg if combined is None else combined + silence + seg
+                if combined is not None:
+                    combined.export(output_file, format="mp3")
+            except Exception as pe:
+                logger.warning(f"Lỗi ghép pydub ({pe}), ghép trực tiếp luồng nhị phân...")
+                with open(output_file, "wb") as out_f:
+                    for cp in chunk_files:
+                        with open(cp, "rb") as inf:
+                            out_f.write(inf.read())
+        finally:
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def _generate_with_gtts(self, dialogues: List[Tuple[str, str]], output_file: str):
+        """Tạo âm thanh qua Google Translate TTS (gTTS) - Giọng 'Chị Google' quen thuộc."""
+        from gtts import gTTS
+        temp_dir = os.path.join(self.output_dir, f"gtts_temp_{int(time.time()*1000)}")
+        os.makedirs(temp_dir, exist_ok=True)
+        chunk_files = []
+        try:
+            for i, (_, text) in enumerate(dialogues):
+                if not text.strip():
+                    continue
+                chunk_path = os.path.join(temp_dir, f"g_{i}.mp3")
+                tts = gTTS(text=text.strip(), lang='vi', slow=False)
+                tts.save(chunk_path)
+                if os.path.exists(chunk_path) and os.path.getsize(chunk_path) > 100:
+                    chunk_files.append(chunk_path)
+            if not chunk_files:
+                raise RuntimeError("gTTS không sinh được file âm thanh")
+            
+            try:
+                from pydub import AudioSegment
+                combined = None
+                silence = AudioSegment.silent(duration=400)
+                for cp in chunk_files:
+                    seg = AudioSegment.from_file(cp)
+                    combined = seg if combined is None else combined + silence + seg
+                if combined is not None:
+                    combined.export(output_file, format="mp3")
+            except Exception:
+                with open(output_file, "wb") as out_f:
+                    for cp in chunk_files:
+                        with open(cp, "rb") as inf:
+                            out_f.write(inf.read())
         finally:
             if os.path.exists(temp_dir):
                 shutil.rmtree(temp_dir, ignore_errors=True)

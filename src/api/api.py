@@ -1054,6 +1054,7 @@ async def generate_podcast(
     focus_topic = None
     style = "fun"
     selected_documents = None
+    voice_mode = "duo"
 
     try:
         body = await request.json()
@@ -1064,6 +1065,7 @@ async def generate_podcast(
                 focus_topic = raw_focus.strip()
             style = body.get("style") or "fun"
             selected_documents = body.get("selected_documents")
+            voice_mode = body.get("voice_mode") or "duo"
     except Exception:
         pass
 
@@ -1112,7 +1114,8 @@ async def generate_podcast(
         base_url=base_url,
         focus_topic=focus_topic,
         style=style,
-        custom_context=custom_context
+        custom_context=custom_context,
+        voice_mode=voice_mode
     )
     return {"status": "processing"}
 

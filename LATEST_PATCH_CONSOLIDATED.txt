@@ -38,9 +38,10 @@ class PodcastGenerator:
         base_url: Optional[str] = None,
         focus_topic: Optional[str] = None,
         style: Optional[str] = "fun",
-        custom_context: Optional[str] = None
+        custom_context: Optional[str] = None,
+        voice_mode: Optional[str] = "duo"
     ) -> str:
-        """Sinh Podcast MP3 2 giọng đọc (MC Nam & MC Nữ) dựa trên tài liệu được chọn hoặc Study Guide."""
+        """Sinh Podcast MP3 đa giọng đọc (Song ca Nam/Nữ, Độc thoại Nữ Hoài My, Nam Nam Minh, hoặc Chị Google) kèm khoảng nghỉ tự nhiên."""
         guide = self.db.get_study_guide(notebook_id)
         summary = ""
         if custom_context and custom_context.strip():
@@ -69,7 +70,7 @@ class PodcastGenerator:
             f"B: [Lời thoại của B]\n"
         )
         
-        logger.info(f"Đang sinh kịch bản Podcast cho notebook {notebook_id} (Focus: '{focus_topic}', Style: '{style}')...")
+        logger.info(f"Đang sinh kịch bản Podcast cho notebook {notebook_id} (Focus: '{focus_topic}', Style: '{style}', Voice: '{voice_mode}')...")
         script_raw = "".join(self.llm.generate(
             prompt, 
             system_prompt="Bạn là biên kịch Podcast chuyên nghiệp. Chỉ xuất ra các dòng thoại bắt đầu bằng 'A:' hoặc 'B:'.",
@@ -103,22 +104,41 @@ class PodcastGenerator:
             
         output_file = os.path.join(self.output_dir, f"{notebook_id}.mp3")
         
-        try:
-            self._generate_with_edge_tts_multi_voice(dialogues, output_file)
-        except Exception as e:
-            logger.warning(f"edge-tts không khả dụng: {e}, chuyển sang phương thức dự phòng...")
+        if voice_mode == "gtts":
             try:
-                self._generate_offline(dialogues, output_file)
-            except Exception as ex:
-                logger.error(f"Tạo audio thất bại: {ex}. Tạo file âm thanh mẫu...")
-                self._create_dummy_audio(output_file)
+                self._generate_with_gtts(dialogues, output_file)
+                return output_file
+            except Exception as ge:
+                logger.warning(f"gTTS thất bại: {ge}, chuyển sang edge-tts...")
+
+        try:
+            self._generate_with_edge_tts_multi_voice(dialogues, output_file, voice_mode=voice_mode)
+        except Exception as e:
+            logger.warning(f"edge-tts không khả dụng: {e}, chuyển sang phương thức dự phòng gTTS...")
+            try:
+                self._generate_with_gtts(dialogues, output_file)
+            except Exception as ge:
+                logger.warning(f"gTTS cũng thất bại: {ge}, chuyển sang offline...")
+                try:
+                    self._generate_offline(dialogues, output_file)
+                except Exception as ex:
+                    logger.error(f"Tạo audio thất bại: {ex}. Tạo file âm thanh mẫu...")
+                    self._create_dummy_audio(output_file)
                 
         return output_file
 
-    def _generate_with_edge_tts_multi_voice(self, dialogues: List[Tuple[str, str]], output_file: str):
-        """Sử dụng edge-tts CLI ghép trực tiếp luồng âm thanh 2 giọng Nam & Nữ chuẩn xác."""
+    def _generate_with_edge_tts_multi_voice(self, dialogues: List[Tuple[str, str]], output_file: str, voice_mode: str = "duo"):
+        """Sử dụng Microsoft Edge Neural TTS ghép âm thanh tự nhiên kèm khoảng ngắt nghỉ 450ms."""
+        # Hoài My: Giọng nữ ngọt ngào, truyền cảm | Nam Minh: Giọng nam trầm ấm, đĩnh đạc
         voice_a = "vi-VN-NamMinhNeural"
         voice_b = "vi-VN-HoaiMyNeural"
+
+        if voice_mode == "female":
+            voice_a = "vi-VN-HoaiMyNeural"
+            voice_b = "vi-VN-HoaiMyNeural"
+        elif voice_mode == "male":
+            voice_a = "vi-VN-NamMinhNeural"
+            voice_b = "vi-VN-NamMinhNeural"
 
         temp_dir = os.path.join(self.output_dir, f"temp_{int(time.time()*1000)}")
         os.makedirs(temp_dir, exist_ok=True)
@@ -129,12 +149,12 @@ class PodcastGenerator:
                     continue
                 voice = voice_a if speaker == 'A' else voice_b
                 chunk_path = os.path.join(temp_dir, f"chunk_{i}.mp3")
-                cmd = [sys.executable, "-m", "edge_tts", "--text", text.strip(), "--voice", voice, "--write-media", chunk_path]
+                cmd = [sys.executable, "-m", "edge_tts", "--text", text.strip(), "--voice", voice, "--rate=-3%", "--write-media", chunk_path]
                 res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=25)
                 if res.returncode != 0 or not os.path.exists(chunk_path) or os.path.getsize(chunk_path) <= 100:
                     edge_bin = shutil.which("edge-tts")
                     if edge_bin:
-                        cmd = [edge_bin, "--text", text.strip(), "--voice", voice, "--write-media", chunk_path]
+                        cmd = [edge_bin, "--text", text.strip(), "--voice", voice, "--rate=-3%", "--write-media", chunk_path]
                         res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=25)
                 if res.returncode == 0 and os.path.exists(chunk_path) and os.path.getsize(chunk_path) > 100:
                     chunk_files.append(chunk_path)
@@ -142,10 +162,58 @@ class PodcastGenerator:
             if not chunk_files:
                 raise RuntimeError("Không sinh được đoạn âm thanh nào từ edge-tts")
             
-            with open(output_file, "wb") as out_f:
+            # Ghép audio có khoảng ngắt nghỉ 450ms giữa 2 MC qua pydub giúp đối thoại chân thực
+            try:
+                from pydub import AudioSegment
+                combined = None
+                silence = AudioSegment.silent(duration=450)
                 for cp in chunk_files:
-                    with open(cp, "rb") as inf:
-                        out_f.write(inf.read())
+                    seg = AudioSegment.from_file(cp)
+                    combined = seg if combined is None else combined + silence + seg
+                if combined is not None:
+                    combined.export(output_file, format="mp3")
+            except Exception as pe:
+                logger.warning(f"Lỗi ghép pydub ({pe}), ghép trực tiếp luồng nhị phân...")
+                with open(output_file, "wb") as out_f:
+                    for cp in chunk_files:
+                        with open(cp, "rb") as inf:
+                            out_f.write(inf.read())
+        finally:
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def _generate_with_gtts(self, dialogues: List[Tuple[str, str]], output_file: str):
+        """Tạo âm thanh qua Google Translate TTS (gTTS) - Giọng 'Chị Google' quen thuộc."""
+        from gtts import gTTS
+        temp_dir = os.path.join(self.output_dir, f"gtts_temp_{int(time.time()*1000)}")
+        os.makedirs(temp_dir, exist_ok=True)
+        chunk_files = []
+        try:
+            for i, (_, text) in enumerate(dialogues):
+                if not text.strip():
+                    continue
+                chunk_path = os.path.join(temp_dir, f"g_{i}.mp3")
+                tts = gTTS(text=text.strip(), lang='vi', slow=False)
+                tts.save(chunk_path)
+                if os.path.exists(chunk_path) and os.path.getsize(chunk_path) > 100:
+                    chunk_files.append(chunk_path)
+            if not chunk_files:
+                raise RuntimeError("gTTS không sinh được file âm thanh")
+            
+            try:
+                from pydub import AudioSegment
+                combined = None
+                silence = AudioSegment.silent(duration=400)
+                for cp in chunk_files:
+                    seg = AudioSegment.from_file(cp)
+                    combined = seg if combined is None else combined + silence + seg
+                if combined is not None:
+                    combined.export(output_file, format="mp3")
+            except Exception:
+                with open(output_file, "wb") as out_f:
+                    for cp in chunk_files:
+                        with open(cp, "rb") as inf:
+                            out_f.write(inf.read())
         finally:
             if os.path.exists(temp_dir):
                 shutil.rmtree(temp_dir, ignore_errors=True)
@@ -209,780 +277,6 @@ class PodcastGenerator:
                 f.writeframesraw(data)
         if os.path.exists(wav_path) and not os.path.exists(output_file):
             shutil.copy(wav_path, output_file)
-
-
-# ==============================================================================
-# FILE: src/learning/critique_generator.py
-# ==============================================================================
-
-import os
-import json
-from typing import Dict, Any, Optional, List
-from src.llm.llm_client import LLMEngine
-from src.ingestion.indexing import VectorStoreManager
-from src.utils.logger import logger
-
-
-class CritiqueAndActionGenerator:
-    """
-    1. Phản biện chuyên sâu (Deep Critique / Peer Review)
-    2. Kế hoạch hành động thực tiễn (Actionable Checklist & Roadmap)
-    """
-    def __init__(
-        self,
-        llm_engine: LLMEngine,
-        vector_store: VectorStoreManager,
-        session_manager=None,
-        notebook_id: str = "default"
-    ):
-        self.llm = llm_engine
-        self.store = vector_store
-        self.sm = session_manager
-        self.notebook_id = notebook_id
-
-    def _collect_context(
-        self,
-        source_filter: Optional[str] = None,
-        selected_documents: Optional[List[str]] = None,
-        max_chars: int = 16000
-    ) -> str:
-        text_parts = []
-        total = 0
-
-        # Ưu tiên 1: Lấy theo danh sách tài liệu của sổ tay thông qua get_chunks_by_document
-        target_filenames = []
-        if selected_documents and len(selected_documents) > 0:
-            target_filenames = list(selected_documents)
-        elif source_filter:
-            target_filenames = [source_filter]
-        elif self.sm is not None:
-            docs = self.sm.get_documents(self.notebook_id) or []
-            target_filenames = [d.get("filename") for d in docs if d.get("filename")]
-
-        if target_filenames and hasattr(self.store, "get_chunks_by_document"):
-            for fname in target_filenames:
-                try:
-                    raw_chunks = self.store.get_chunks_by_document(self.notebook_id, fname, limit=20)
-                    for ch_text in raw_chunks:
-                        if not ch_text:
-                            continue
-                        block = f"[Nguồn: {fname}]\n{ch_text}\n\n"
-                        if total + len(block) > max_chars:
-                            break
-                        text_parts.append(block)
-                        total += len(block)
-                    if total >= max_chars:
-                        break
-                except Exception as e:
-                    logger.warning(f"Lỗi lấy chunks cho file {fname}: {e}")
-
-        # Ưu tiên 2: Fallback trực tiếp vào kho chỉ mục BM25 (storage/bm25/{notebook_id}/bm25_docs.json)
-        if not text_parts:
-            bm25_path = os.path.join("storage", "bm25", str(self.notebook_id), "bm25_docs.json")
-            if os.path.exists(bm25_path):
-                try:
-                    with open(bm25_path, "r", encoding="utf-8") as f:
-                        b_docs = json.load(f)
-                    for item in b_docs:
-                        meta = item.get("metadata", {})
-                        src = meta.get("filename") or meta.get("source_file") or meta.get("source") or meta.get("title") or "Tài liệu"
-                        if selected_documents and src not in selected_documents and os.path.basename(str(src)) not in [os.path.basename(s) for s in selected_documents]:
-                            continue
-                        if source_filter and src != source_filter and os.path.basename(str(src)) != os.path.basename(source_filter):
-                            continue
-                        txt = item.get("text", "")
-                        if txt and txt.strip():
-                            block = f"[Nguồn: {src}]\n{txt}\n\n"
-                            if total + len(block) > max_chars:
-                                break
-                            text_parts.append(block)
-                            total += len(block)
-                except Exception as be:
-                    logger.warning(f"Lỗi đọc BM25 docs cache trong CritiqueGenerator: {be}")
-
-        # Ưu tiên 3: Fallback sang get_all_chunks nếu có
-        if not text_parts and hasattr(self.store, "get_all_chunks"):
-            try:
-                chunks = self.store.get_all_chunks(limit=250, notebook_id=self.notebook_id)
-                for c in chunks:
-                    meta = c.get("metadata", {})
-                    src = meta.get("filename") or meta.get("source") or meta.get("source_file") or "Tài liệu"
-                    if selected_documents and src not in selected_documents:
-                        continue
-                    if source_filter and src != source_filter:
-                        continue
-                    block = f"[Nguồn: {src}]\n{c.get('content', '')}\n\n"
-                    if total + len(block) > max_chars:
-                        break
-                    text_parts.append(block)
-                    total += len(block)
-            except Exception as e:
-                logger.warning(f"Lỗi get_all_chunks trong CritiqueGenerator: {e}")
-
-        # Ưu tiên 4: Fallback sang bản tóm tắt Study Guide nếu Vector Store & BM25 chưa trả kết quả
-        if not text_parts and self.sm is not None:
-            try:
-                sg = self.sm.get_study_guide(self.notebook_id)
-                if sg and (sg.get("summary") or sg.get("faq")):
-                    return f"Tóm tắt tài liệu:\n{sg.get('summary', '')}\n\nCâu hỏi trọng tâm:\n{sg.get('faq', '')}"
-            except Exception as e:
-                logger.warning(f"Lỗi đọc study guide trong CritiqueGenerator: {e}")
-
-        # Ưu tiên 5: Fallback đọc trực tiếp file từ uploads/
-        if not text_parts and self.sm is not None:
-            try:
-                docs = self.sm.get_documents(self.notebook_id) or []
-                for d in docs:
-                    fn = d.get("filename")
-                    up_file = os.path.join("uploads", fn) if fn else None
-                    if up_file and os.path.exists(up_file):
-                        ext = os.path.splitext(fn)[1].lower()
-                        if ext in ['.txt', '.md', '.json', '.csv', '.html']:
-                            with open(up_file, "r", encoding="utf-8", errors="ignore") as f:
-                                text_parts.append(f"[Nguồn: {fn}]\n{f.read()[:max_chars]}\n\n")
-                                break
-                        else:
-                            from src.ingestion.parsers.markitdown_parser import MarkItDownParser
-                            tree = MarkItDownParser().parse(up_file)
-                            if tree and tree.content:
-                                text_parts.append(f"[Nguồn: {fn}]\n{tree.content[:max_chars]}\n\n")
-                                break
-            except Exception as e:
-                logger.warning(f"Lỗi đọc trực tiếp file uploads trong CritiqueGenerator: {e}")
-
-        return "".join(text_parts)
-
-    def _call_llm(self, prompt: str, system_prompt: str, llm_kwargs: Dict[str, Any]) -> str:
-        gen = self.llm.generate(
-            prompt=prompt,
-            system_prompt=system_prompt,
-            **llm_kwargs
-        )
-        if hasattr(gen, "__iter__") and not isinstance(gen, str):
-            return "".join(gen).strip()
-        return str(gen).strip()
-
-    def generate_critique(
-        self,
-        source_filter: Optional[str] = None,
-        selected_documents: Optional[List[str]] = None,
-        **llm_kwargs
-    ) -> Dict[str, Any]:
-        logger.info(f"Đang tạo Báo cáo Phản biện (nb={self.notebook_id}, selected={selected_documents})")
-        context = self._collect_context(source_filter=source_filter, selected_documents=selected_documents)
-        if not context.strip():
-            return {"error": "Chưa có tài liệu nào được chọn hoặc nạp vào sổ tay để phân tích phản biện."}
-
-        system_prompt = "Bạn là Chuyên gia Phản biện Học thuật & Phân tích Chiến lược (Peer Reviewer) sắc bén, khách quan."
-        prompt = f"""Dựa trên nội dung tài liệu dưới đây, hãy viết một **Báo cáo Phản biện & Đánh giá Chuyên sâu** bằng tiếng Việt (định dạng Markdown):
-
-### 1. Điểm mạnh & Giá trị cốt lõi (Strengths)
-- Những luận điểm, dữ liệu hoặc phương pháp nào được trình bày thuyết phục nhất?
-
-### 2. Lỗ hổng Lập luận & Điểm mù (Blind Spots & Limitations)
-- Những khía cạnh nào chưa được giải thích rõ, thiếu bằng chứng thực nghiệm hoặc mới chỉ dừng ở giả định?
-- Có rủi ro hay trường hợp ngoại lệ (edge cases) nào bị bỏ qua không?
-
-### 3. Góc nhìn Phản biện (Counter-Arguments)
-- Nếu đứng ở góc nhìn đối lập hoặc thực tế triển khai, người đọc cần đặt ra 3-5 câu hỏi chất vấn sắc bén nào?
-
-### 4. Đề xuất Nâng cấp / Bổ sung
-- Cần bổ sung thêm dữ liệu, dẫn chứng hay bước kiểm chứng nào để tài liệu hoàn chỉnh hơn?
-
-NỘI DUNG TÀI LIỆU:
-{context}
-"""
-        res = self._call_llm(prompt, system_prompt, llm_kwargs)
-        return {"content": res}
-
-    def generate_action_plan(
-        self,
-        source_filter: Optional[str] = None,
-        selected_documents: Optional[List[str]] = None,
-        **llm_kwargs
-    ) -> Dict[str, Any]:
-        logger.info(f"Đang tạo Action Plan (nb={self.notebook_id}, selected={selected_documents})")
-        context = self._collect_context(source_filter=source_filter, selected_documents=selected_documents)
-        if not context.strip():
-            return {"error": "Chưa có tài liệu nào được chọn hoặc nạp vào sổ tay để lập kế hoạch hành động."}
-
-        system_prompt = "Bạn là Chuyên gia Tư vấn Quản trị & Triển khai Dự án thực tiễn."
-        prompt = f"""Từ nội dung tài liệu dưới đây, hãy chuyển hóa toàn bộ kiến thức lý thuyết thành **Kế hoạch Hành động Thực tiễn (Action Plan)** bằng tiếng Việt (định dạng Markdown):
-
-### 1. Mục tiêu Trọng tâm (Key Objectives)
-- Tóm tắt 3 mục tiêu thực tiễn nhất rút ra từ tài liệu.
-
-### 2. Bảng Phân bổ Hành động (Action Matrix)
-Trình bày dưới dạng Bảng Markdown gồm các cột: `Giai đoạn` | `Hành động cụ thể` | `Đầu ra kỳ vọng (Deliverable)` | `Mức độ ưu tiên (Cao/TB/Thấp)`.
-
-### 3. Danh sách Kiểm tra (Checklist Thực thi)
-- [ ] Các bước chuẩn bị và kiểm chứng cụ thể để áp dụng ngay kiến thức trong tài liệu.
-
-NỘI DUNG TÀI LIỆU:
-{context}
-"""
-        res = self._call_llm(prompt, system_prompt, llm_kwargs)
-        return {"content": res}
-
-
-# ==============================================================================
-# FILE: src/ingestion/indexing.py
-# ==============================================================================
-
-import os
-import uuid
-import logging
-from typing import List, Dict, Any, Optional
-from qdrant_client import QdrantClient
-from qdrant_client.http.models import Distance, VectorParams, PointStruct
-from ..utils.config import settings
-
-logger = logging.getLogger(__name__)
-
-class VectorStoreManager:
-    """Quản lý việc lưu trữ Vector vào Qdrant Local và đồng bộ hóa BM25 Index."""
-    
-    def __init__(self, embedder=None, notebook_id: str = "default"):
-        if embedder is None:
-            from src.ingestion.embedding import LocalEmbedder
-            embedder = LocalEmbedder()
-        self.embedder = embedder
-        self.notebook_id = notebook_id
-        
-        # Tạo thư mục chứa database nếu chưa có
-        os.makedirs(settings.storage_dir, exist_ok=True)
-        
-        # Khởi tạo Qdrant Local Mode (Ghi trực tiếp ra ổ cứng, không cần Docker)
-        self.client = QdrantClient(path=str(settings.storage_dir))
-        self.collection_name = settings.qdrant_collection
-        
-        # Test 1 embedding để lấy vector size
-        dummy_vector = self.embedder.embed_query("test")
-        self.vector_size = len(dummy_vector)
-        
-        self._init_collection()
-
-    def _init_collection(self):
-        """Tạo collection nếu chưa tồn tại."""
-        collections = self.client.get_collections().collections
-        exists = any(c.name == self.collection_name for c in collections)
-        
-        if not exists:
-            print(f"[Qdrant] Đang tạo Collection mới: {self.collection_name} (Size: {self.vector_size})")
-            self.client.create_collection(
-                collection_name=self.collection_name,
-                vectors_config=VectorParams(size=self.vector_size, distance=Distance.COSINE),
-            )
-        else:
-            print(f"[Qdrant] Đã kết nối tới Collection: {self.collection_name}")
-
-    def clear_all(self):
-        """Xóa toàn bộ dữ liệu trong collection hiện tại và khởi tạo lại."""
-        try:
-            self.client.delete_collection(collection_name=self.collection_name)
-            self._init_collection()
-            print(f"[Qdrant] Đã dọn dẹp toàn bộ dữ liệu trong collection {self.collection_name}")
-        except Exception as e:
-            logger.warning(f"Lỗi clear_all collection: {e}")
-
-    def index_chunks(self, chunks: List[Any]):
-        """Nhúng và lưu các đoạn văn bản vào Database, đồng thời cập nhật BM25."""
-        if not chunks:
-            return
-            
-        print(f"[Qdrant] Đang tính toán Vector cho {len(chunks)} đoạn văn bản...")
-        texts = [chunk["content"] if isinstance(chunk, dict) else chunk.content for chunk in chunks]
-        embeddings = self.embedder.embed_documents(texts)
-        
-        def _clean_meta(meta_dict):
-            cleaned = {}
-            for k, v in (meta_dict or {}).items():
-                if isinstance(v, (str, int, float, bool)):
-                    cleaned[k] = v
-                elif isinstance(v, (list, tuple)):
-                    cleaned[k] = [str(item) if not isinstance(item, (int, float, bool)) else item for item in v]
-                else:
-                    cleaned[k] = str(v)
-            return cleaned
-
-        points = []
-        for i, chunk in enumerate(chunks):
-            c_content = chunk["content"] if isinstance(chunk, dict) else chunk.content
-            c_meta = chunk.get("metadata", {}) if isinstance(chunk, dict) else getattr(chunk, "metadata", {})
-            c_id = (chunk.get("chunk_id") if isinstance(chunk, dict) else getattr(chunk, "chunk_id", None)) or str(uuid.uuid4())
-            cleaned_payload = {
-                "chunk_id": c_id,
-                "content": str(c_content),
-                "notebook_id": c_meta.get("notebook_id", self.notebook_id),
-                **_clean_meta(c_meta)
-            }
-            point = PointStruct(
-                id=c_id,
-                vector=embeddings[i],
-                payload=cleaned_payload
-            )
-            points.append(point)
-            
-        print(f"[Qdrant] Đang lưu {len(points)} Vectors vào Database (batching 200/lần)...")
-        batch_size = 200
-        for b_idx in range(0, len(points), batch_size):
-            batch_points = points[b_idx:b_idx + batch_size]
-            self.client.upsert(
-                collection_name=self.collection_name,
-                points=batch_points
-            )
-        print("[Qdrant] Lưu dữ liệu Vector hoàn tất!")
-
-        # Đồng bộ hóa sang BM25 Index cho Hybrid Search
-        try:
-            from ..retrieval.bm25_index import get_bm25_index, BM25Document
-            first_meta = chunks[0].get("metadata", {}) if isinstance(chunks[0], dict) else getattr(chunks[0], "metadata", {})
-            notebook_id = first_meta.get("notebook_id", self.notebook_id)
-            bm25 = get_bm25_index(notebook_id)
-            bm25_docs = [
-                BM25Document(
-                    chunk_id=points[i].id,
-                    text=chunks[i]["content"] if isinstance(chunks[i], dict) else chunks[i].content,
-                    metadata=chunks[i].get("metadata", {}) if isinstance(chunks[i], dict) else getattr(chunks[i], "metadata", {})
-                )
-                for i in range(len(chunks))
-            ]
-            bm25.add_documents(bm25_docs)
-            bm25.save()
-            print(f"[BM25] Đã đồng bộ {len(bm25_docs)} chunks vào chỉ mục từ khóa.")
-        except Exception as e:
-            logger.warning(f"Lỗi đồng bộ BM25 Index: {e}")
-
-    def delete_notebook_chunks(self, notebook_id: str):
-        """Xóa tất cả các chunk thuộc về một notebook."""
-        from qdrant_client.http.models import Filter, FieldCondition, MatchValue
-        self.client.delete(
-            collection_name=self.collection_name,
-            points_selector=Filter(
-                must=[
-                    FieldCondition(
-                        key="notebook_id",
-                        match=MatchValue(value=notebook_id)
-                    )
-                ]
-            )
-        )
-        try:
-            from ..retrieval.bm25_index import delete_bm25_folder
-            delete_bm25_folder(notebook_id)
-        except Exception as e:
-            logger.warning(f"Lỗi xóa BM25 folder: {e}")
-
-    def delete_document_chunks(self, notebook_id: str, filename: str):
-        """Xóa tất cả các chunk thuộc về một tài liệu trong notebook."""
-        from qdrant_client.http.models import Filter, FieldCondition, MatchValue
-        self.client.delete(
-            collection_name=self.collection_name,
-            points_selector=Filter(
-                must=[
-                    FieldCondition(key="notebook_id", match=MatchValue(value=notebook_id))
-                ],
-                should=[
-                    FieldCondition(key="filename", match=MatchValue(value=filename)),
-                    FieldCondition(key="source_file", match=MatchValue(value=filename)),
-                    FieldCondition(key="title", match=MatchValue(value=filename)),
-                    FieldCondition(key="source_url", match=MatchValue(value=filename)),
-                    FieldCondition(key="source", match=MatchValue(value=filename))
-                ]
-            )
-        )
-        try:
-            from ..retrieval.bm25_index import get_bm25_index
-            bm25 = get_bm25_index(notebook_id)
-            bm25.remove_document(filename)
-            bm25.save()
-        except Exception as e:
-            logger.warning(f"Lỗi cập nhật BM25 khi xóa file {filename}: {e}")
-
-    def search(self, query: str, limit: int = 5, notebook_id: str = None) -> List[Dict[str, Any]]:
-        """Tìm kiếm dữ liệu tương tự theo Vector."""
-        from qdrant_client.http.models import Filter, FieldCondition, MatchValue
-        
-        query_vector = self.embedder.embed_query(query)
-        
-        target_nb = notebook_id or getattr(self, "notebook_id", None)
-        query_filter = None
-        if target_nb and target_nb != "default":
-            query_filter = Filter(
-                must=[
-                    FieldCondition(
-                        key="notebook_id",
-                        match=MatchValue(value=target_nb)
-                    )
-                ]
-            )
-        
-        res = self.client.query_points(
-            collection_name=self.collection_name,
-            query=query_vector,
-            query_filter=query_filter,
-            limit=limit
-        )
-        hits = res.points
-        
-        results = []
-        for hit in hits:
-            results.append({
-                "score": hit.score,
-                "content": hit.payload.get("content", ""),
-                "metadata": {k: v for k, v in hit.payload.items() if k != "content"}
-            })
-        return results
-
-    def get_all_chunks(self, limit: int = 500, notebook_id: str = None) -> List[Dict[str, Any]]:
-        """Lấy tất cả các chunk trong collection hoặc lọc theo notebook_id."""
-        from qdrant_client.http.models import Filter, FieldCondition, MatchValue
-        target_nb = notebook_id or getattr(self, "notebook_id", None)
-        scroll_filter = None
-        if target_nb and target_nb != "default":
-            scroll_filter = Filter(
-                must=[
-                    FieldCondition(key="notebook_id", match=MatchValue(value=target_nb))
-                ]
-            )
-        chunks = []
-        try:
-            records, _ = self.client.scroll(
-                collection_name=self.collection_name,
-                scroll_filter=scroll_filter,
-                limit=limit,
-                with_payload=True,
-                with_vectors=False
-            )
-            for r in records:
-                payload = r.payload or {}
-                chunks.append({
-                    "chunk_id": payload.get("chunk_id", str(r.id)),
-                    "content": payload.get("content", ""),
-                    "metadata": {k: v for k, v in payload.items() if k != "content"}
-                })
-        except Exception as e:
-            logger.warning(f"Lỗi scroll all chunks từ Qdrant: {e}")
-
-        # Fallback nếu scroll theo notebook_id không ra kết quả (ví dụ dữ liệu cũ chưa có trường notebook_id)
-        if not chunks and target_nb and target_nb != "default":
-            try:
-                records, _ = self.client.scroll(
-                    collection_name=self.collection_name,
-                    limit=limit,
-                    with_payload=True,
-                    with_vectors=False
-                )
-                for r in records:
-                    payload = r.payload or {}
-                    chunks.append({
-                        "chunk_id": payload.get("chunk_id", str(r.id)),
-                        "content": payload.get("content", ""),
-                        "metadata": {k: v for k, v in payload.items() if k != "content"}
-                    })
-            except Exception as e:
-                logger.warning(f"Lỗi scroll fallback Qdrant: {e}")
-
-        # Fallback từ BM25 index nếu Qdrant hoàn toàn rỗng
-        if not chunks and target_nb and target_nb != "default":
-            bm25_path = os.path.join("storage", "bm25", str(target_nb), "bm25_docs.json")
-            if os.path.exists(bm25_path):
-                try:
-                    with open(bm25_path, "r", encoding="utf-8") as f:
-                        b_docs = json.load(f)
-                    for item in b_docs[:limit]:
-                        chunks.append({
-                            "chunk_id": item.get("chunk_id", ""),
-                            "content": item.get("text", ""),
-                            "metadata": item.get("metadata", {})
-                        })
-                except Exception as e:
-                    logger.warning(f"Lỗi đọc BM25 docs trong get_all_chunks: {e}")
-
-        return chunks
-
-    def get_chunks_by_document(self, notebook_id: str, filename: str, limit: int = 100) -> List[str]:
-        """Lấy danh sách các chunk văn bản thuộc về một tài liệu cụ thể trong notebook."""
-        from qdrant_client.http.models import Filter, FieldCondition, MatchValue
-        chunks = []
-        try:
-            scroll_filter = Filter(
-                must=[
-                    FieldCondition(key="notebook_id", match=MatchValue(value=notebook_id))
-                ],
-                should=[
-                    FieldCondition(key="filename", match=MatchValue(value=filename)),
-                    FieldCondition(key="source_file", match=MatchValue(value=filename)),
-                    FieldCondition(key="title", match=MatchValue(value=filename)),
-                    FieldCondition(key="source_url", match=MatchValue(value=filename)),
-                    FieldCondition(key="source", match=MatchValue(value=filename))
-                ]
-            )
-            records, _ = self.client.scroll(
-                collection_name=self.collection_name,
-                scroll_filter=scroll_filter,
-                limit=limit,
-                with_payload=True,
-                with_vectors=False
-            )
-            for r in records:
-                content = r.payload.get("content")
-                if content and isinstance(content, str):
-                    chunks.append(content)
-        except Exception as e:
-            logger.warning(f"Lỗi scroll Qdrant cho file {filename}: {e}")
-
-        # Fallback 1: Đọc từ BM25 index storage (storage/bm25/{notebook_id}/bm25_docs.json)
-        if not chunks:
-            bm25_path = os.path.join("storage", "bm25", str(notebook_id), "bm25_docs.json")
-            if os.path.exists(bm25_path):
-                try:
-                    with open(bm25_path, "r", encoding="utf-8") as f:
-                        b_docs = json.load(f)
-                    for item in b_docs:
-                        meta = item.get("metadata", {})
-                        src = meta.get("filename") or meta.get("source_file") or meta.get("source") or meta.get("title")
-                        if not src or src == filename or os.path.basename(str(src)) == os.path.basename(str(filename)):
-                            txt = item.get("text", "")
-                            if txt and txt.strip():
-                                chunks.append(txt)
-                                if len(chunks) >= limit:
-                                    break
-                except Exception as be:
-                    logger.warning(f"Lỗi đọc BM25 fallback cho {filename}: {be}")
-
-        # Fallback 2: nếu vẫn chưa có thì đọc trực tiếp file từ uploads/
-        if not chunks:
-            upload_path = os.path.join("uploads", filename)
-            if os.path.exists(upload_path):
-                try:
-                    ext = os.path.splitext(filename)[1].lower()
-                    if ext in ['.txt', '.md', '.json', '.csv', '.html']:
-                        with open(upload_path, "r", encoding="utf-8", errors="ignore") as f:
-                            text = f.read()
-                            chunks = [text[i:i+800] for i in range(0, min(len(text), 20000), 800) if text[i:i+800].strip()]
-                    else:
-                        from src.ingestion.parsers.markitdown_parser import MarkItDownParser
-                        parser = MarkItDownParser()
-                        tree = parser.parse(upload_path)
-                        if tree and tree.content:
-                            text = tree.content
-                            chunks = [text[i:i+800] for i in range(0, min(len(text), 20000), 800) if text[i:i+800].strip()]
-                except Exception as e:
-                    logger.warning(f"Lỗi đọc fallback file uploads/{filename}: {e}")
-
-        return chunks
-
-
-# ==============================================================================
-# FILE: src/ingestion/embedding.py
-# ==============================================================================
-
-from typing import List, Union
-import numpy as np
-from src.utils.logger import logger
-from src.utils.config import settings
-
-
-class LocalEmbedder:
-    """Wrapper cho SentenceTransformers hoạt động hoàn toàn Offline, đồng bộ với config.py."""
-    
-    def __init__(self, model_name: str = None):
-        self.model_name = model_name or getattr(
-            settings, "embedding_model", "sentence-transformers/all-MiniLM-L6-v2"
-        )
-        self.device = getattr(settings, "hf_device", None) if getattr(settings, "hf_device", "auto") != "auto" else None
-        self.model = None
-        self._load_model()
-
-    def _load_model(self):
-        try:
-            from sentence_transformers import SentenceTransformer
-            logger.info(f"Đang tải Local Embedding Model: {self.model_name}...")
-            try:
-                self.model = SentenceTransformer(self.model_name, device=self.device, local_files_only=True)
-            except Exception:
-                self.model = SentenceTransformer(self.model_name, device=self.device, local_files_only=False)
-            logger.info("Tải Local Embedding Model thành công!")
-        except Exception as e:
-            fallback = "sentence-transformers/all-MiniLM-L6-v2"
-            if self.model_name != fallback:
-                logger.warning(f"Không thể tải {self.model_name} ({e}). Chuyển sang fallback: {fallback}")
-                try:
-                    from sentence_transformers import SentenceTransformer
-                    self.model_name = fallback
-                    try:
-                        self.model = SentenceTransformer(fallback, device=self.device, local_files_only=True)
-                    except Exception:
-                        self.model = SentenceTransformer(fallback, device=self.device, local_files_only=False)
-                    return
-                except Exception as inner_e:
-                    logger.error(f"Lỗi tải fallback model: {inner_e}")
-            logger.error(f"Lỗi khi tải sentence-transformers: {e}")
-            self.model = None
-
-    def embed_text(self, texts: Union[str, List[str]]) -> Union[List[float], List[List[float]]]:
-        if not self.model:
-            logger.warning("LocalEmbedder chưa khởi tạo. Trả về vector 0.")
-            is_single = isinstance(texts, str)
-            return [0.0] * 384 if is_single else [[0.0] * 384 for _ in texts]
-
-        is_single = isinstance(texts, str)
-        input_texts = [texts] if is_single else texts
-
-        try:
-            embeddings = self.model.encode(
-                input_texts,
-                show_progress_bar=False,
-                convert_to_numpy=True,
-                normalize_embeddings=True
-            )
-            result = embeddings.tolist()
-            return result[0] if is_single else result
-        except Exception as e:
-            logger.error(f"Lỗi trong quá trình tạo Embedding: {e}")
-            return [0.0] * 384 if is_single else [[0.0] * 384 for _ in input_texts]
-
-    def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        """Nhúng danh sách các đoạn văn bản (Dùng cho Ingestion)."""
-        if not texts:
-            return []
-        res = self.embed_text(texts)
-        if isinstance(res, list) and len(res) > 0 and isinstance(res[0], list):
-            return res
-        return [res] if isinstance(res, list) else []
-
-    def embed_query(self, text: str) -> List[float]:
-        """Nhúng một câu truy vấn duy nhất (Dùng cho Retrieval)."""
-        res = self.embed_text(text)
-        if isinstance(res, list) and len(res) > 0 and isinstance(res[0], float):
-            return res
-        if isinstance(res, list) and len(res) > 0 and isinstance(res[0], list):
-            return res[0]
-        return [0.0] * 384
-
-
-# ==============================================================================
-# FILE: src/utils/config.py
-# ==============================================================================
-
-from pathlib import Path
-from typing import Literal, Optional
-from functools import lru_cache
-from pydantic import Field, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
-
-class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_prefix="RAG_", extra="ignore")
-    
-    # Directory paths
-    data_dir: Path = Path("data")
-    storage_dir: Path = Path("storage/qdrant")
-    bm25_dir: Path = Path("storage/bm25")
-    qdrant_collection_base: str = Field(default="rag_chunks", alias="RAG_QDRANT_COLLECTION")
-
-    @property
-    def qdrant_collection(self) -> str:
-        return self.qdrant_collection_base + "_v2"
-
-    # Chunking & Retrieval Parameters
-    chunk_size: int = Field(default=1000, ge=100)
-    chunk_overlap: int = Field(default=150, ge=0)
-    top_k: int = Field(default=5, ge=1, le=64)
-
-    # Embedding Configuration
-    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
-
-    # LLM Providers Configuration
-    llm_provider: Literal["hf_local", "gemini", "vllm"] = "hf_local"
-    llm_temperature: float = Field(default=0.1, ge=0.0, le=2.0)
-
-    # Local Hugging Face Model Parameters
-    hf_model: str = "Qwen/Qwen2.5-1.5B-Instruct"
-    hf_device: str = "auto"  # Supports 'auto', 'cpu', 'cuda', 'mps' etc.
-    hf_max_new_tokens: int = Field(default=2048, ge=1)
-    
-    # --- NEW: GGUF Model Parameters (Llama.cpp) ---
-    gguf_model_repo: str = "Qwen/Qwen2.5-3B-Instruct-GGUF"
-    gguf_model_file: str = "qwen2.5-3b-instruct-q4_k_m.gguf"
-
-    # Google Gemini API Config
-    gemini_model: str = "gemini-2.5-flash"
-    google_api_key: str | None = Field(default=None, validation_alias="GOOGLE_API_KEY")
-
-    # OpenAI / vLLM Config
-    vllm_api_base: str = "http://localhost:8001/v1"
-    vllm_api_key: str = "EMPTY"
-
-    # Learning Parameters
-    summarize_batch_size: int = Field(default=10, ge=1)
-    summarize_retrieval_k: int = Field(default=12, ge=1, le=128)
-    generation_retrieval_k: int = Field(default=16, ge=1, le=128)
-
-    quiz_default_count: int = Field(default=8, ge=1, le=50)
-    flashcards_default_count: int = Field(default=15, ge=1, le=100)
-    api_url: str = "http://localhost:8000"
-
-    # --- NEW: Redis Semantic Cache ---
-    redis_host: str = "localhost"
-    redis_port: int = 6379
-    redis_db: int = 0
-    redis_password: Optional[str] = None
-    cache_ttl: int = Field(default=3600, ge=60, description="Cache TTL in seconds")
-    cache_similarity_threshold: float = Field(default=0.92, ge=0.5, le=1.0)
-
-    # --- NEW: Session Memory ---
-    session_max_messages: int = Field(default=20, ge=2, le=100)
-
-    # --- NEW: Low VRAM Mode ---
-    low_vram_mode: bool = Field(default=False, description="Use lightweight models for retrieval to save VRAM for LLM")
-
-    # --- NEW: Hybrid Search & Reranking ---
-    enable_reranker: bool = False
-    hybrid_initial_k: int = Field(default=15, ge=1, le=100)
-    hybrid_rerank_k: int = Field(default=5, ge=1, le=50)
-    reranker_model: str = "BAAI/bge-reranker-v2-m3"
-    bm25_top_k: int = Field(default=15, ge=1, le=100)
-
-    # --- NEW: Stream Batching ---
-    stream_buffer_ms: int = Field(default=50, ge=10, le=500)
-
-    # --- NEW: Observability ---
-    enable_prometheus: bool = True
-    enable_langsmith: bool = False
-    langsmith_api_key: Optional[str] = None
-    langsmith_project: str = "simple-notebooklm"
-
-    @model_validator(mode="after")
-    def validate_config(self) -> "Settings":
-        if self.chunk_overlap >= self.chunk_size:
-            raise ValueError("chunk_overlap must be smaller than chunk_size.")
-        if self.llm_provider == "gemini" and not self.google_api_key:
-            # Note: Langchain will search for GOOGLE_API_KEY environment variable.
-            # We don't raise error here to allow system-level env variables to be used.
-            pass
-        if self.hybrid_rerank_k > self.hybrid_initial_k:
-            raise ValueError("hybrid_rerank_k must be <= hybrid_initial_k.")
-            
-        if self.hf_device == "auto":
-            try:
-                import torch
-                if torch.cuda.is_available():
-                    self.hf_device = "cuda"
-                elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-                    self.hf_device = "mps"
-                else:
-                    self.hf_device = "cpu"
-            except ImportError:
-                self.hf_device = "cpu"
-                
-        return self
-
-@lru_cache(maxsize=1)
-def get_settings() -> Settings:
-    return Settings()
-
-settings = get_settings()
 
 
 # ==============================================================================
@@ -1069,7 +363,8 @@ function Studio() {
   const [showPodcastModal, setShowPodcastModal] = useState(false);
   const [podcastConfig, setPodcastConfig] = useState({
     focus_topic: '',
-    style: 'fun'
+    style: 'fun',
+    voice_mode: 'duo'
   });
 
   // Document preview state
@@ -1672,6 +967,7 @@ function Studio() {
           notebook_id: activeNotebook.id,
           focus_topic: podcastConfig.focus_topic,
           style: podcastConfig.style,
+          voice_mode: podcastConfig.voice_mode || 'duo',
           selected_documents: selectedDocs.size > 0 ? Array.from(selectedDocs) : (documents || []).map(d => d.filename)
         })
       });
@@ -4049,6 +3345,38 @@ function Studio() {
                 </div>
               </div>
 
+              {/* Voice selection */}
+              <div>
+                <label className="font-semibold text-gray-300 block mb-1.5">
+                  Giọng đọc Podcast:
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    { key: 'duo', label: '👫 Song ca Nam & Nữ', desc: 'Minh & My đối thoại tự nhiên, có khoảng ngắt nghỉ' },
+                    { key: 'female', label: '👩 Giọng Nữ (Hoài My)', desc: 'Ngọt ngào, truyền cảm, chuẩn sách nói' },
+                    { key: 'male', label: '👨 Giọng Nam (Nam Minh)', desc: 'Trầm ấm, đĩnh đạc, bản tin phân tích' },
+                    { key: 'gtts', label: '🤖 Chị Google (gTTS)', desc: 'Giọng đọc quen thuộc, hài hước' }
+                  ].map(v => (
+                    <button
+                      key={v.key}
+                      type="button"
+                      onClick={() => setPodcastConfig({...podcastConfig, voice_mode: v.key})}
+                      className={`p-2.5 rounded-xl border text-left transition flex flex-col justify-between ${
+                        (podcastConfig.voice_mode || 'duo') === v.key 
+                          ? 'bg-purple-500/20 border-purple-500 text-white' 
+                          : 'bg-white/5 border-white/10 text-gray-400 hover:bg-white/10'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between w-full">
+                        <span className="font-semibold text-[11px] text-gray-200">{v.label}</span>
+                        {(podcastConfig.voice_mode || 'duo') === v.key && <Check size={12} className="text-purple-400" />}
+                      </div>
+                      <div className="text-[10px] text-gray-400 mt-1 leading-snug">{v.desc}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               {/* Focus Topic */}
               <div>
                 <label className="font-semibold text-gray-300 block mb-1.5">
@@ -5622,6 +4950,7 @@ async def generate_podcast(
     focus_topic = None
     style = "fun"
     selected_documents = None
+    voice_mode = "duo"
 
     try:
         body = await request.json()
@@ -5632,6 +4961,7 @@ async def generate_podcast(
                 focus_topic = raw_focus.strip()
             style = body.get("style") or "fun"
             selected_documents = body.get("selected_documents")
+            voice_mode = body.get("voice_mode") or "duo"
     except Exception:
         pass
 
@@ -5680,7 +5010,8 @@ async def generate_podcast(
         base_url=base_url,
         focus_topic=focus_topic,
         style=style,
-        custom_context=custom_context
+        custom_context=custom_context,
+        voice_mode=voice_mode
     )
     return {"status": "processing"}
 
@@ -6361,6 +5692,780 @@ start "" http://localhost:8000
 python -m uvicorn src.api.api:app --host 0.0.0.0 --port 8000 --reload
 
 pause
+
+
+# ==============================================================================
+# FILE: src/learning/critique_generator.py
+# ==============================================================================
+
+import os
+import json
+from typing import Dict, Any, Optional, List
+from src.llm.llm_client import LLMEngine
+from src.ingestion.indexing import VectorStoreManager
+from src.utils.logger import logger
+
+
+class CritiqueAndActionGenerator:
+    """
+    1. Phản biện chuyên sâu (Deep Critique / Peer Review)
+    2. Kế hoạch hành động thực tiễn (Actionable Checklist & Roadmap)
+    """
+    def __init__(
+        self,
+        llm_engine: LLMEngine,
+        vector_store: VectorStoreManager,
+        session_manager=None,
+        notebook_id: str = "default"
+    ):
+        self.llm = llm_engine
+        self.store = vector_store
+        self.sm = session_manager
+        self.notebook_id = notebook_id
+
+    def _collect_context(
+        self,
+        source_filter: Optional[str] = None,
+        selected_documents: Optional[List[str]] = None,
+        max_chars: int = 16000
+    ) -> str:
+        text_parts = []
+        total = 0
+
+        # Ưu tiên 1: Lấy theo danh sách tài liệu của sổ tay thông qua get_chunks_by_document
+        target_filenames = []
+        if selected_documents and len(selected_documents) > 0:
+            target_filenames = list(selected_documents)
+        elif source_filter:
+            target_filenames = [source_filter]
+        elif self.sm is not None:
+            docs = self.sm.get_documents(self.notebook_id) or []
+            target_filenames = [d.get("filename") for d in docs if d.get("filename")]
+
+        if target_filenames and hasattr(self.store, "get_chunks_by_document"):
+            for fname in target_filenames:
+                try:
+                    raw_chunks = self.store.get_chunks_by_document(self.notebook_id, fname, limit=20)
+                    for ch_text in raw_chunks:
+                        if not ch_text:
+                            continue
+                        block = f"[Nguồn: {fname}]\n{ch_text}\n\n"
+                        if total + len(block) > max_chars:
+                            break
+                        text_parts.append(block)
+                        total += len(block)
+                    if total >= max_chars:
+                        break
+                except Exception as e:
+                    logger.warning(f"Lỗi lấy chunks cho file {fname}: {e}")
+
+        # Ưu tiên 2: Fallback trực tiếp vào kho chỉ mục BM25 (storage/bm25/{notebook_id}/bm25_docs.json)
+        if not text_parts:
+            bm25_path = os.path.join("storage", "bm25", str(self.notebook_id), "bm25_docs.json")
+            if os.path.exists(bm25_path):
+                try:
+                    with open(bm25_path, "r", encoding="utf-8") as f:
+                        b_docs = json.load(f)
+                    for item in b_docs:
+                        meta = item.get("metadata", {})
+                        src = meta.get("filename") or meta.get("source_file") or meta.get("source") or meta.get("title") or "Tài liệu"
+                        if selected_documents and src not in selected_documents and os.path.basename(str(src)) not in [os.path.basename(s) for s in selected_documents]:
+                            continue
+                        if source_filter and src != source_filter and os.path.basename(str(src)) != os.path.basename(source_filter):
+                            continue
+                        txt = item.get("text", "")
+                        if txt and txt.strip():
+                            block = f"[Nguồn: {src}]\n{txt}\n\n"
+                            if total + len(block) > max_chars:
+                                break
+                            text_parts.append(block)
+                            total += len(block)
+                except Exception as be:
+                    logger.warning(f"Lỗi đọc BM25 docs cache trong CritiqueGenerator: {be}")
+
+        # Ưu tiên 3: Fallback sang get_all_chunks nếu có
+        if not text_parts and hasattr(self.store, "get_all_chunks"):
+            try:
+                chunks = self.store.get_all_chunks(limit=250, notebook_id=self.notebook_id)
+                for c in chunks:
+                    meta = c.get("metadata", {})
+                    src = meta.get("filename") or meta.get("source") or meta.get("source_file") or "Tài liệu"
+                    if selected_documents and src not in selected_documents:
+                        continue
+                    if source_filter and src != source_filter:
+                        continue
+                    block = f"[Nguồn: {src}]\n{c.get('content', '')}\n\n"
+                    if total + len(block) > max_chars:
+                        break
+                    text_parts.append(block)
+                    total += len(block)
+            except Exception as e:
+                logger.warning(f"Lỗi get_all_chunks trong CritiqueGenerator: {e}")
+
+        # Ưu tiên 4: Fallback sang bản tóm tắt Study Guide nếu Vector Store & BM25 chưa trả kết quả
+        if not text_parts and self.sm is not None:
+            try:
+                sg = self.sm.get_study_guide(self.notebook_id)
+                if sg and (sg.get("summary") or sg.get("faq")):
+                    return f"Tóm tắt tài liệu:\n{sg.get('summary', '')}\n\nCâu hỏi trọng tâm:\n{sg.get('faq', '')}"
+            except Exception as e:
+                logger.warning(f"Lỗi đọc study guide trong CritiqueGenerator: {e}")
+
+        # Ưu tiên 5: Fallback đọc trực tiếp file từ uploads/
+        if not text_parts and self.sm is not None:
+            try:
+                docs = self.sm.get_documents(self.notebook_id) or []
+                for d in docs:
+                    fn = d.get("filename")
+                    up_file = os.path.join("uploads", fn) if fn else None
+                    if up_file and os.path.exists(up_file):
+                        ext = os.path.splitext(fn)[1].lower()
+                        if ext in ['.txt', '.md', '.json', '.csv', '.html']:
+                            with open(up_file, "r", encoding="utf-8", errors="ignore") as f:
+                                text_parts.append(f"[Nguồn: {fn}]\n{f.read()[:max_chars]}\n\n")
+                                break
+                        else:
+                            from src.ingestion.parsers.markitdown_parser import MarkItDownParser
+                            tree = MarkItDownParser().parse(up_file)
+                            if tree and tree.content:
+                                text_parts.append(f"[Nguồn: {fn}]\n{tree.content[:max_chars]}\n\n")
+                                break
+            except Exception as e:
+                logger.warning(f"Lỗi đọc trực tiếp file uploads trong CritiqueGenerator: {e}")
+
+        return "".join(text_parts)
+
+    def _call_llm(self, prompt: str, system_prompt: str, llm_kwargs: Dict[str, Any]) -> str:
+        gen = self.llm.generate(
+            prompt=prompt,
+            system_prompt=system_prompt,
+            **llm_kwargs
+        )
+        if hasattr(gen, "__iter__") and not isinstance(gen, str):
+            return "".join(gen).strip()
+        return str(gen).strip()
+
+    def generate_critique(
+        self,
+        source_filter: Optional[str] = None,
+        selected_documents: Optional[List[str]] = None,
+        **llm_kwargs
+    ) -> Dict[str, Any]:
+        logger.info(f"Đang tạo Báo cáo Phản biện (nb={self.notebook_id}, selected={selected_documents})")
+        context = self._collect_context(source_filter=source_filter, selected_documents=selected_documents)
+        if not context.strip():
+            return {"error": "Chưa có tài liệu nào được chọn hoặc nạp vào sổ tay để phân tích phản biện."}
+
+        system_prompt = "Bạn là Chuyên gia Phản biện Học thuật & Phân tích Chiến lược (Peer Reviewer) sắc bén, khách quan."
+        prompt = f"""Dựa trên nội dung tài liệu dưới đây, hãy viết một **Báo cáo Phản biện & Đánh giá Chuyên sâu** bằng tiếng Việt (định dạng Markdown):
+
+### 1. Điểm mạnh & Giá trị cốt lõi (Strengths)
+- Những luận điểm, dữ liệu hoặc phương pháp nào được trình bày thuyết phục nhất?
+
+### 2. Lỗ hổng Lập luận & Điểm mù (Blind Spots & Limitations)
+- Những khía cạnh nào chưa được giải thích rõ, thiếu bằng chứng thực nghiệm hoặc mới chỉ dừng ở giả định?
+- Có rủi ro hay trường hợp ngoại lệ (edge cases) nào bị bỏ qua không?
+
+### 3. Góc nhìn Phản biện (Counter-Arguments)
+- Nếu đứng ở góc nhìn đối lập hoặc thực tế triển khai, người đọc cần đặt ra 3-5 câu hỏi chất vấn sắc bén nào?
+
+### 4. Đề xuất Nâng cấp / Bổ sung
+- Cần bổ sung thêm dữ liệu, dẫn chứng hay bước kiểm chứng nào để tài liệu hoàn chỉnh hơn?
+
+NỘI DUNG TÀI LIỆU:
+{context}
+"""
+        res = self._call_llm(prompt, system_prompt, llm_kwargs)
+        return {"content": res}
+
+    def generate_action_plan(
+        self,
+        source_filter: Optional[str] = None,
+        selected_documents: Optional[List[str]] = None,
+        **llm_kwargs
+    ) -> Dict[str, Any]:
+        logger.info(f"Đang tạo Action Plan (nb={self.notebook_id}, selected={selected_documents})")
+        context = self._collect_context(source_filter=source_filter, selected_documents=selected_documents)
+        if not context.strip():
+            return {"error": "Chưa có tài liệu nào được chọn hoặc nạp vào sổ tay để lập kế hoạch hành động."}
+
+        system_prompt = "Bạn là Chuyên gia Tư vấn Quản trị & Triển khai Dự án thực tiễn."
+        prompt = f"""Từ nội dung tài liệu dưới đây, hãy chuyển hóa toàn bộ kiến thức lý thuyết thành **Kế hoạch Hành động Thực tiễn (Action Plan)** bằng tiếng Việt (định dạng Markdown):
+
+### 1. Mục tiêu Trọng tâm (Key Objectives)
+- Tóm tắt 3 mục tiêu thực tiễn nhất rút ra từ tài liệu.
+
+### 2. Bảng Phân bổ Hành động (Action Matrix)
+Trình bày dưới dạng Bảng Markdown gồm các cột: `Giai đoạn` | `Hành động cụ thể` | `Đầu ra kỳ vọng (Deliverable)` | `Mức độ ưu tiên (Cao/TB/Thấp)`.
+
+### 3. Danh sách Kiểm tra (Checklist Thực thi)
+- [ ] Các bước chuẩn bị và kiểm chứng cụ thể để áp dụng ngay kiến thức trong tài liệu.
+
+NỘI DUNG TÀI LIỆU:
+{context}
+"""
+        res = self._call_llm(prompt, system_prompt, llm_kwargs)
+        return {"content": res}
+
+
+# ==============================================================================
+# FILE: src/ingestion/indexing.py
+# ==============================================================================
+
+import os
+import uuid
+import logging
+from typing import List, Dict, Any, Optional
+from qdrant_client import QdrantClient
+from qdrant_client.http.models import Distance, VectorParams, PointStruct
+from ..utils.config import settings
+
+logger = logging.getLogger(__name__)
+
+class VectorStoreManager:
+    """Quản lý việc lưu trữ Vector vào Qdrant Local và đồng bộ hóa BM25 Index."""
+    
+    def __init__(self, embedder=None, notebook_id: str = "default"):
+        if embedder is None:
+            from src.ingestion.embedding import LocalEmbedder
+            embedder = LocalEmbedder()
+        self.embedder = embedder
+        self.notebook_id = notebook_id
+        
+        # Tạo thư mục chứa database nếu chưa có
+        os.makedirs(settings.storage_dir, exist_ok=True)
+        
+        # Khởi tạo Qdrant Local Mode (Ghi trực tiếp ra ổ cứng, không cần Docker)
+        self.client = QdrantClient(path=str(settings.storage_dir))
+        self.collection_name = settings.qdrant_collection
+        
+        # Test 1 embedding để lấy vector size
+        dummy_vector = self.embedder.embed_query("test")
+        self.vector_size = len(dummy_vector)
+        
+        self._init_collection()
+
+    def _init_collection(self):
+        """Tạo collection nếu chưa tồn tại."""
+        collections = self.client.get_collections().collections
+        exists = any(c.name == self.collection_name for c in collections)
+        
+        if not exists:
+            print(f"[Qdrant] Đang tạo Collection mới: {self.collection_name} (Size: {self.vector_size})")
+            self.client.create_collection(
+                collection_name=self.collection_name,
+                vectors_config=VectorParams(size=self.vector_size, distance=Distance.COSINE),
+            )
+        else:
+            print(f"[Qdrant] Đã kết nối tới Collection: {self.collection_name}")
+
+    def clear_all(self):
+        """Xóa toàn bộ dữ liệu trong collection hiện tại và khởi tạo lại."""
+        try:
+            self.client.delete_collection(collection_name=self.collection_name)
+            self._init_collection()
+            print(f"[Qdrant] Đã dọn dẹp toàn bộ dữ liệu trong collection {self.collection_name}")
+        except Exception as e:
+            logger.warning(f"Lỗi clear_all collection: {e}")
+
+    def index_chunks(self, chunks: List[Any]):
+        """Nhúng và lưu các đoạn văn bản vào Database, đồng thời cập nhật BM25."""
+        if not chunks:
+            return
+            
+        print(f"[Qdrant] Đang tính toán Vector cho {len(chunks)} đoạn văn bản...")
+        texts = [chunk["content"] if isinstance(chunk, dict) else chunk.content for chunk in chunks]
+        embeddings = self.embedder.embed_documents(texts)
+        
+        def _clean_meta(meta_dict):
+            cleaned = {}
+            for k, v in (meta_dict or {}).items():
+                if isinstance(v, (str, int, float, bool)):
+                    cleaned[k] = v
+                elif isinstance(v, (list, tuple)):
+                    cleaned[k] = [str(item) if not isinstance(item, (int, float, bool)) else item for item in v]
+                else:
+                    cleaned[k] = str(v)
+            return cleaned
+
+        points = []
+        for i, chunk in enumerate(chunks):
+            c_content = chunk["content"] if isinstance(chunk, dict) else chunk.content
+            c_meta = chunk.get("metadata", {}) if isinstance(chunk, dict) else getattr(chunk, "metadata", {})
+            c_id = (chunk.get("chunk_id") if isinstance(chunk, dict) else getattr(chunk, "chunk_id", None)) or str(uuid.uuid4())
+            cleaned_payload = {
+                "chunk_id": c_id,
+                "content": str(c_content),
+                "notebook_id": c_meta.get("notebook_id", self.notebook_id),
+                **_clean_meta(c_meta)
+            }
+            point = PointStruct(
+                id=c_id,
+                vector=embeddings[i],
+                payload=cleaned_payload
+            )
+            points.append(point)
+            
+        print(f"[Qdrant] Đang lưu {len(points)} Vectors vào Database (batching 200/lần)...")
+        batch_size = 200
+        for b_idx in range(0, len(points), batch_size):
+            batch_points = points[b_idx:b_idx + batch_size]
+            self.client.upsert(
+                collection_name=self.collection_name,
+                points=batch_points
+            )
+        print("[Qdrant] Lưu dữ liệu Vector hoàn tất!")
+
+        # Đồng bộ hóa sang BM25 Index cho Hybrid Search
+        try:
+            from ..retrieval.bm25_index import get_bm25_index, BM25Document
+            first_meta = chunks[0].get("metadata", {}) if isinstance(chunks[0], dict) else getattr(chunks[0], "metadata", {})
+            notebook_id = first_meta.get("notebook_id", self.notebook_id)
+            bm25 = get_bm25_index(notebook_id)
+            bm25_docs = [
+                BM25Document(
+                    chunk_id=points[i].id,
+                    text=chunks[i]["content"] if isinstance(chunks[i], dict) else chunks[i].content,
+                    metadata=chunks[i].get("metadata", {}) if isinstance(chunks[i], dict) else getattr(chunks[i], "metadata", {})
+                )
+                for i in range(len(chunks))
+            ]
+            bm25.add_documents(bm25_docs)
+            bm25.save()
+            print(f"[BM25] Đã đồng bộ {len(bm25_docs)} chunks vào chỉ mục từ khóa.")
+        except Exception as e:
+            logger.warning(f"Lỗi đồng bộ BM25 Index: {e}")
+
+    def delete_notebook_chunks(self, notebook_id: str):
+        """Xóa tất cả các chunk thuộc về một notebook."""
+        from qdrant_client.http.models import Filter, FieldCondition, MatchValue
+        self.client.delete(
+            collection_name=self.collection_name,
+            points_selector=Filter(
+                must=[
+                    FieldCondition(
+                        key="notebook_id",
+                        match=MatchValue(value=notebook_id)
+                    )
+                ]
+            )
+        )
+        try:
+            from ..retrieval.bm25_index import delete_bm25_folder
+            delete_bm25_folder(notebook_id)
+        except Exception as e:
+            logger.warning(f"Lỗi xóa BM25 folder: {e}")
+
+    def delete_document_chunks(self, notebook_id: str, filename: str):
+        """Xóa tất cả các chunk thuộc về một tài liệu trong notebook."""
+        from qdrant_client.http.models import Filter, FieldCondition, MatchValue
+        self.client.delete(
+            collection_name=self.collection_name,
+            points_selector=Filter(
+                must=[
+                    FieldCondition(key="notebook_id", match=MatchValue(value=notebook_id))
+                ],
+                should=[
+                    FieldCondition(key="filename", match=MatchValue(value=filename)),
+                    FieldCondition(key="source_file", match=MatchValue(value=filename)),
+                    FieldCondition(key="title", match=MatchValue(value=filename)),
+                    FieldCondition(key="source_url", match=MatchValue(value=filename)),
+                    FieldCondition(key="source", match=MatchValue(value=filename))
+                ]
+            )
+        )
+        try:
+            from ..retrieval.bm25_index import get_bm25_index
+            bm25 = get_bm25_index(notebook_id)
+            bm25.remove_document(filename)
+            bm25.save()
+        except Exception as e:
+            logger.warning(f"Lỗi cập nhật BM25 khi xóa file {filename}: {e}")
+
+    def search(self, query: str, limit: int = 5, notebook_id: str = None) -> List[Dict[str, Any]]:
+        """Tìm kiếm dữ liệu tương tự theo Vector."""
+        from qdrant_client.http.models import Filter, FieldCondition, MatchValue
+        
+        query_vector = self.embedder.embed_query(query)
+        
+        target_nb = notebook_id or getattr(self, "notebook_id", None)
+        query_filter = None
+        if target_nb and target_nb != "default":
+            query_filter = Filter(
+                must=[
+                    FieldCondition(
+                        key="notebook_id",
+                        match=MatchValue(value=target_nb)
+                    )
+                ]
+            )
+        
+        res = self.client.query_points(
+            collection_name=self.collection_name,
+            query=query_vector,
+            query_filter=query_filter,
+            limit=limit
+        )
+        hits = res.points
+        
+        results = []
+        for hit in hits:
+            results.append({
+                "score": hit.score,
+                "content": hit.payload.get("content", ""),
+                "metadata": {k: v for k, v in hit.payload.items() if k != "content"}
+            })
+        return results
+
+    def get_all_chunks(self, limit: int = 500, notebook_id: str = None) -> List[Dict[str, Any]]:
+        """Lấy tất cả các chunk trong collection hoặc lọc theo notebook_id."""
+        from qdrant_client.http.models import Filter, FieldCondition, MatchValue
+        target_nb = notebook_id or getattr(self, "notebook_id", None)
+        scroll_filter = None
+        if target_nb and target_nb != "default":
+            scroll_filter = Filter(
+                must=[
+                    FieldCondition(key="notebook_id", match=MatchValue(value=target_nb))
+                ]
+            )
+        chunks = []
+        try:
+            records, _ = self.client.scroll(
+                collection_name=self.collection_name,
+                scroll_filter=scroll_filter,
+                limit=limit,
+                with_payload=True,
+                with_vectors=False
+            )
+            for r in records:
+                payload = r.payload or {}
+                chunks.append({
+                    "chunk_id": payload.get("chunk_id", str(r.id)),
+                    "content": payload.get("content", ""),
+                    "metadata": {k: v for k, v in payload.items() if k != "content"}
+                })
+        except Exception as e:
+            logger.warning(f"Lỗi scroll all chunks từ Qdrant: {e}")
+
+        # Fallback nếu scroll theo notebook_id không ra kết quả (ví dụ dữ liệu cũ chưa có trường notebook_id)
+        if not chunks and target_nb and target_nb != "default":
+            try:
+                records, _ = self.client.scroll(
+                    collection_name=self.collection_name,
+                    limit=limit,
+                    with_payload=True,
+                    with_vectors=False
+                )
+                for r in records:
+                    payload = r.payload or {}
+                    chunks.append({
+                        "chunk_id": payload.get("chunk_id", str(r.id)),
+                        "content": payload.get("content", ""),
+                        "metadata": {k: v for k, v in payload.items() if k != "content"}
+                    })
+            except Exception as e:
+                logger.warning(f"Lỗi scroll fallback Qdrant: {e}")
+
+        # Fallback từ BM25 index nếu Qdrant hoàn toàn rỗng
+        if not chunks and target_nb and target_nb != "default":
+            bm25_path = os.path.join("storage", "bm25", str(target_nb), "bm25_docs.json")
+            if os.path.exists(bm25_path):
+                try:
+                    with open(bm25_path, "r", encoding="utf-8") as f:
+                        b_docs = json.load(f)
+                    for item in b_docs[:limit]:
+                        chunks.append({
+                            "chunk_id": item.get("chunk_id", ""),
+                            "content": item.get("text", ""),
+                            "metadata": item.get("metadata", {})
+                        })
+                except Exception as e:
+                    logger.warning(f"Lỗi đọc BM25 docs trong get_all_chunks: {e}")
+
+        return chunks
+
+    def get_chunks_by_document(self, notebook_id: str, filename: str, limit: int = 100) -> List[str]:
+        """Lấy danh sách các chunk văn bản thuộc về một tài liệu cụ thể trong notebook."""
+        from qdrant_client.http.models import Filter, FieldCondition, MatchValue
+        chunks = []
+        try:
+            scroll_filter = Filter(
+                must=[
+                    FieldCondition(key="notebook_id", match=MatchValue(value=notebook_id))
+                ],
+                should=[
+                    FieldCondition(key="filename", match=MatchValue(value=filename)),
+                    FieldCondition(key="source_file", match=MatchValue(value=filename)),
+                    FieldCondition(key="title", match=MatchValue(value=filename)),
+                    FieldCondition(key="source_url", match=MatchValue(value=filename)),
+                    FieldCondition(key="source", match=MatchValue(value=filename))
+                ]
+            )
+            records, _ = self.client.scroll(
+                collection_name=self.collection_name,
+                scroll_filter=scroll_filter,
+                limit=limit,
+                with_payload=True,
+                with_vectors=False
+            )
+            for r in records:
+                content = r.payload.get("content")
+                if content and isinstance(content, str):
+                    chunks.append(content)
+        except Exception as e:
+            logger.warning(f"Lỗi scroll Qdrant cho file {filename}: {e}")
+
+        # Fallback 1: Đọc từ BM25 index storage (storage/bm25/{notebook_id}/bm25_docs.json)
+        if not chunks:
+            bm25_path = os.path.join("storage", "bm25", str(notebook_id), "bm25_docs.json")
+            if os.path.exists(bm25_path):
+                try:
+                    with open(bm25_path, "r", encoding="utf-8") as f:
+                        b_docs = json.load(f)
+                    for item in b_docs:
+                        meta = item.get("metadata", {})
+                        src = meta.get("filename") or meta.get("source_file") or meta.get("source") or meta.get("title")
+                        if not src or src == filename or os.path.basename(str(src)) == os.path.basename(str(filename)):
+                            txt = item.get("text", "")
+                            if txt and txt.strip():
+                                chunks.append(txt)
+                                if len(chunks) >= limit:
+                                    break
+                except Exception as be:
+                    logger.warning(f"Lỗi đọc BM25 fallback cho {filename}: {be}")
+
+        # Fallback 2: nếu vẫn chưa có thì đọc trực tiếp file từ uploads/
+        if not chunks:
+            upload_path = os.path.join("uploads", filename)
+            if os.path.exists(upload_path):
+                try:
+                    ext = os.path.splitext(filename)[1].lower()
+                    if ext in ['.txt', '.md', '.json', '.csv', '.html']:
+                        with open(upload_path, "r", encoding="utf-8", errors="ignore") as f:
+                            text = f.read()
+                            chunks = [text[i:i+800] for i in range(0, min(len(text), 20000), 800) if text[i:i+800].strip()]
+                    else:
+                        from src.ingestion.parsers.markitdown_parser import MarkItDownParser
+                        parser = MarkItDownParser()
+                        tree = parser.parse(upload_path)
+                        if tree and tree.content:
+                            text = tree.content
+                            chunks = [text[i:i+800] for i in range(0, min(len(text), 20000), 800) if text[i:i+800].strip()]
+                except Exception as e:
+                    logger.warning(f"Lỗi đọc fallback file uploads/{filename}: {e}")
+
+        return chunks
+
+
+# ==============================================================================
+# FILE: src/ingestion/embedding.py
+# ==============================================================================
+
+from typing import List, Union
+import numpy as np
+from src.utils.logger import logger
+from src.utils.config import settings
+
+
+class LocalEmbedder:
+    """Wrapper cho SentenceTransformers hoạt động hoàn toàn Offline, đồng bộ với config.py."""
+    
+    def __init__(self, model_name: str = None):
+        self.model_name = model_name or getattr(
+            settings, "embedding_model", "sentence-transformers/all-MiniLM-L6-v2"
+        )
+        self.device = getattr(settings, "hf_device", None) if getattr(settings, "hf_device", "auto") != "auto" else None
+        self.model = None
+        self._load_model()
+
+    def _load_model(self):
+        try:
+            from sentence_transformers import SentenceTransformer
+            logger.info(f"Đang tải Local Embedding Model: {self.model_name}...")
+            try:
+                self.model = SentenceTransformer(self.model_name, device=self.device, local_files_only=True)
+            except Exception:
+                self.model = SentenceTransformer(self.model_name, device=self.device, local_files_only=False)
+            logger.info("Tải Local Embedding Model thành công!")
+        except Exception as e:
+            fallback = "sentence-transformers/all-MiniLM-L6-v2"
+            if self.model_name != fallback:
+                logger.warning(f"Không thể tải {self.model_name} ({e}). Chuyển sang fallback: {fallback}")
+                try:
+                    from sentence_transformers import SentenceTransformer
+                    self.model_name = fallback
+                    try:
+                        self.model = SentenceTransformer(fallback, device=self.device, local_files_only=True)
+                    except Exception:
+                        self.model = SentenceTransformer(fallback, device=self.device, local_files_only=False)
+                    return
+                except Exception as inner_e:
+                    logger.error(f"Lỗi tải fallback model: {inner_e}")
+            logger.error(f"Lỗi khi tải sentence-transformers: {e}")
+            self.model = None
+
+    def embed_text(self, texts: Union[str, List[str]]) -> Union[List[float], List[List[float]]]:
+        if not self.model:
+            logger.warning("LocalEmbedder chưa khởi tạo. Trả về vector 0.")
+            is_single = isinstance(texts, str)
+            return [0.0] * 384 if is_single else [[0.0] * 384 for _ in texts]
+
+        is_single = isinstance(texts, str)
+        input_texts = [texts] if is_single else texts
+
+        try:
+            embeddings = self.model.encode(
+                input_texts,
+                show_progress_bar=False,
+                convert_to_numpy=True,
+                normalize_embeddings=True
+            )
+            result = embeddings.tolist()
+            return result[0] if is_single else result
+        except Exception as e:
+            logger.error(f"Lỗi trong quá trình tạo Embedding: {e}")
+            return [0.0] * 384 if is_single else [[0.0] * 384 for _ in input_texts]
+
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        """Nhúng danh sách các đoạn văn bản (Dùng cho Ingestion)."""
+        if not texts:
+            return []
+        res = self.embed_text(texts)
+        if isinstance(res, list) and len(res) > 0 and isinstance(res[0], list):
+            return res
+        return [res] if isinstance(res, list) else []
+
+    def embed_query(self, text: str) -> List[float]:
+        """Nhúng một câu truy vấn duy nhất (Dùng cho Retrieval)."""
+        res = self.embed_text(text)
+        if isinstance(res, list) and len(res) > 0 and isinstance(res[0], float):
+            return res
+        if isinstance(res, list) and len(res) > 0 and isinstance(res[0], list):
+            return res[0]
+        return [0.0] * 384
+
+
+# ==============================================================================
+# FILE: src/utils/config.py
+# ==============================================================================
+
+from pathlib import Path
+from typing import Literal, Optional
+from functools import lru_cache
+from pydantic import Field, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", env_prefix="RAG_", extra="ignore")
+    
+    # Directory paths
+    data_dir: Path = Path("data")
+    storage_dir: Path = Path("storage/qdrant")
+    bm25_dir: Path = Path("storage/bm25")
+    qdrant_collection_base: str = Field(default="rag_chunks", alias="RAG_QDRANT_COLLECTION")
+
+    @property
+    def qdrant_collection(self) -> str:
+        return self.qdrant_collection_base + "_v2"
+
+    # Chunking & Retrieval Parameters
+    chunk_size: int = Field(default=1000, ge=100)
+    chunk_overlap: int = Field(default=150, ge=0)
+    top_k: int = Field(default=5, ge=1, le=64)
+
+    # Embedding Configuration
+    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+
+    # LLM Providers Configuration
+    llm_provider: Literal["hf_local", "gemini", "vllm"] = "hf_local"
+    llm_temperature: float = Field(default=0.1, ge=0.0, le=2.0)
+
+    # Local Hugging Face Model Parameters
+    hf_model: str = "Qwen/Qwen2.5-1.5B-Instruct"
+    hf_device: str = "auto"  # Supports 'auto', 'cpu', 'cuda', 'mps' etc.
+    hf_max_new_tokens: int = Field(default=2048, ge=1)
+    
+    # --- NEW: GGUF Model Parameters (Llama.cpp) ---
+    gguf_model_repo: str = "Qwen/Qwen2.5-3B-Instruct-GGUF"
+    gguf_model_file: str = "qwen2.5-3b-instruct-q4_k_m.gguf"
+
+    # Google Gemini API Config
+    gemini_model: str = "gemini-2.5-flash"
+    google_api_key: str | None = Field(default=None, validation_alias="GOOGLE_API_KEY")
+
+    # OpenAI / vLLM Config
+    vllm_api_base: str = "http://localhost:8001/v1"
+    vllm_api_key: str = "EMPTY"
+
+    # Learning Parameters
+    summarize_batch_size: int = Field(default=10, ge=1)
+    summarize_retrieval_k: int = Field(default=12, ge=1, le=128)
+    generation_retrieval_k: int = Field(default=16, ge=1, le=128)
+
+    quiz_default_count: int = Field(default=8, ge=1, le=50)
+    flashcards_default_count: int = Field(default=15, ge=1, le=100)
+    api_url: str = "http://localhost:8000"
+
+    # --- NEW: Redis Semantic Cache ---
+    redis_host: str = "localhost"
+    redis_port: int = 6379
+    redis_db: int = 0
+    redis_password: Optional[str] = None
+    cache_ttl: int = Field(default=3600, ge=60, description="Cache TTL in seconds")
+    cache_similarity_threshold: float = Field(default=0.92, ge=0.5, le=1.0)
+
+    # --- NEW: Session Memory ---
+    session_max_messages: int = Field(default=20, ge=2, le=100)
+
+    # --- NEW: Low VRAM Mode ---
+    low_vram_mode: bool = Field(default=False, description="Use lightweight models for retrieval to save VRAM for LLM")
+
+    # --- NEW: Hybrid Search & Reranking ---
+    enable_reranker: bool = False
+    hybrid_initial_k: int = Field(default=15, ge=1, le=100)
+    hybrid_rerank_k: int = Field(default=5, ge=1, le=50)
+    reranker_model: str = "BAAI/bge-reranker-v2-m3"
+    bm25_top_k: int = Field(default=15, ge=1, le=100)
+
+    # --- NEW: Stream Batching ---
+    stream_buffer_ms: int = Field(default=50, ge=10, le=500)
+
+    # --- NEW: Observability ---
+    enable_prometheus: bool = True
+    enable_langsmith: bool = False
+    langsmith_api_key: Optional[str] = None
+    langsmith_project: str = "simple-notebooklm"
+
+    @model_validator(mode="after")
+    def validate_config(self) -> "Settings":
+        if self.chunk_overlap >= self.chunk_size:
+            raise ValueError("chunk_overlap must be smaller than chunk_size.")
+        if self.llm_provider == "gemini" and not self.google_api_key:
+            # Note: Langchain will search for GOOGLE_API_KEY environment variable.
+            # We don't raise error here to allow system-level env variables to be used.
+            pass
+        if self.hybrid_rerank_k > self.hybrid_initial_k:
+            raise ValueError("hybrid_rerank_k must be <= hybrid_initial_k.")
+            
+        if self.hf_device == "auto":
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    self.hf_device = "cuda"
+                elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                    self.hf_device = "mps"
+                else:
+                    self.hf_device = "cpu"
+            except ImportError:
+                self.hf_device = "cpu"
+                
+        return self
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    return Settings()
+
+settings = get_settings()
 
 
 # ==============================================================================
