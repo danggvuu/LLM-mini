@@ -4,7 +4,6 @@ TOTAL FILES: 6
 ================================================================================
 
 
-
 # ==============================================================================
 # FILE: Dockerfile
 # ==============================================================================
@@ -59,13 +58,15 @@ EXPOSE 8000
 CMD ["uvicorn", "src.api.api:app", "--host", "0.0.0.0", "--port", "8000"]
 
 
+
+
 # ==============================================================================
 # FILE: src/learning/critique_generator.py
 # ==============================================================================
 
 from typing import Dict, Any, Optional, List
 from src.llm.llm_client import LLMEngine
-from src.retrieval.vector_store import VectorStoreManager
+from src.ingestion.indexing import VectorStoreManager
 from src.utils.logger import logger
 
 
@@ -74,9 +75,16 @@ class CritiqueAndActionGenerator:
     1. Phản biện chuyên sâu (Deep Critique / Peer Review)
     2. Kế hoạch hành động thực tiễn (Actionable Checklist & Roadmap)
     """
-    def __init__(self, llm_engine: LLMEngine, vector_store: VectorStoreManager, notebook_id: str = "default"):
+    def __init__(
+        self,
+        llm_engine: LLMEngine,
+        vector_store: VectorStoreManager,
+        session_manager=None,
+        notebook_id: str = "default"
+    ):
         self.llm = llm_engine
         self.store = vector_store
+        self.sm = session_manager
         self.notebook_id = notebook_id
 
     def _collect_context(
@@ -85,50 +93,80 @@ class CritiqueAndActionGenerator:
         selected_documents: Optional[List[str]] = None,
         max_chars: int = 16000
     ) -> str:
-        chunks = self.store.get_all_chunks(limit=250, notebook_id=self.notebook_id)
-        if selected_documents:
-            chunks = [
-                c for c in chunks
-                if c.get("metadata", {}).get("source") in selected_documents
-                or c.get("metadata", {}).get("filename") in selected_documents
-                or c.get("metadata", {}).get("source_file") in selected_documents
-                or c.get("metadata", {}).get("title") in selected_documents
-                or c.get("metadata", {}).get("document_id") in selected_documents
-            ]
-        elif source_filter:
-            chunks = [
-                c for c in chunks 
-                if c.get("metadata", {}).get("source") == source_filter 
-                or c.get("metadata", {}).get("filename") == source_filter
-                or c.get("metadata", {}).get("source_file") == source_filter
-                or c.get("metadata", {}).get("title") == source_filter
-            ]
-        if not chunks:
-            return ""
-
         text_parts = []
         total = 0
-        for c in chunks:
-            src = c.get("metadata", {}).get("source") or c.get("metadata", {}).get("filename", "Tài liệu")
-            block = f"[Nguồn: {src}]\n{c.get('content', '')}\n\n"
-            if total + len(block) > max_chars:
-                break
-            text_parts.append(block)
-            total += len(block)
+
+        # Ưu tiên 1: Lấy theo danh sách tài liệu của sổ tay thông qua get_chunks_by_document
+        target_filenames = []
+        if selected_documents and len(selected_documents) > 0:
+            target_filenames = list(selected_documents)
+        elif source_filter:
+            target_filenames = [source_filter]
+        elif self.sm is not None:
+            docs = self.sm.get_documents(self.notebook_id) or []
+            target_filenames = [d.get("filename") for d in docs if d.get("filename")]
+
+        if target_filenames and hasattr(self.store, "get_chunks_by_document"):
+            for fname in target_filenames:
+                raw_chunks = self.store.get_chunks_by_document(self.notebook_id, fname, limit=20)
+                for ch_text in raw_chunks:
+                    if not ch_text:
+                        continue
+                    block = f"[Nguồn: {fname}]\n{ch_text}\n\n"
+                    if total + len(block) > max_chars:
+                        break
+                    text_parts.append(block)
+                    total += len(block)
+                if total >= max_chars:
+                    break
+
+        # Ưu tiên 2: Fallback sang get_all_chunks nếu có
+        if not text_parts and hasattr(self.store, "get_all_chunks"):
+            chunks = self.store.get_all_chunks(limit=250, notebook_id=self.notebook_id)
+            for c in chunks:
+                meta = c.get("metadata", {})
+                src = meta.get("filename") or meta.get("source") or meta.get("source_file") or "Tài liệu"
+                if selected_documents and src not in selected_documents:
+                    continue
+                if source_filter and src != source_filter:
+                    continue
+                block = f"[Nguồn: {src}]\n{c.get('content', '')}\n\n"
+                if total + len(block) > max_chars:
+                    break
+                text_parts.append(block)
+                total += len(block)
+
+        # Ưu tiên 3: Fallback sang bản tóm tắt Study Guide nếu Vector Store chưa trả kết quả
+        if not text_parts and self.sm is not None:
+            sg = self.sm.get_study_guide(self.notebook_id)
+            if sg and (sg.get("summary") or sg.get("faq")):
+                return f"Tóm tắt tài liệu:\n{sg.get('summary', '')}\n\nCâu hỏi trọng tâm:\n{sg.get('faq', '')}"
+
         return "".join(text_parts)
+
+    def _call_llm(self, prompt: str, system_prompt: str, llm_kwargs: Dict[str, Any]) -> str:
+        gen = self.llm.generate(
+            prompt=prompt,
+            system_prompt=system_prompt,
+            **llm_kwargs
+        )
+        if hasattr(gen, "__iter__") and not isinstance(gen, str):
+            return "".join(gen).strip()
+        return str(gen).strip()
 
     def generate_critique(
         self,
         source_filter: Optional[str] = None,
-        selected_documents: Optional[List[str]] = None
+        selected_documents: Optional[List[str]] = None,
+        **llm_kwargs
     ) -> Dict[str, Any]:
-        logger.info(f"Đang tạo Báo cáo Phản biện (Critique) (source={source_filter}, selected_docs={selected_documents})")
+        logger.info(f"Đang tạo Báo cáo Phản biện (nb={self.notebook_id}, selected={selected_documents})")
         context = self._collect_context(source_filter=source_filter, selected_documents=selected_documents)
-        if not context:
-            return {"error": "Chưa có tài liệu nào để phân tích phản biện."}
+        if not context.strip():
+            return {"error": "Chưa có tài liệu nào được chọn hoặc nạp vào sổ tay để phân tích phản biện."}
 
-        prompt = f"""Bạn là một Chuyên gia Phản biện Học thuật & Phân tích Chiến lược (Peer Reviewer).
-Dựa trên nội dung tài liệu dưới đây, hãy viết một **Báo cáo Phản biện & Đánh giá Chuyên sâu** bằng tiếng Việt (định dạng Markdown):
+        system_prompt = "Bạn là Chuyên gia Phản biện Học thuật & Phân tích Chiến lược (Peer Reviewer) sắc bén, khách quan."
+        prompt = f"""Dựa trên nội dung tài liệu dưới đây, hãy viết một **Báo cáo Phản biện & Đánh giá Chuyên sâu** bằng tiếng Việt (định dạng Markdown):
 
 ### 1. Điểm mạnh & Giá trị cốt lõi (Strengths)
 - Những luận điểm, dữ liệu hoặc phương pháp nào được trình bày thuyết phục nhất?
@@ -146,25 +184,22 @@ Dựa trên nội dung tài liệu dưới đây, hãy viết một **Báo cáo 
 NỘI DUNG TÀI LIỆU:
 {context}
 """
-        if hasattr(self.llm, "generate_text"):
-            res = self.llm.generate_text(prompt)
-        else:
-            chunks = self.llm.generate(prompt)
-            res = "".join(chunks).strip() if hasattr(chunks, "__iter__") and not isinstance(chunks, str) else str(chunks)
+        res = self._call_llm(prompt, system_prompt, llm_kwargs)
         return {"content": res}
 
     def generate_action_plan(
         self,
         source_filter: Optional[str] = None,
-        selected_documents: Optional[List[str]] = None
+        selected_documents: Optional[List[str]] = None,
+        **llm_kwargs
     ) -> Dict[str, Any]:
-        logger.info(f"Đang tạo Action Plan (source={source_filter}, selected_docs={selected_documents})")
+        logger.info(f"Đang tạo Action Plan (nb={self.notebook_id}, selected={selected_documents})")
         context = self._collect_context(source_filter=source_filter, selected_documents=selected_documents)
-        if not context:
-            return {"error": "Chưa có tài liệu nào để lập kế hoạch hành động."}
+        if not context.strip():
+            return {"error": "Chưa có tài liệu nào được chọn hoặc nạp vào sổ tay để lập kế hoạch hành động."}
 
-        prompt = f"""Bạn là Chuyên gia Tư vấn Triển khai Dự án.
-Từ nội dung tài liệu dưới đây, hãy chuyển hóa toàn bộ kiến thức lý thuyết thành **Kế hoạch Hành động Thực tiễn (Action Plan)** bằng tiếng Việt (định dạng Markdown):
+        system_prompt = "Bạn là Chuyên gia Tư vấn Quản trị & Triển khai Dự án thực tiễn."
+        prompt = f"""Từ nội dung tài liệu dưới đây, hãy chuyển hóa toàn bộ kiến thức lý thuyết thành **Kế hoạch Hành động Thực tiễn (Action Plan)** bằng tiếng Việt (định dạng Markdown):
 
 ### 1. Mục tiêu Trọng tâm (Key Objectives)
 - Tóm tắt 3 mục tiêu thực tiễn nhất rút ra từ tài liệu.
@@ -178,12 +213,10 @@ Trình bày dưới dạng Bảng Markdown gồm các cột: `Giai đoạn` | `H
 NỘI DUNG TÀI LIỆU:
 {context}
 """
-        if hasattr(self.llm, "generate_text"):
-            res = self.llm.generate_text(prompt)
-        else:
-            chunks = self.llm.generate(prompt)
-            res = "".join(chunks).strip() if hasattr(chunks, "__iter__") and not isinstance(chunks, str) else str(chunks)
+        res = self._call_llm(prompt, system_prompt, llm_kwargs)
         return {"content": res}
+
+
 
 
 # ==============================================================================
@@ -330,6 +363,7 @@ class ChatRequest(BaseModel):
     provider: Optional[str] = None
     model_name: Optional[str] = None
     selected_documents: Optional[List[str]] = None
+    persona: Optional[str] = "strict"  # 'strict' | 'socratic' | 'critic'
 
 class IngestTextRequest(BaseModel):
     notebook_id: str
@@ -448,6 +482,32 @@ def get_notebook_id(request: Request, notebook_id: Optional[str] = None) -> str:
         return header_val
     return "default"
 
+NOTES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "storage", "notes")
+os.makedirs(NOTES_DIR, exist_ok=True)
+
+def _get_notes_path(notebook_id: str) -> str:
+    safe_id = "".join([c for c in notebook_id if c.isalnum() or c in ("-", "_")]) or "default"
+    return os.path.join(NOTES_DIR, f"{safe_id}_notes.json")
+
+def _load_notes(notebook_id: str) -> List[Dict[str, Any]]:
+    path = _get_notes_path(notebook_id)
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        logger.error(f"Lỗi khi đọc ghi chú notebook {notebook_id}: {e}")
+        return []
+
+def _save_notes(notebook_id: str, notes: List[Dict[str, Any]]) -> None:
+    path = _get_notes_path(notebook_id)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(notes, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f"Lỗi khi lưu ghi chú notebook {notebook_id}: {e}")
+
 _NOTEBOOK_CACHE: Dict[str, Dict[str, Any]] = {}
 
 def get_notebook_engines(notebook_id: str = "default") -> Dict[str, Any]:
@@ -455,7 +515,7 @@ def get_notebook_engines(notebook_id: str = "default") -> Dict[str, Any]:
     sm = get_session_manager()
     notebook = sm.get_notebook(notebook_id) or {}
     provider, model_name, api_key, base_url, is_private = resolve_llm_config(notebook)
-    llm = LLMEngine(provider=provider, model_name=model_name, api_key=api_key, base_url=base_url)
+    llm = get_llm_engine()
     store = get_vector_store()
     search = get_search_engine()
     
@@ -463,12 +523,19 @@ def get_notebook_engines(notebook_id: str = "default") -> Dict[str, Any]:
         "store": store,
         "search": search,
         "llm": llm,
+        "llm_kwargs": {
+            "provider": provider,
+            "model_name": model_name,
+            "api_key": api_key,
+            "base_url": base_url,
+            "is_private": is_private,
+        },
         "guide": GuideGenerator(llm, sm),
-        "mindmap": MindmapGenerator(llm, store),
-        "podcast": PodcastGenerator(llm, store),
-        "timeline": TimelineOutlineGenerator(llm, store),
-        "comparator": DocComparator(llm, store),
-        "critique": CritiqueAndActionGenerator(llm, store, notebook_id=notebook_id),
+        "mindmap": MindmapGenerator(llm, sm),
+        "podcast": PodcastGenerator(llm, sm),
+        "timeline": TimelineOutlineGenerator(llm, sm),
+        "comparator": DocComparator(llm, sm),
+        "critique": CritiqueAndActionGenerator(llm, store, sm, notebook_id=notebook_id),
     }
     return _NOTEBOOK_CACHE[notebook_id]
 
@@ -740,6 +807,12 @@ def delete_notebook(notebook_id: str):
     sm.delete_notebook(notebook_id)
     store = get_vector_store()
     store.delete_notebook_chunks(notebook_id)
+    notes_file = _get_notes_path(notebook_id)
+    if os.path.exists(notes_file):
+        try:
+            os.remove(notes_file)
+        except Exception as e:
+            logger.warning(f"Không thể xóa file ghi chú {notes_file}: {e}")
     return {"status": "success"}
 
 # --- Document Management ---
@@ -883,10 +956,25 @@ async def chat_endpoint(request: ChatRequest, raw_request: Request):
                 chat_history=prior_history,
                 document_names=active_doc_names
             )
-            system_prompt = (
-                "Bạn là NotebookLM Mini, một trợ lý học tập và nghiên cứu AI thông minh, chuẩn xác. "
-                "Hãy đọc hiểu sâu sắc tài liệu người dùng và trả lời có cấu trúc mạch lạc, khoa học."
-            )
+            persona = getattr(request, "persona", "strict") or "strict"
+            persona_prompts = {
+                "strict": (
+                    "Bạn là NotebookLM Mini, một trợ lý học tập và nghiên cứu AI thông minh, chuẩn xác. "
+                    "Hãy đọc hiểu sâu sắc tài liệu người dùng và trả lời có cấu trúc mạch lạc, khoa học. "
+                    "Trả lời chính xác và chỉ dựa vào tài liệu được cung cấp, không suy diễn ngoài lề."
+                ),
+                "socratic": (
+                    "Bạn là một gia sư Socratic thông thái, tận tâm. "
+                    "Thay vì trả lời cụt lủn hay đưa ra đáp án trực tiếp ngay lập tức, hãy hướng dẫn người học tư duy từng bước. "
+                    "Đặt câu hỏi gợi mở sâu sắc, phân tích vấn đề và giúp người học tự khám phá tri thức dựa trên tài liệu được cung cấp."
+                ),
+                "critic": (
+                    "Bạn là một chuyên gia phản biện học thuật sắc bén, khách quan. "
+                    "Hãy đánh giá đa chiều vấn đề dựa trên tài liệu: chỉ ra các giả định ngầm, phân tích điểm mạnh, "
+                    "phát hiện các lỗ hổng lập luận hoặc hạn chế của tài liệu đối với câu hỏi đặt ra, giúp người học có cái nhìn phản tư sâu sắc."
+                )
+            }
+            system_prompt = persona_prompts.get(persona, persona_prompts["strict"])
             
             display_model = model_name or ""
             yield f"data: {json.dumps({'type': 'status', 'message': f'{provider.upper()} ({display_model}) đang suy nghĩ...'})}\n\n"
@@ -1524,6 +1612,7 @@ def export_notebook_endpoint(notebook_id: str):
                     "metadata": {"filename": fname}
                 })
     data["chunks"] = chunks_export
+    data["pinned_notes"] = _load_notes(notebook_id)
     return data
 
 @app.post("/api/notebooks/import")
@@ -1544,6 +1633,10 @@ async def import_notebook_endpoint(payload: Dict[str, Any]):
         if formatted_chunks:
             vs = get_vector_store()
             vs.index_chunks(formatted_chunks)
+
+    imported_notes = payload.get("pinned_notes", [])
+    if imported_notes and isinstance(imported_notes, list):
+        _save_notes(new_id, imported_notes)
 
     return {"status": "success", "notebook_id": new_id}
 
@@ -1609,7 +1702,12 @@ async def create_critique(
             target_nb = request.headers.get("x-notebook-id")
     engines = get_notebook_engines(target_nb)
     source_filter = req.source_filter or (req.selected_documents[0] if req.selected_documents and len(req.selected_documents) == 1 else None)
-    return engines["critique"].generate_critique(source_filter=source_filter, selected_documents=req.selected_documents)
+    llm_kwargs = engines.get("llm_kwargs", {})
+    return engines["critique"].generate_critique(
+        source_filter=source_filter,
+        selected_documents=req.selected_documents,
+        **llm_kwargs
+    )
 
 
 @app.post("/api/studio/action-plan")
@@ -1628,37 +1726,15 @@ async def create_action_plan(
             target_nb = request.headers.get("x-notebook-id")
     engines = get_notebook_engines(target_nb)
     source_filter = req.source_filter or (req.selected_documents[0] if req.selected_documents and len(req.selected_documents) == 1 else None)
-    return engines["critique"].generate_action_plan(source_filter=source_filter, selected_documents=req.selected_documents)
+    llm_kwargs = engines.get("llm_kwargs", {})
+    return engines["critique"].generate_action_plan(
+        source_filter=source_filter,
+        selected_documents=req.selected_documents,
+        **llm_kwargs
+    )
 
 
 # --- Pinned Notes (Bảng Ghi chú Nghiên cứu) APIs ---
-NOTES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "storage", "notes")
-os.makedirs(NOTES_DIR, exist_ok=True)
-
-def _get_notes_path(notebook_id: str) -> str:
-    safe_id = "".join([c for c in notebook_id if c.isalnum() or c in ("-", "_")]) or "default"
-    return os.path.join(NOTES_DIR, f"{safe_id}_notes.json")
-
-def _load_notes(notebook_id: str) -> List[Dict[str, Any]]:
-    path = _get_notes_path(notebook_id)
-    if not os.path.exists(path):
-        return []
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        logger.error(f"Lỗi khi đọc ghi chú notebook {notebook_id}: {e}")
-        return []
-
-def _save_notes(notebook_id: str, notes: List[Dict[str, Any]]) -> None:
-    path = _get_notes_path(notebook_id)
-    try:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(notes, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        logger.error(f"Lỗi khi lưu ghi chú notebook {notebook_id}: {e}")
-
-
 class NoteItemRequest(BaseModel):
     content: str
     title: Optional[str] = "Ghi chú"
@@ -1699,6 +1775,66 @@ def delete_notebook_note(notebook_id: str, note_id: str):
     return {"message": "Đã xóa ghi chú", "notes": new_notes}
 
 
+@app.post("/api/notebooks/{notebook_id}/notes/synthesize")
+def synthesize_notebook_notes(notebook_id: str):
+    """Tổng hợp tất cả các ghi chú đã ghim thành Báo cáo chuyên đề (Executive Synthesis Report)."""
+    notes = _load_notes(notebook_id)
+    if not notes or len(notes) < 2:
+        raise HTTPException(status_code=400, detail="Cần ít nhất 2 ghi chú để tiến hành tổng hợp báo cáo.")
+    
+    engines = get_notebook_engines(notebook_id)
+    llm = engines["llm"]
+    llm_kwargs = dict(engines.get("llm_kwargs", {}))
+    
+    notes_context = "\n\n".join([
+        f"--- GHI CHÚ #{i+1}: {n.get('title', 'Không đề')} ({n.get('created_at', '')}) ---\n{n.get('content', '')}"
+        for i, n in enumerate(notes)
+    ])
+    
+    prompt = f"""Dưới đây là tập hợp các ghi chú nghiên cứu được người dùng chọn lọc và ghim lại trong quá trình làm việc:
+
+{notes_context}
+
+Dựa trên toàn bộ các ghi chú này, hãy đóng vai một Chuyên gia phân tích và Nghiên cứu cao cấp (Senior Research Analyst). Hãy tổng hợp, liên kết và chuyển hóa các mẩu ghi chú rời rạc thành một BÁO CÁO TỔNG HỢP CHUYÊN ĐỀ (Executive Synthesis Report) hoàn chỉnh, sâu sắc và chuyên nghiệp.
+
+Báo cáo cần trình bày bằng Markdown chuẩn với cấu trúc sau:
+# 📑 BÁO CÁO TỔNG HỢP TRI THỨC NGHIÊN CỨU
+
+## 1. 🎯 Tóm tắt Điều hành (Executive Summary)
+- Tóm lược cô đọng các phát hiện cốt lõi từ các ghi chú.
+
+## 2. 🔗 Phân tích Chủ đề & Liên kết Luận điểm (Key Themes & Connections)
+- Tổng hợp các luận điểm chung, chỉ ra mối liên hệ hoặc mâu thuẫn giữa các ghi chú.
+
+## 3. 💡 Phát hiện Chuyên sâu & Insight Mới (Key Insights & Revelations)
+- Những đúc kết giá trị nhất rút ra từ sự kết hợp của các ghi chú này.
+
+## 4. 🚀 Khuyến nghị & Kế hoạch Hành động (Next Actions & Recommendations)
+- Các bước tiếp theo cần triển khai hoặc nghiên cứu thêm.
+
+Hãy viết bằng tiếng Việt lưu loát, khoa học, định dạng tiêu đề, bullet points và bảng biểu nếu phù hợp."""
+
+    system_prompt = (
+        "Bạn là Senior Research Analyst kiêm Giám đốc Tri thức. "
+        "Nhiệm vụ của bạn là tổng hợp các mẩu thông tin, ghi chú rời rạc thành báo cáo phân tích chiến lược, logic và sắc bén."
+    )
+    
+    try:
+        report = llm.generate_text(
+            prompt=prompt,
+            system_prompt=system_prompt,
+            **llm_kwargs
+        )
+        return {
+            "title": "Báo cáo Tổng hợp Ghi chú Nghiên cứu",
+            "markdown": report,
+            "notes_count": len(notes)
+        }
+    except Exception as e:
+        logger.error(f"Lỗi khi tổng hợp ghi chú notebook {notebook_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Không thể tổng hợp báo cáo ghi chú: {str(e)}")
+
+
 # --- Phục vụ Giao Diện React Frontend (SPA) ---
 FRONTEND_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "frontend", "dist")
 
@@ -1716,6 +1852,8 @@ else:
     @app.get("/")
     def no_frontend():
         return {"message": "Hệ thống đang chạy ngầm. Giao diện React chưa được build (thiếu thư mục frontend/dist)."}
+
+
 
 
 # ==============================================================================
@@ -2464,6 +2602,8 @@ export default function QuizletModal({
 }
 
 
+
+
 # ==============================================================================
 # FILE: frontend/src/pages/Dashboard.jsx
 # ==============================================================================
@@ -3024,6 +3164,8 @@ function Dashboard() {
 export default Dashboard;
 
 
+
+
 # ==============================================================================
 # FILE: frontend/src/pages/Studio.jsx
 # ==============================================================================
@@ -3215,6 +3357,20 @@ function Studio() {
   const [newNoteTitle, setNewNoteTitle] = useState('');
   const [newNoteContent, setNewNoteContent] = useState('');
   const [savingNote, setSavingNote] = useState(false);
+  const [isSynthesizingNotes, setIsSynthesizingNotes] = useState(false);
+  const [convertingNoteId, setConvertingNoteId] = useState(null);
+
+  // Toast Notification State
+  const [toastMsg, setToastMsg] = useState(null);
+  const toastTimeoutRef = useRef(null);
+
+  const showToast = (msg, duration = 3000) => {
+    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    setToastMsg(msg);
+    toastTimeoutRef.current = setTimeout(() => {
+      setToastMsg(null);
+    }, duration);
+  };
 
   const fetchPinnedNotes = async (nbId) => {
     if (!nbId) return;
@@ -3241,11 +3397,11 @@ function Studio() {
       if (res.ok) {
         const data = await res.json();
         setPinnedNotes(data.notes || []);
-        alert("Đã ghim ghi chú thành công!");
+        showToast("📌 Đã ghim vào Bảng Ghi chú!");
       }
     } catch (err) {
       console.error("Lỗi khi ghim ghi chú:", err);
-      alert("Không thể ghim ghi chú: " + err.message);
+      showToast("❌ Không thể ghim ghi chú: " + err.message);
     }
   };
 
@@ -3259,9 +3415,78 @@ function Studio() {
       if (res.ok) {
         const data = await res.json();
         setPinnedNotes(data.notes || []);
+        showToast("🗑️ Đã xóa ghi chú");
       }
     } catch (err) {
       console.error("Lỗi xóa ghi chú:", err);
+    }
+  };
+
+  const handleSynthesizeNotes = async () => {
+    const targetNbId = activeNotebook?.id || id;
+    if (!targetNbId || pinnedNotes.length < 2) return;
+    setIsSynthesizingNotes(true);
+    try {
+      const res = await fetch(`/api/notebooks/${targetNbId}/notes/synthesize`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-notebook-id': targetNbId
+        }
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || 'Không thể tổng hợp ghi chú');
+      }
+      const data = await res.json();
+      setCritiqueModal({
+        isOpen: true,
+        type: 'synthesis',
+        title: data.title || 'Báo cáo Tổng hợp Ghi chú Nghiên cứu',
+        content: data.markdown || '',
+        loading: false
+      });
+      setShowNotesModal(false);
+      showToast('✨ Đã tổng hợp Báo cáo Chuyên đề thành công!');
+    } catch (err) {
+      console.error("Lỗi tổng hợp ghi chú:", err);
+      showToast(`❌ Lỗi: ${err.message || 'Không thể tổng hợp ghi chú'}`);
+    } finally {
+      setIsSynthesizingNotes(false);
+    }
+  };
+
+  const handleConvertNoteToSource = async (note) => {
+    const targetNbId = activeNotebook?.id || id;
+    if (!targetNbId || !note) return;
+    setConvertingNoteId(note.id);
+    try {
+      const rawTitle = (note.title || 'Ghi chú').trim();
+      const docTitle = rawTitle.endsWith('.md') || rawTitle.endsWith('.txt') ? rawTitle : `${rawTitle}.md`;
+      const res = await fetch('/api/ingest/text', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-notebook-id': targetNbId
+        },
+        body: JSON.stringify({
+          notebook_id: targetNbId,
+          title: docTitle,
+          text: note.content
+        })
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || 'Không thể nạp ghi chú thành nguồn');
+      }
+      await fetchDocuments();
+      setSelectedDocs(prev => new Set([...prev, docTitle]));
+      showToast(`✅ Đã nạp "${docTitle}" thành tài liệu nguồn RAG!`);
+    } catch (err) {
+      console.error("Lỗi chuyển ghi chú thành nguồn:", err);
+      showToast(`❌ Lỗi: ${err.message || 'Không thể chuyển ghi chú'}`);
+    } finally {
+      setConvertingNoteId(null);
     }
   };
 
@@ -4191,9 +4416,6 @@ function Studio() {
     try {
       setMessages(prev => [...prev, { role: 'assistant', content: '', citations: [] }]);
       
-      const personaPrefix = PERSONA_CONFIGS[chatPersona]?.prefix || '';
-      const effectiveQuery = personaPrefix ? `${personaPrefix}${userMsg}` : userMsg;
-
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 
@@ -4202,7 +4424,8 @@ function Studio() {
         },
         signal: abortControllerRef.current.signal,
         body: JSON.stringify({ 
-          query: effectiveQuery, 
+          query: userMsg, 
+          persona: chatPersona,
           notebook_id: activeNotebook.id,
           provider: activeNotebook.provider,
           model_name: activeNotebook.model_name,
@@ -6280,10 +6503,18 @@ function Studio() {
       {critiqueModal.isOpen && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in font-sans">
           <div className="bg-[#181a20] rounded-2xl max-w-3xl w-full max-h-[85vh] flex flex-col shadow-2xl border border-white/15 overflow-hidden">
-            <div className={`p-4 border-b border-white/10 flex items-center justify-between ${critiqueModal.type === 'critique' ? 'bg-rose-500/10' : 'bg-lime-500/10'}`}>
+            <div className={`p-4 border-b border-white/10 flex items-center justify-between ${
+              critiqueModal.type === 'critique' 
+                ? 'bg-rose-500/10' 
+                : critiqueModal.type === 'synthesis'
+                ? 'bg-purple-500/10'
+                : 'bg-lime-500/10'
+            }`}>
               <div className="flex items-center space-x-2.5 truncate">
                 {critiqueModal.type === 'critique' ? (
                   <ShieldAlert className="w-5 h-5 text-rose-400 shrink-0" />
+                ) : critiqueModal.type === 'synthesis' ? (
+                  <Sparkles className="w-5 h-5 text-purple-400 shrink-0" />
                 ) : (
                   <ClipboardCheck className="w-5 h-5 text-lime-400 shrink-0" />
                 )}
@@ -6305,7 +6536,7 @@ function Studio() {
                       type="button"
                       onClick={() => {
                         navigator.clipboard.writeText(critiqueModal.content);
-                        alert("Đã sao chép nội dung vào Clipboard!");
+                        showToast("📋 Đã sao chép nội dung vào Clipboard!");
                       }}
                       className="p-1.5 text-gray-400 hover:text-white rounded-lg hover:bg-white/10 transition cursor-pointer"
                       title="Sao chép nội dung"
@@ -6347,13 +6578,27 @@ function Studio() {
                 <Bookmark className="w-5 h-5 text-amber-500" />
                 <h3 className="font-bold text-base">Bảng Ghi chú Nghiên cứu ({pinnedNotes.length})</h3>
               </div>
-              <button 
-                type="button"
-                onClick={() => setShowNotesModal(false)} 
-                className={`p-1.5 rounded-lg transition cursor-pointer ${isDark ? 'text-gray-400 hover:text-white' : 'text-slate-400 hover:text-slate-800'}`}
-              >
-                <X className="w-5 h-5" />
-              </button>
+              <div className="flex items-center gap-2">
+                {pinnedNotes.length >= 2 && (
+                  <button
+                    type="button"
+                    onClick={handleSynthesizeNotes}
+                    disabled={isSynthesizingNotes}
+                    className="px-3 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-semibold rounded-xl flex items-center gap-1.5 shadow transition disabled:opacity-50 cursor-pointer"
+                    title="Tổng hợp các ghi chú thành Báo cáo chuyên đề AI"
+                  >
+                    {isSynthesizingNotes ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                    <span>{isSynthesizingNotes ? 'Đang tổng hợp...' : '✨ Tổng hợp Báo cáo AI'}</span>
+                  </button>
+                )}
+                <button 
+                  type="button"
+                  onClick={() => setShowNotesModal(false)} 
+                  className={`p-1.5 rounded-lg transition cursor-pointer ${isDark ? 'text-gray-400 hover:text-white' : 'text-slate-400 hover:text-slate-800'}`}
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
 
             <div className={`p-4 border-b space-y-2.5 ${isDark ? 'border-white/10 bg-white/[0.01]' : 'border-slate-200 bg-slate-50/50'}`}>
@@ -6409,14 +6654,28 @@ function Studio() {
                     }`}
                   >
                     <div className="flex items-center justify-between mb-2">
-                      <span className="font-semibold text-xs text-amber-500">{note.title || 'Ghi chú'}</span>
+                      <span className="font-semibold text-xs text-amber-500 truncate max-w-[200px]">{note.title || 'Ghi chú'}</span>
                       <div className="flex items-center gap-1.5">
                         <span className="text-[10px] text-gray-500">{note.created_at}</span>
                         <button
                           type="button"
+                          onClick={() => handleConvertNoteToSource(note)}
+                          disabled={convertingNoteId === note.id}
+                          className="px-2 py-0.5 rounded text-[11px] font-medium bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/30 flex items-center gap-1 transition cursor-pointer disabled:opacity-50"
+                          title="Chuyển ghi chú này thành tài liệu nguồn RAG"
+                        >
+                          {convertingNoteId === note.id ? (
+                            <Loader className="w-2.5 h-2.5 animate-spin" />
+                          ) : (
+                            <Plus size={11} />
+                          )}
+                          <span>Thành nguồn</span>
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => {
                             navigator.clipboard.writeText(note.content);
-                            alert("Đã sao chép ghi chú!");
+                            showToast("📋 Đã sao chép ghi chú!");
                           }}
                           className={`p-1 rounded cursor-pointer ${isDark ? 'text-gray-400 hover:text-white' : 'text-slate-500 hover:text-slate-900'}`}
                           title="Sao chép"
@@ -6444,8 +6703,18 @@ function Studio() {
         </div>
       )}
 
+      {/* Toast Notification */}
+      {toastMsg && (
+        <div className="fixed bottom-6 right-6 z-[9999] flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-900/95 text-white text-xs font-medium border border-white/20 shadow-2xl backdrop-blur-md animate-fade-in pointer-events-none">
+          <span>{toastMsg}</span>
+        </div>
+      )}
+
     </div>
   );
 }
 
 export default Studio;
+
+
+

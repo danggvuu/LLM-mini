@@ -138,6 +138,7 @@ class ChatRequest(BaseModel):
     provider: Optional[str] = None
     model_name: Optional[str] = None
     selected_documents: Optional[List[str]] = None
+    persona: Optional[str] = "strict"  # 'strict' | 'socratic' | 'critic'
 
 class IngestTextRequest(BaseModel):
     notebook_id: str
@@ -256,6 +257,32 @@ def get_notebook_id(request: Request, notebook_id: Optional[str] = None) -> str:
         return header_val
     return "default"
 
+NOTES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "storage", "notes")
+os.makedirs(NOTES_DIR, exist_ok=True)
+
+def _get_notes_path(notebook_id: str) -> str:
+    safe_id = "".join([c for c in notebook_id if c.isalnum() or c in ("-", "_")]) or "default"
+    return os.path.join(NOTES_DIR, f"{safe_id}_notes.json")
+
+def _load_notes(notebook_id: str) -> List[Dict[str, Any]]:
+    path = _get_notes_path(notebook_id)
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        logger.error(f"Lỗi khi đọc ghi chú notebook {notebook_id}: {e}")
+        return []
+
+def _save_notes(notebook_id: str, notes: List[Dict[str, Any]]) -> None:
+    path = _get_notes_path(notebook_id)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(notes, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f"Lỗi khi lưu ghi chú notebook {notebook_id}: {e}")
+
 _NOTEBOOK_CACHE: Dict[str, Dict[str, Any]] = {}
 
 def get_notebook_engines(notebook_id: str = "default") -> Dict[str, Any]:
@@ -263,7 +290,7 @@ def get_notebook_engines(notebook_id: str = "default") -> Dict[str, Any]:
     sm = get_session_manager()
     notebook = sm.get_notebook(notebook_id) or {}
     provider, model_name, api_key, base_url, is_private = resolve_llm_config(notebook)
-    llm = LLMEngine(provider=provider, model_name=model_name, api_key=api_key, base_url=base_url)
+    llm = get_llm_engine()
     store = get_vector_store()
     search = get_search_engine()
     
@@ -271,12 +298,19 @@ def get_notebook_engines(notebook_id: str = "default") -> Dict[str, Any]:
         "store": store,
         "search": search,
         "llm": llm,
+        "llm_kwargs": {
+            "provider": provider,
+            "model_name": model_name,
+            "api_key": api_key,
+            "base_url": base_url,
+            "is_private": is_private,
+        },
         "guide": GuideGenerator(llm, sm),
-        "mindmap": MindmapGenerator(llm, store),
-        "podcast": PodcastGenerator(llm, store),
-        "timeline": TimelineOutlineGenerator(llm, store),
-        "comparator": DocComparator(llm, store),
-        "critique": CritiqueAndActionGenerator(llm, store, notebook_id=notebook_id),
+        "mindmap": MindmapGenerator(llm, sm),
+        "podcast": PodcastGenerator(llm, sm),
+        "timeline": TimelineOutlineGenerator(llm, sm),
+        "comparator": DocComparator(llm, sm),
+        "critique": CritiqueAndActionGenerator(llm, store, sm, notebook_id=notebook_id),
     }
     return _NOTEBOOK_CACHE[notebook_id]
 
@@ -548,6 +582,12 @@ def delete_notebook(notebook_id: str):
     sm.delete_notebook(notebook_id)
     store = get_vector_store()
     store.delete_notebook_chunks(notebook_id)
+    notes_file = _get_notes_path(notebook_id)
+    if os.path.exists(notes_file):
+        try:
+            os.remove(notes_file)
+        except Exception as e:
+            logger.warning(f"Không thể xóa file ghi chú {notes_file}: {e}")
     return {"status": "success"}
 
 # --- Document Management ---
@@ -691,10 +731,25 @@ async def chat_endpoint(request: ChatRequest, raw_request: Request):
                 chat_history=prior_history,
                 document_names=active_doc_names
             )
-            system_prompt = (
-                "Bạn là NotebookLM Mini, một trợ lý học tập và nghiên cứu AI thông minh, chuẩn xác. "
-                "Hãy đọc hiểu sâu sắc tài liệu người dùng và trả lời có cấu trúc mạch lạc, khoa học."
-            )
+            persona = getattr(request, "persona", "strict") or "strict"
+            persona_prompts = {
+                "strict": (
+                    "Bạn là NotebookLM Mini, một trợ lý học tập và nghiên cứu AI thông minh, chuẩn xác. "
+                    "Hãy đọc hiểu sâu sắc tài liệu người dùng và trả lời có cấu trúc mạch lạc, khoa học. "
+                    "Trả lời chính xác và chỉ dựa vào tài liệu được cung cấp, không suy diễn ngoài lề."
+                ),
+                "socratic": (
+                    "Bạn là một gia sư Socratic thông thái, tận tâm. "
+                    "Thay vì trả lời cụt lủn hay đưa ra đáp án trực tiếp ngay lập tức, hãy hướng dẫn người học tư duy từng bước. "
+                    "Đặt câu hỏi gợi mở sâu sắc, phân tích vấn đề và giúp người học tự khám phá tri thức dựa trên tài liệu được cung cấp."
+                ),
+                "critic": (
+                    "Bạn là một chuyên gia phản biện học thuật sắc bén, khách quan. "
+                    "Hãy đánh giá đa chiều vấn đề dựa trên tài liệu: chỉ ra các giả định ngầm, phân tích điểm mạnh, "
+                    "phát hiện các lỗ hổng lập luận hoặc hạn chế của tài liệu đối với câu hỏi đặt ra, giúp người học có cái nhìn phản tư sâu sắc."
+                )
+            }
+            system_prompt = persona_prompts.get(persona, persona_prompts["strict"])
             
             display_model = model_name or ""
             yield f"data: {json.dumps({'type': 'status', 'message': f'{provider.upper()} ({display_model}) đang suy nghĩ...'})}\n\n"
@@ -1332,6 +1387,7 @@ def export_notebook_endpoint(notebook_id: str):
                     "metadata": {"filename": fname}
                 })
     data["chunks"] = chunks_export
+    data["pinned_notes"] = _load_notes(notebook_id)
     return data
 
 @app.post("/api/notebooks/import")
@@ -1352,6 +1408,10 @@ async def import_notebook_endpoint(payload: Dict[str, Any]):
         if formatted_chunks:
             vs = get_vector_store()
             vs.index_chunks(formatted_chunks)
+
+    imported_notes = payload.get("pinned_notes", [])
+    if imported_notes and isinstance(imported_notes, list):
+        _save_notes(new_id, imported_notes)
 
     return {"status": "success", "notebook_id": new_id}
 
@@ -1417,7 +1477,12 @@ async def create_critique(
             target_nb = request.headers.get("x-notebook-id")
     engines = get_notebook_engines(target_nb)
     source_filter = req.source_filter or (req.selected_documents[0] if req.selected_documents and len(req.selected_documents) == 1 else None)
-    return engines["critique"].generate_critique(source_filter=source_filter, selected_documents=req.selected_documents)
+    llm_kwargs = engines.get("llm_kwargs", {})
+    return engines["critique"].generate_critique(
+        source_filter=source_filter,
+        selected_documents=req.selected_documents,
+        **llm_kwargs
+    )
 
 
 @app.post("/api/studio/action-plan")
@@ -1436,37 +1501,15 @@ async def create_action_plan(
             target_nb = request.headers.get("x-notebook-id")
     engines = get_notebook_engines(target_nb)
     source_filter = req.source_filter or (req.selected_documents[0] if req.selected_documents and len(req.selected_documents) == 1 else None)
-    return engines["critique"].generate_action_plan(source_filter=source_filter, selected_documents=req.selected_documents)
+    llm_kwargs = engines.get("llm_kwargs", {})
+    return engines["critique"].generate_action_plan(
+        source_filter=source_filter,
+        selected_documents=req.selected_documents,
+        **llm_kwargs
+    )
 
 
 # --- Pinned Notes (Bảng Ghi chú Nghiên cứu) APIs ---
-NOTES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "storage", "notes")
-os.makedirs(NOTES_DIR, exist_ok=True)
-
-def _get_notes_path(notebook_id: str) -> str:
-    safe_id = "".join([c for c in notebook_id if c.isalnum() or c in ("-", "_")]) or "default"
-    return os.path.join(NOTES_DIR, f"{safe_id}_notes.json")
-
-def _load_notes(notebook_id: str) -> List[Dict[str, Any]]:
-    path = _get_notes_path(notebook_id)
-    if not os.path.exists(path):
-        return []
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        logger.error(f"Lỗi khi đọc ghi chú notebook {notebook_id}: {e}")
-        return []
-
-def _save_notes(notebook_id: str, notes: List[Dict[str, Any]]) -> None:
-    path = _get_notes_path(notebook_id)
-    try:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(notes, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        logger.error(f"Lỗi khi lưu ghi chú notebook {notebook_id}: {e}")
-
-
 class NoteItemRequest(BaseModel):
     content: str
     title: Optional[str] = "Ghi chú"
@@ -1505,6 +1548,66 @@ def delete_notebook_note(notebook_id: str, note_id: str):
     new_notes = [n for n in notes if n.get("id") != note_id]
     _save_notes(notebook_id, new_notes)
     return {"message": "Đã xóa ghi chú", "notes": new_notes}
+
+
+@app.post("/api/notebooks/{notebook_id}/notes/synthesize")
+def synthesize_notebook_notes(notebook_id: str):
+    """Tổng hợp tất cả các ghi chú đã ghim thành Báo cáo chuyên đề (Executive Synthesis Report)."""
+    notes = _load_notes(notebook_id)
+    if not notes or len(notes) < 2:
+        raise HTTPException(status_code=400, detail="Cần ít nhất 2 ghi chú để tiến hành tổng hợp báo cáo.")
+    
+    engines = get_notebook_engines(notebook_id)
+    llm = engines["llm"]
+    llm_kwargs = dict(engines.get("llm_kwargs", {}))
+    
+    notes_context = "\n\n".join([
+        f"--- GHI CHÚ #{i+1}: {n.get('title', 'Không đề')} ({n.get('created_at', '')}) ---\n{n.get('content', '')}"
+        for i, n in enumerate(notes)
+    ])
+    
+    prompt = f"""Dưới đây là tập hợp các ghi chú nghiên cứu được người dùng chọn lọc và ghim lại trong quá trình làm việc:
+
+{notes_context}
+
+Dựa trên toàn bộ các ghi chú này, hãy đóng vai một Chuyên gia phân tích và Nghiên cứu cao cấp (Senior Research Analyst). Hãy tổng hợp, liên kết và chuyển hóa các mẩu ghi chú rời rạc thành một BÁO CÁO TỔNG HỢP CHUYÊN ĐỀ (Executive Synthesis Report) hoàn chỉnh, sâu sắc và chuyên nghiệp.
+
+Báo cáo cần trình bày bằng Markdown chuẩn với cấu trúc sau:
+# 📑 BÁO CÁO TỔNG HỢP TRI THỨC NGHIÊN CỨU
+
+## 1. 🎯 Tóm tắt Điều hành (Executive Summary)
+- Tóm lược cô đọng các phát hiện cốt lõi từ các ghi chú.
+
+## 2. 🔗 Phân tích Chủ đề & Liên kết Luận điểm (Key Themes & Connections)
+- Tổng hợp các luận điểm chung, chỉ ra mối liên hệ hoặc mâu thuẫn giữa các ghi chú.
+
+## 3. 💡 Phát hiện Chuyên sâu & Insight Mới (Key Insights & Revelations)
+- Những đúc kết giá trị nhất rút ra từ sự kết hợp của các ghi chú này.
+
+## 4. 🚀 Khuyến nghị & Kế hoạch Hành động (Next Actions & Recommendations)
+- Các bước tiếp theo cần triển khai hoặc nghiên cứu thêm.
+
+Hãy viết bằng tiếng Việt lưu loát, khoa học, định dạng tiêu đề, bullet points và bảng biểu nếu phù hợp."""
+
+    system_prompt = (
+        "Bạn là Senior Research Analyst kiêm Giám đốc Tri thức. "
+        "Nhiệm vụ của bạn là tổng hợp các mẩu thông tin, ghi chú rời rạc thành báo cáo phân tích chiến lược, logic và sắc bén."
+    )
+    
+    try:
+        report = llm.generate_text(
+            prompt=prompt,
+            system_prompt=system_prompt,
+            **llm_kwargs
+        )
+        return {
+            "title": "Báo cáo Tổng hợp Ghi chú Nghiên cứu",
+            "markdown": report,
+            "notes_count": len(notes)
+        }
+    except Exception as e:
+        logger.error(f"Lỗi khi tổng hợp ghi chú notebook {notebook_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Không thể tổng hợp báo cáo ghi chú: {str(e)}")
 
 
 # --- Phục vụ Giao Diện React Frontend (SPA) ---

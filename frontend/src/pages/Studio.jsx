@@ -185,6 +185,20 @@ function Studio() {
   const [newNoteTitle, setNewNoteTitle] = useState('');
   const [newNoteContent, setNewNoteContent] = useState('');
   const [savingNote, setSavingNote] = useState(false);
+  const [isSynthesizingNotes, setIsSynthesizingNotes] = useState(false);
+  const [convertingNoteId, setConvertingNoteId] = useState(null);
+
+  // Toast Notification State
+  const [toastMsg, setToastMsg] = useState(null);
+  const toastTimeoutRef = useRef(null);
+
+  const showToast = (msg, duration = 3000) => {
+    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    setToastMsg(msg);
+    toastTimeoutRef.current = setTimeout(() => {
+      setToastMsg(null);
+    }, duration);
+  };
 
   const fetchPinnedNotes = async (nbId) => {
     if (!nbId) return;
@@ -211,11 +225,11 @@ function Studio() {
       if (res.ok) {
         const data = await res.json();
         setPinnedNotes(data.notes || []);
-        alert("Đã ghim ghi chú thành công!");
+        showToast("📌 Đã ghim vào Bảng Ghi chú!");
       }
     } catch (err) {
       console.error("Lỗi khi ghim ghi chú:", err);
-      alert("Không thể ghim ghi chú: " + err.message);
+      showToast("❌ Không thể ghim ghi chú: " + err.message);
     }
   };
 
@@ -229,9 +243,78 @@ function Studio() {
       if (res.ok) {
         const data = await res.json();
         setPinnedNotes(data.notes || []);
+        showToast("🗑️ Đã xóa ghi chú");
       }
     } catch (err) {
       console.error("Lỗi xóa ghi chú:", err);
+    }
+  };
+
+  const handleSynthesizeNotes = async () => {
+    const targetNbId = activeNotebook?.id || id;
+    if (!targetNbId || pinnedNotes.length < 2) return;
+    setIsSynthesizingNotes(true);
+    try {
+      const res = await fetch(`/api/notebooks/${targetNbId}/notes/synthesize`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-notebook-id': targetNbId
+        }
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || 'Không thể tổng hợp ghi chú');
+      }
+      const data = await res.json();
+      setCritiqueModal({
+        isOpen: true,
+        type: 'synthesis',
+        title: data.title || 'Báo cáo Tổng hợp Ghi chú Nghiên cứu',
+        content: data.markdown || '',
+        loading: false
+      });
+      setShowNotesModal(false);
+      showToast('✨ Đã tổng hợp Báo cáo Chuyên đề thành công!');
+    } catch (err) {
+      console.error("Lỗi tổng hợp ghi chú:", err);
+      showToast(`❌ Lỗi: ${err.message || 'Không thể tổng hợp ghi chú'}`);
+    } finally {
+      setIsSynthesizingNotes(false);
+    }
+  };
+
+  const handleConvertNoteToSource = async (note) => {
+    const targetNbId = activeNotebook?.id || id;
+    if (!targetNbId || !note) return;
+    setConvertingNoteId(note.id);
+    try {
+      const rawTitle = (note.title || 'Ghi chú').trim();
+      const docTitle = rawTitle.endsWith('.md') || rawTitle.endsWith('.txt') ? rawTitle : `${rawTitle}.md`;
+      const res = await fetch('/api/ingest/text', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-notebook-id': targetNbId
+        },
+        body: JSON.stringify({
+          notebook_id: targetNbId,
+          title: docTitle,
+          text: note.content
+        })
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || 'Không thể nạp ghi chú thành nguồn');
+      }
+      await fetchDocuments();
+      setSelectedDocs(prev => new Set([...prev, docTitle]));
+      showToast(`✅ Đã nạp "${docTitle}" thành tài liệu nguồn RAG!`);
+    } catch (err) {
+      console.error("Lỗi chuyển ghi chú thành nguồn:", err);
+      showToast(`❌ Lỗi: ${err.message || 'Không thể chuyển ghi chú'}`);
+    } finally {
+      setConvertingNoteId(null);
     }
   };
 
@@ -1161,9 +1244,6 @@ function Studio() {
     try {
       setMessages(prev => [...prev, { role: 'assistant', content: '', citations: [] }]);
       
-      const personaPrefix = PERSONA_CONFIGS[chatPersona]?.prefix || '';
-      const effectiveQuery = personaPrefix ? `${personaPrefix}${userMsg}` : userMsg;
-
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 
@@ -1172,7 +1252,8 @@ function Studio() {
         },
         signal: abortControllerRef.current.signal,
         body: JSON.stringify({ 
-          query: effectiveQuery, 
+          query: userMsg, 
+          persona: chatPersona,
           notebook_id: activeNotebook.id,
           provider: activeNotebook.provider,
           model_name: activeNotebook.model_name,
@@ -3250,10 +3331,18 @@ function Studio() {
       {critiqueModal.isOpen && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in font-sans">
           <div className="bg-[#181a20] rounded-2xl max-w-3xl w-full max-h-[85vh] flex flex-col shadow-2xl border border-white/15 overflow-hidden">
-            <div className={`p-4 border-b border-white/10 flex items-center justify-between ${critiqueModal.type === 'critique' ? 'bg-rose-500/10' : 'bg-lime-500/10'}`}>
+            <div className={`p-4 border-b border-white/10 flex items-center justify-between ${
+              critiqueModal.type === 'critique' 
+                ? 'bg-rose-500/10' 
+                : critiqueModal.type === 'synthesis'
+                ? 'bg-purple-500/10'
+                : 'bg-lime-500/10'
+            }`}>
               <div className="flex items-center space-x-2.5 truncate">
                 {critiqueModal.type === 'critique' ? (
                   <ShieldAlert className="w-5 h-5 text-rose-400 shrink-0" />
+                ) : critiqueModal.type === 'synthesis' ? (
+                  <Sparkles className="w-5 h-5 text-purple-400 shrink-0" />
                 ) : (
                   <ClipboardCheck className="w-5 h-5 text-lime-400 shrink-0" />
                 )}
@@ -3275,7 +3364,7 @@ function Studio() {
                       type="button"
                       onClick={() => {
                         navigator.clipboard.writeText(critiqueModal.content);
-                        alert("Đã sao chép nội dung vào Clipboard!");
+                        showToast("📋 Đã sao chép nội dung vào Clipboard!");
                       }}
                       className="p-1.5 text-gray-400 hover:text-white rounded-lg hover:bg-white/10 transition cursor-pointer"
                       title="Sao chép nội dung"
@@ -3317,13 +3406,27 @@ function Studio() {
                 <Bookmark className="w-5 h-5 text-amber-500" />
                 <h3 className="font-bold text-base">Bảng Ghi chú Nghiên cứu ({pinnedNotes.length})</h3>
               </div>
-              <button 
-                type="button"
-                onClick={() => setShowNotesModal(false)} 
-                className={`p-1.5 rounded-lg transition cursor-pointer ${isDark ? 'text-gray-400 hover:text-white' : 'text-slate-400 hover:text-slate-800'}`}
-              >
-                <X className="w-5 h-5" />
-              </button>
+              <div className="flex items-center gap-2">
+                {pinnedNotes.length >= 2 && (
+                  <button
+                    type="button"
+                    onClick={handleSynthesizeNotes}
+                    disabled={isSynthesizingNotes}
+                    className="px-3 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-semibold rounded-xl flex items-center gap-1.5 shadow transition disabled:opacity-50 cursor-pointer"
+                    title="Tổng hợp các ghi chú thành Báo cáo chuyên đề AI"
+                  >
+                    {isSynthesizingNotes ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                    <span>{isSynthesizingNotes ? 'Đang tổng hợp...' : '✨ Tổng hợp Báo cáo AI'}</span>
+                  </button>
+                )}
+                <button 
+                  type="button"
+                  onClick={() => setShowNotesModal(false)} 
+                  className={`p-1.5 rounded-lg transition cursor-pointer ${isDark ? 'text-gray-400 hover:text-white' : 'text-slate-400 hover:text-slate-800'}`}
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
 
             <div className={`p-4 border-b space-y-2.5 ${isDark ? 'border-white/10 bg-white/[0.01]' : 'border-slate-200 bg-slate-50/50'}`}>
@@ -3379,14 +3482,28 @@ function Studio() {
                     }`}
                   >
                     <div className="flex items-center justify-between mb-2">
-                      <span className="font-semibold text-xs text-amber-500">{note.title || 'Ghi chú'}</span>
+                      <span className="font-semibold text-xs text-amber-500 truncate max-w-[200px]">{note.title || 'Ghi chú'}</span>
                       <div className="flex items-center gap-1.5">
                         <span className="text-[10px] text-gray-500">{note.created_at}</span>
                         <button
                           type="button"
+                          onClick={() => handleConvertNoteToSource(note)}
+                          disabled={convertingNoteId === note.id}
+                          className="px-2 py-0.5 rounded text-[11px] font-medium bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/30 flex items-center gap-1 transition cursor-pointer disabled:opacity-50"
+                          title="Chuyển ghi chú này thành tài liệu nguồn RAG"
+                        >
+                          {convertingNoteId === note.id ? (
+                            <Loader className="w-2.5 h-2.5 animate-spin" />
+                          ) : (
+                            <Plus size={11} />
+                          )}
+                          <span>Thành nguồn</span>
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => {
                             navigator.clipboard.writeText(note.content);
-                            alert("Đã sao chép ghi chú!");
+                            showToast("📋 Đã sao chép ghi chú!");
                           }}
                           className={`p-1 rounded cursor-pointer ${isDark ? 'text-gray-400 hover:text-white' : 'text-slate-500 hover:text-slate-900'}`}
                           title="Sao chép"
@@ -3411,6 +3528,13 @@ function Studio() {
               )}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Toast Notification */}
+      {toastMsg && (
+        <div className="fixed bottom-6 right-6 z-[9999] flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-900/95 text-white text-xs font-medium border border-white/20 shadow-2xl backdrop-blur-md animate-fade-in pointer-events-none">
+          <span>{toastMsg}</span>
         </div>
       )}
 
