@@ -6,7 +6,7 @@ import {
   Link as LinkIcon, Plus, ArrowLeft, Settings, Cpu, Cloud, Award, Sparkles,
   Copy, Download, Eye, SlidersHorizontal, FileDown, Sun, Moon, Mic, MicOff,
   Search, HelpCircle, Network, Scale, Clock, Share2, Flame, ArrowUp, ArrowDown,
-  Square, ShieldAlert, ClipboardCheck
+  Square, ShieldAlert, ClipboardCheck, Volume2, VolumeX, Bookmark, BookmarkPlus, Shield
 } from 'lucide-react';
 import SettingsModal from '../components/SettingsModal';
 import QuizletModal from '../components/QuizletModal';
@@ -105,6 +105,176 @@ function Studio() {
   const [chatSearchQuery, setChatSearchQuery] = useState('');
   const [currentMatchIdx, setCurrentMatchIdx] = useState(0);
 
+  // Chat Persona mode ('strict' | 'socratic' | 'critic')
+  const [chatPersona, setChatPersona] = useState('strict');
+
+  const PERSONA_CONFIGS = {
+    strict: {
+      id: 'strict',
+      name: 'Bám sát nguồn',
+      desc: 'Trả lời chính xác và chỉ dựa vào tài liệu được cung cấp, không suy diễn ngoài lề.',
+      icon: Shield,
+      prefix: '[Chế độ: Bám sát nguồn] Trả lời chính xác và chỉ dựa vào tài liệu được cung cấp, không suy diễn ngoài lề.\n\n'
+    },
+    socratic: {
+      id: 'socratic',
+      name: 'Gia sư Socratic',
+      desc: 'Đặt câu hỏi gợi mở, hướng dẫn tư duy từng bước.',
+      icon: Sparkles,
+      prefix: '[Chế độ: Gia sư Socratic] Hãy đóng vai một gia sư Socratic thông thái. Đặt câu hỏi gợi mở, phân tích tư duy từng bước và giúp người học tự khám phá câu trả lời dựa trên tài liệu.\n\n'
+    },
+    critic: {
+      id: 'critic',
+      name: 'Phản biện sâu',
+      desc: 'Phân tích đa chiều, chỉ ra các giả định, điểm mạnh và hạn chế trong tài liệu.',
+      icon: Flame,
+      prefix: '[Chế độ: Phản biện sâu] Hãy đóng vai chuyên gia phản biện học thuật sắc bén. Đánh giá đa chiều, chỉ ra các giả định ngầm, điểm mạnh và hạn chế trong tài liệu đối với câu hỏi sau.\n\n'
+    }
+  };
+
+  // TTS per message state & methods
+  const [speakingMsgIdx, setSpeakingMsgIdx] = useState(null);
+
+  const cleanTextForSpeech = (rawText) => {
+    if (!rawText) return '';
+    return rawText
+      .replace(/\[\^?\d+\]/g, '')
+      .replace(/```[\s\S]*?```/g, ' Đoạn mã. ')
+      .replace(/`([^`]+)`/g, '$1')
+      .replace(/[*_~#>]/g, '')
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+      .replace(/\n+/g, '. ')
+      .trim();
+  };
+
+  const handleSpeakMessage = (text, idx) => {
+    if (!('speechSynthesis' in window)) {
+      alert('Trình duyệt của bạn không hỗ trợ tính năng Web Speech Text-to-Speech.');
+      return;
+    }
+
+    if (speakingMsgIdx === idx) {
+      window.speechSynthesis.cancel();
+      setSpeakingMsgIdx(null);
+      return;
+    }
+
+    window.speechSynthesis.cancel();
+    const cleanText = cleanTextForSpeech(text);
+    if (!cleanText) return;
+
+    const utterance = new SpeechSynthesisUtterance(cleanText);
+    utterance.lang = 'vi-VN';
+    utterance.rate = 1.0;
+    utterance.pitch = 1.0;
+
+    utterance.onend = () => {
+      setSpeakingMsgIdx(null);
+    };
+    utterance.onerror = () => {
+      setSpeakingMsgIdx(null);
+    };
+
+    setSpeakingMsgIdx(idx);
+    window.speechSynthesis.speak(utterance);
+  };
+
+  // Pinned Notes (Bảng Ghi chú Nghiên cứu) State
+  const [pinnedNotes, setPinnedNotes] = useState([]);
+  const [showNotesModal, setShowNotesModal] = useState(false);
+  const [newNoteTitle, setNewNoteTitle] = useState('');
+  const [newNoteContent, setNewNoteContent] = useState('');
+  const [savingNote, setSavingNote] = useState(false);
+
+  const fetchPinnedNotes = async (nbId) => {
+    if (!nbId) return;
+    try {
+      const res = await fetch(`/api/notebooks/${nbId}/notes`);
+      if (res.ok) {
+        const data = await res.json();
+        setPinnedNotes(data.notes || []);
+      }
+    } catch (err) {
+      console.error("Lỗi lấy ghi chú ghim:", err);
+    }
+  };
+
+  const handlePinNote = async (content, title = "Ghi chú", source = "manual") => {
+    const targetNbId = activeNotebook?.id || id;
+    if (!content || !targetNbId) return;
+    try {
+      const res = await fetch(`/api/notebooks/${targetNbId}/notes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content, title, source })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setPinnedNotes(data.notes || []);
+        alert("Đã ghim ghi chú thành công!");
+      }
+    } catch (err) {
+      console.error("Lỗi khi ghim ghi chú:", err);
+      alert("Không thể ghim ghi chú: " + err.message);
+    }
+  };
+
+  const handleDeleteNote = async (noteId) => {
+    const targetNbId = activeNotebook?.id || id;
+    if (!targetNbId || !noteId) return;
+    try {
+      const res = await fetch(`/api/notebooks/${targetNbId}/notes/${noteId}`, {
+        method: 'DELETE'
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setPinnedNotes(data.notes || []);
+      }
+    } catch (err) {
+      console.error("Lỗi xóa ghi chú:", err);
+    }
+  };
+
+  // Chat Search match indices & jump handlers
+  const matchedIndices = useMemo(() => {
+    if (!chatSearchQuery.trim()) return [];
+    const q = chatSearchQuery.toLowerCase();
+    const indices = [];
+    messages.forEach((m, idx) => {
+      if (m.content && m.content.toLowerCase().includes(q)) {
+        indices.push(idx);
+      }
+    });
+    return indices;
+  }, [messages, chatSearchQuery]);
+
+  useEffect(() => {
+    setCurrentMatchIdx(0);
+  }, [chatSearchQuery]);
+
+  const scrollToMatch = (matchIdx) => {
+    if (matchedIndices.length === 0) return;
+    const targetMsgIdx = matchedIndices[matchIdx];
+    const el = document.getElementById(`msg-${targetMsgIdx}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  };
+
+  const handleNextMatch = () => {
+    if (matchedIndices.length === 0) return;
+    const nextIdx = (currentMatchIdx + 1) % matchedIndices.length;
+    setCurrentMatchIdx(nextIdx);
+    scrollToMatch(nextIdx);
+  };
+
+  const handlePrevMatch = () => {
+    if (matchedIndices.length === 0) return;
+    const prevIdx = (currentMatchIdx - 1 + matchedIndices.length) % matchedIndices.length;
+    setCurrentMatchIdx(prevIdx);
+    scrollToMatch(prevIdx);
+  };
+
   // Voice recording state
   const [isRecording, setIsRecording] = useState(false);
   const recognitionRef = useRef(null);
@@ -197,8 +367,13 @@ function Studio() {
         setShowShareModal(false);
         setShowModelManagerModal(false);
         setShowPasteTextModal(false);
+        setShowNotesModal(false);
         setInspectDoc(null);
         setCritiqueModal(prev => ({ ...prev, isOpen: false }));
+        if ('speechSynthesis' in window) {
+          window.speechSynthesis.cancel();
+          setSpeakingMsgIdx(null);
+        }
         return;
       }
 
@@ -275,6 +450,7 @@ function Studio() {
         setDocuments(docs);
         setSelectedDocs(new Set(docs.map(d => d.filename)));
       }
+      fetchPinnedNotes(nb.id);
     } catch (e) {
       console.error(e);
     }
@@ -779,7 +955,10 @@ function Studio() {
 
   const handleRunStudioTool = async (toolId) => {
     const isCritique = toolId === 'critique';
-    const endpoint = isCritique ? '/api/studio/critique' : '/api/studio/action-plan';
+    const nbId = activeNotebook?.id || id || '';
+    const endpoint = isCritique 
+      ? `/api/studio/critique?notebook_id=${encodeURIComponent(nbId)}` 
+      : `/api/studio/action-plan?notebook_id=${encodeURIComponent(nbId)}`;
     const title = isCritique ? 'Báo Cáo Phản Biện & Tìm Lỗ Hổng (Peer Review)' : 'Kế Hoạch Hành Động Thực Tiễn (Action Plan)';
     
     setCritiqueModal({ isOpen: true, type: toolId, title, content: '', loading: true });
@@ -787,9 +966,12 @@ function Studio() {
     try {
       const res = await fetch(endpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'x-notebook-id': nbId
+        },
         body: JSON.stringify({
-          notebook_id: activeNotebook?.id,
+          notebook_id: nbId,
           source_filter: selectedDocs.size === 1 ? Array.from(selectedDocs)[0] : null,
           selected_documents: Array.from(selectedDocs)
         })
@@ -979,12 +1161,18 @@ function Studio() {
     try {
       setMessages(prev => [...prev, { role: 'assistant', content: '', citations: [] }]);
       
+      const personaPrefix = PERSONA_CONFIGS[chatPersona]?.prefix || '';
+      const effectiveQuery = personaPrefix ? `${personaPrefix}${userMsg}` : userMsg;
+
       const response = await fetch('/api/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'x-notebook-id': activeNotebook.id
+        },
         signal: abortControllerRef.current.signal,
         body: JSON.stringify({ 
-          query: userMsg, 
+          query: effectiveQuery, 
           notebook_id: activeNotebook.id,
           provider: activeNotebook.provider,
           model_name: activeNotebook.model_name,
@@ -1564,7 +1752,7 @@ function Studio() {
               className={`h-8 w-8 rounded-xl border transition flex items-center justify-center font-medium shrink-0 ${
                 showChatSearch 
                   ? 'border-blue-500 bg-blue-500/20 text-blue-300' 
-                  : 'border-white/10 bg-white/5 text-gray-300 hover:text-white hover:bg-white/10'
+                  : (isDark ? 'border-white/10 bg-white/5 text-gray-300 hover:text-white hover:bg-white/10' : 'border-slate-200 bg-slate-100 text-slate-600 hover:text-slate-900 hover:bg-slate-200')
               }`}
               title="Tìm kiếm trong lịch sử chat (Ctrl + F)"
             >
@@ -1575,7 +1763,9 @@ function Studio() {
             <button 
               onClick={handleClearAllMessages}
               disabled={messages.length === 0}
-              className="h-8 w-8 rounded-xl border border-white/10 bg-white/5 text-gray-400 hover:text-red-400 hover:bg-red-500/10 hover:border-red-500/20 transition flex items-center justify-center font-medium disabled:opacity-30 shrink-0"
+              className={`h-8 w-8 rounded-xl border transition flex items-center justify-center font-medium disabled:opacity-30 shrink-0 ${
+                isDark ? 'border-white/10 bg-white/5 text-gray-400 hover:text-red-400 hover:bg-red-500/10 hover:border-red-500/20' : 'border-slate-200 bg-slate-100 text-slate-500 hover:text-red-500 hover:bg-red-50'
+              }`}
               title="Xóa toàn bộ hội thoại chat"
             >
               <Trash2 size={14} />
@@ -1584,7 +1774,9 @@ function Studio() {
             {/* Share & Export Notebook Modal */}
             <button 
               onClick={() => setShowShareModal(true)}
-              className="h-8 w-8 rounded-xl border border-white/10 bg-white/5 text-gray-300 hover:text-white hover:bg-white/10 transition flex items-center justify-center font-medium shrink-0"
+              className={`h-8 w-8 rounded-xl border transition flex items-center justify-center font-medium shrink-0 ${
+                isDark ? 'border-white/10 bg-white/5 text-gray-300 hover:text-white hover:bg-white/10' : 'border-slate-200 bg-slate-100 text-slate-600 hover:text-slate-900 hover:bg-slate-200'
+              }`}
               title="Chia sẻ & Xuất dữ liệu sổ tay"
             >
               <Share2 size={14} />
@@ -1593,7 +1785,9 @@ function Studio() {
             {/* Export Chat to Markdown */}
             <button 
               onClick={handleExportChat}
-              className="h-8 w-8 rounded-xl border border-white/10 bg-white/5 text-gray-300 hover:text-white hover:bg-white/10 transition flex items-center justify-center font-medium shrink-0"
+              className={`h-8 w-8 rounded-xl border transition flex items-center justify-center font-medium shrink-0 ${
+                isDark ? 'border-white/10 bg-white/5 text-gray-300 hover:text-white hover:bg-white/10' : 'border-slate-200 bg-slate-100 text-slate-600 hover:text-slate-900 hover:bg-slate-200'
+              }`}
               title="Xuất toàn bộ đoạn chat ra file Markdown (.md)"
             >
               <FileDown size={14} />
@@ -1611,12 +1805,14 @@ function Studio() {
             </button>
 
             {/* Divider */}
-            <div className="w-[1px] h-4 bg-white/10 my-auto shrink-0 mx-0.5" />
+            <div className={`w-[1px] h-4 my-auto shrink-0 mx-0.5 ${isDark ? 'bg-white/10' : 'bg-slate-200'}`} />
 
             {/* Theme Toggle (Dark / Light) */}
             <button 
               onClick={toggleTheme}
-              className="h-8 w-8 rounded-xl flex items-center justify-center text-gray-400 hover:text-amber-400 hover:bg-white/10 border border-white/10 bg-white/5 transition shrink-0"
+              className={`h-8 w-8 rounded-xl flex items-center justify-center transition shrink-0 border ${
+                isDark ? 'text-amber-400 border-white/10 bg-white/5 hover:bg-white/10' : 'text-slate-700 border-slate-200 bg-slate-100 hover:bg-slate-200'
+              }`}
               title={isDark ? "Chuyển sang Giao diện Sáng (Light Theme)" : "Chuyển sang Giao diện Tối (Dark Theme)"}
             >
               {isDark ? <Sun size={14} /> : <Moon size={14} />}
@@ -1625,7 +1821,9 @@ function Studio() {
             {/* Shortcuts Help */}
             <button 
               onClick={() => setShowShortcutsModal(true)}
-              className="h-8 w-8 rounded-xl flex items-center justify-center text-gray-400 hover:text-white hover:bg-white/10 border border-white/10 bg-white/5 transition shrink-0"
+              className={`h-8 w-8 rounded-xl flex items-center justify-center transition shrink-0 border ${
+                isDark ? 'border-white/10 bg-white/5 text-gray-400 hover:text-white hover:bg-white/10' : 'border-slate-200 bg-slate-100 text-slate-600 hover:text-slate-900 hover:bg-slate-200'
+              }`}
               title="Phím tắt nhanh (Shortcuts)"
             >
               <HelpCircle size={14} />
@@ -1634,7 +1832,9 @@ function Studio() {
             {/* Global Settings */}
             <button 
               onClick={() => setShowSettings(true)}
-              className="h-8 w-8 rounded-xl flex items-center justify-center text-gray-400 hover:text-white hover:bg-white/10 border border-white/10 bg-white/5 transition shrink-0"
+              className={`h-8 w-8 rounded-xl flex items-center justify-center transition shrink-0 border ${
+                isDark ? 'border-white/10 bg-white/5 text-gray-400 hover:text-white hover:bg-white/10' : 'border-slate-200 bg-slate-100 text-slate-600 hover:text-slate-900 hover:bg-slate-200'
+              }`}
               title="Cài đặt mô hình AI"
             >
               <Settings size={14} />
@@ -1643,7 +1843,9 @@ function Studio() {
             {/* Delete Notebook */}
             <button 
               onClick={deleteNotebook}
-              className="h-8 w-8 rounded-xl flex items-center justify-center text-gray-400 hover:text-red-400 hover:bg-red-500/10 border border-white/10 bg-white/5 hover:border-red-500/20 transition shrink-0"
+              className={`h-8 w-8 rounded-xl flex items-center justify-center transition shrink-0 border ${
+                isDark ? 'border-white/10 bg-white/5 text-gray-400 hover:text-red-400 hover:bg-red-500/10' : 'border-slate-200 bg-slate-100 text-slate-500 hover:text-red-500 hover:bg-red-50'
+              }`}
               title="Xóa sổ tay này"
             >
               <Trash2 size={14} />
@@ -1653,31 +1855,66 @@ function Studio() {
 
         {/* Feature #4: Chat Search Bar */}
         {showChatSearch && (
-          <div className="mb-3 px-3.5 py-2 rounded-2xl bg-white/[0.04] border border-blue-500/40 shadow-lg flex items-center justify-between gap-3 text-xs animate-fade-in">
+          <div className={`mb-3 px-3.5 py-2 rounded-2xl shadow-lg flex items-center justify-between gap-3 text-xs animate-fade-in border ${
+            isDark ? 'bg-white/[0.04] border-blue-500/40 text-white' : 'bg-white border-blue-400 text-slate-800'
+          }`}>
             <div className="flex items-center gap-2 flex-1">
-              <Search size={14} className="text-blue-400 shrink-0" />
+              <Search size={14} className="text-blue-500 shrink-0" />
               <input
                 type="text"
                 autoFocus
                 value={chatSearchQuery}
                 onChange={e => setChatSearchQuery(e.target.value)}
-                placeholder="Tìm kiếm từ khóa trong các tin nhắn..."
-                className="w-full bg-transparent border-none text-white outline-none text-xs"
+                onKeyDown={e => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if (e.shiftKey) handlePrevMatch();
+                    else handleNextMatch();
+                  }
+                }}
+                placeholder="Tìm kiếm trong các tin nhắn (Enter để tìm tiếp, Shift+Enter lùi)..."
+                className={`w-full bg-transparent border-none outline-none text-xs ${
+                  isDark ? 'text-white placeholder-gray-500' : 'text-slate-900 placeholder-slate-400'
+                }`}
               />
             </div>
 
-            <div className="flex items-center gap-2 shrink-0 text-gray-400 font-mono text-[11px]">
+            <div className={`flex items-center gap-2 shrink-0 font-mono text-[11px] ${
+              isDark ? 'text-gray-400' : 'text-slate-500'
+            }`}>
               {chatSearchQuery.trim() && (
-                <span>
-                  {messages.filter(m => m.content?.toLowerCase().includes(chatSearchQuery.toLowerCase())).length} kết quả
-                </span>
+                <div className="flex items-center gap-1.5">
+                  <span className="font-semibold text-blue-400">
+                    {matchedIndices.length > 0 ? `${currentMatchIdx + 1}/${matchedIndices.length}` : '0/0'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handlePrevMatch}
+                    disabled={matchedIndices.length === 0}
+                    className="p-1 hover:text-blue-400 rounded hover:bg-white/10 disabled:opacity-30 cursor-pointer"
+                    title="Kết quả trước (Shift + Enter)"
+                  >
+                    <ArrowUp size={13} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleNextMatch}
+                    disabled={matchedIndices.length === 0}
+                    className="p-1 hover:text-blue-400 rounded hover:bg-white/10 disabled:opacity-30 cursor-pointer"
+                    title="Kết quả tiếp theo (Enter)"
+                  >
+                    <ArrowDown size={13} />
+                  </button>
+                </div>
               )}
               <button
+                type="button"
                 onClick={() => {
                   setShowChatSearch(false);
                   setChatSearchQuery('');
                 }}
-                className="p-1 hover:text-white rounded hover:bg-white/10"
+                className="p-1 hover:text-red-400 rounded hover:bg-white/10 cursor-pointer"
+                title="Đóng tìm kiếm (Esc)"
               >
                 <X size={14} />
               </button>
@@ -1689,13 +1926,16 @@ function Studio() {
         <div className="flex-1 overflow-y-auto scrollbar-hide flex flex-col gap-5 pb-4">
           {messages.map((msg, idx) => {
             const isMatchedInSearch = chatSearchQuery.trim() && msg.content?.toLowerCase().includes(chatSearchQuery.toLowerCase());
+            const isCurrentMatch = isMatchedInSearch && matchedIndices[currentMatchIdx] === idx;
 
             return (
               <div 
                 key={idx} 
                 id={`msg-${idx}`}
                 className={`flex gap-3.5 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'} ${
-                  isMatchedInSearch ? 'ring-2 ring-blue-500/60 rounded-2xl p-1 bg-blue-500/5' : ''
+                  isMatchedInSearch 
+                    ? (isCurrentMatch ? 'ring-2 ring-blue-400 bg-blue-500/15 rounded-2xl p-1' : 'ring-1 ring-blue-500/40 bg-blue-500/5 rounded-2xl p-1')
+                    : ''
                 }`}
               >
                 <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-white font-bold text-xs ${
@@ -1707,21 +1947,50 @@ function Studio() {
                 <div className={`flex flex-col gap-1.5 max-w-[85%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
                   <div className={`group/msg relative px-4 py-3 rounded-2xl text-[14px] leading-relaxed shadow-lg ${
                     msg.role === 'user' 
-                      ? 'bg-[#252830] border border-white/10 text-white rounded-tr-sm' 
-                      : 'bg-[#181a20] border border-white/10 text-gray-100 rounded-tl-sm w-full'
+                      ? (isDark ? 'bg-[#252830] border border-white/10 text-white' : 'bg-blue-600 border border-blue-700 text-white') + ' rounded-tr-sm' 
+                      : (isDark ? 'bg-[#181a20] border border-white/10 text-gray-100' : 'bg-white border border-slate-200 text-slate-800 shadow-sm') + ' rounded-tl-sm w-full'
                   }`}>
-                    {/* Action buttons on message hover: Copy and Delete */}
+                    {/* Action buttons on message hover: TTS, Pin Note, Copy, Delete */}
                     <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover/msg:opacity-100 transition z-10">
                       {msg.content && (
-                        <button
-                          onClick={() => handleCopyMessage(msg.content, idx)}
-                          className="p-1.5 rounded-lg bg-black/60 hover:bg-black/90 text-gray-400 hover:text-white transition shadow backdrop-blur-sm"
-                          title="Sao chép nội dung tin nhắn"
-                        >
-                          {copiedMsgIdx === idx ? <Check size={12} className="text-green-400" /> : <Copy size={12} />}
-                        </button>
+                        <>
+                          {/* TTS Play/Stop Button */}
+                          <button
+                            type="button"
+                            onClick={() => handleSpeakMessage(msg.content, idx)}
+                            className={`p-1.5 rounded-lg backdrop-blur-sm transition shadow ${
+                              speakingMsgIdx === idx 
+                                ? 'bg-blue-600 text-white animate-pulse' 
+                                : 'bg-black/60 hover:bg-black/90 text-gray-400 hover:text-white'
+                            }`}
+                            title={speakingMsgIdx === idx ? "Dừng đọc" : "Đọc to câu trả lời (TTS tiếng Việt)"}
+                          >
+                            {speakingMsgIdx === idx ? <VolumeX size={12} /> : <Volume2 size={12} />}
+                          </button>
+
+                          {/* Pin to Notes Button */}
+                          <button
+                            type="button"
+                            onClick={() => handlePinNote(msg.content, `Ghi chú từ AI (${new Date().toLocaleTimeString('vi-VN')})`, 'chat')}
+                            className="p-1.5 rounded-lg bg-black/60 hover:bg-amber-500/80 text-gray-400 hover:text-white transition shadow backdrop-blur-sm"
+                            title="Ghim vào Bảng Ghi chú Nghiên cứu"
+                          >
+                            <BookmarkPlus size={12} />
+                          </button>
+
+                          {/* Copy Button */}
+                          <button
+                            type="button"
+                            onClick={() => handleCopyMessage(msg.content, idx)}
+                            className="p-1.5 rounded-lg bg-black/60 hover:bg-black/90 text-gray-400 hover:text-white transition shadow backdrop-blur-sm"
+                            title="Sao chép nội dung tin nhắn"
+                          >
+                            {copiedMsgIdx === idx ? <Check size={12} className="text-green-400" /> : <Copy size={12} />}
+                          </button>
+                        </>
                       )}
                       <button
+                        type="button"
                         onClick={() => handleDeleteMessage(msg.id, idx)}
                         className="p-1.5 rounded-lg bg-black/60 hover:bg-red-500/80 text-gray-400 hover:text-white transition shadow backdrop-blur-sm"
                         title="Xóa tin nhắn này"
@@ -1890,22 +2159,76 @@ function Studio() {
             </div>
           )}
 
-          <div className="bg-[#181a20] border border-white/15 p-2 flex items-end gap-2 rounded-2xl relative group focus-within:border-blue-500/60 transition-all duration-300">
+          {/* Feature: AI Persona Mode Bar & Pinned Notes button */}
+          <div className="flex items-center justify-between pb-2 px-1 text-xs gap-2 overflow-x-auto scrollbar-hide">
+            <div className="flex items-center gap-1.5 shrink-0">
+              <span className={`text-[11px] font-medium mr-1 flex items-center gap-1 ${isDark ? 'text-gray-400' : 'text-slate-500'}`}>
+                <Bot size={13} className="text-blue-500" /> Chế độ:
+              </span>
+              {[
+                { id: 'strict', name: 'Bám sát nguồn', desc: 'Trực tiếp 100% tài liệu', icon: Shield, activeClass: 'bg-blue-500/20 text-blue-300 border-blue-500/50' },
+                { id: 'socratic', name: 'Gia sư Socratic', desc: 'Gợi mở, hướng dẫn tư duy', icon: Sparkles, activeClass: 'bg-amber-500/20 text-amber-300 border-amber-500/50' },
+                { id: 'critic', name: 'Phản biện sâu', desc: 'Đánh giá đa chiều & điểm mù', icon: Flame, activeClass: 'bg-rose-500/20 text-rose-300 border-rose-500/50' },
+              ].map(p => {
+                const Icon = p.icon;
+                const isSelected = chatPersona === p.id;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => setChatPersona(p.id)}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium border transition cursor-pointer ${
+                      isSelected 
+                        ? p.activeClass 
+                        : (isDark ? 'bg-white/5 border-white/10 text-gray-400 hover:text-white hover:bg-white/10' : 'bg-slate-100 border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-200')
+                    }`}
+                    title={p.desc}
+                  >
+                    <Icon size={12} />
+                    <span>{p.name}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Pinned Notes shortcut button */}
+            <button
+              type="button"
+              onClick={() => setShowNotesModal(true)}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium border transition cursor-pointer shrink-0 ${
+                pinnedNotes.length > 0 
+                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' 
+                  : (isDark ? 'bg-white/5 border-white/10 text-gray-400 hover:text-white' : 'bg-slate-100 border-slate-200 text-slate-600 hover:text-slate-900')
+              }`}
+              title="Xem và quản lý các ghi chú đã ghim của sổ tay này"
+            >
+              <Bookmark size={12} className="text-amber-400" />
+              <span>Ghi chú ({pinnedNotes.length})</span>
+            </button>
+          </div>
+
+          <div className={`p-2 flex items-end gap-2 rounded-2xl relative group focus-within:border-blue-500/60 transition-all duration-300 border ${
+            isDark ? 'bg-[#181a20] border-white/15' : 'bg-white border-slate-300 shadow-sm'
+          }`}>
             
             <div className="relative">
               {showUrlInput && (
-                <div className="absolute bottom-full left-0 mb-2 bg-[#1c1f26] border border-white/15 p-2.5 rounded-xl shadow-2xl flex gap-2 z-20 w-80">
+                <div className={`absolute bottom-full left-0 mb-2 p-2.5 rounded-xl shadow-2xl flex gap-2 z-20 w-80 border ${
+                  isDark ? 'bg-[#1c1f26] border-white/15' : 'bg-white border-slate-200'
+                }`}>
                   <input 
                     type="text" 
                     value={urlInputValue}
                     onChange={(e) => setUrlInputValue(e.target.value)}
                     placeholder="Dán link Website hoặc YouTube..." 
-                    className="flex-1 bg-black/40 text-xs px-3 py-2 rounded-lg outline-none text-white border border-white/15 focus:border-blue-500"
+                    className={`flex-1 text-xs px-3 py-2 rounded-lg outline-none border focus:border-blue-500 ${
+                      isDark ? 'bg-black/40 text-white border-white/15' : 'bg-slate-50 text-slate-900 border-slate-300'
+                    }`}
                     onKeyDown={(e) => e.key === 'Enter' && handleUrlSubmit()}
                   />
                   <button 
                     onClick={handleUrlSubmit}
-                    className="bg-blue-600 px-3 rounded-lg text-white hover:bg-blue-500 transition"
+                    className="bg-blue-600 px-3 rounded-lg text-white hover:bg-blue-500 transition cursor-pointer"
                   >
                     <Check size={14}/>
                   </button>
@@ -1913,7 +2236,9 @@ function Studio() {
               )}
               <button 
                 onClick={() => setShowUrlInput(!showUrlInput)}
-                className="p-2.5 text-gray-400 hover:text-white bg-white/5 hover:bg-white/10 rounded-xl transition"
+                className={`p-2.5 rounded-xl transition ${
+                  isDark ? 'text-gray-400 hover:text-white bg-white/5 hover:bg-white/10' : 'text-slate-500 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
+                }`}
                 title="Nhập Link Website hoặc YouTube"
               >
                 <LinkIcon size={18} />
@@ -1922,8 +2247,10 @@ function Studio() {
             
             <button 
               onClick={() => document.getElementById('file-upload').click()}
-              className="p-2.5 text-gray-400 hover:text-white bg-white/5 hover:bg-white/10 rounded-xl transition"
-              title="Tải lên PDF/Doc/Audio"
+              className={`p-2.5 rounded-xl transition ${
+                isDark ? 'text-gray-400 hover:text-white bg-white/5 hover:bg-white/10' : 'text-slate-500 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
+              }`}
+              title="Tải lên PDF/Doc/Audio/Ảnh"
             >
               <Paperclip size={18} />
             </button>
@@ -1938,7 +2265,9 @@ function Studio() {
 
             <textarea 
               ref={chatInputRef}
-              className="flex-1 bg-transparent border-none px-2 py-2.5 text-sm text-white focus:outline-none resize-none min-h-[44px] max-h-[140px] scrollbar-hide"
+              className={`flex-1 bg-transparent border-none px-2 py-2.5 text-sm focus:outline-none resize-none min-h-[44px] max-h-[140px] scrollbar-hide ${
+                isDark ? 'text-white placeholder-gray-500' : 'text-slate-900 placeholder-slate-400'
+              }`}
               placeholder="Đặt câu hỏi về tài liệu của bạn (Nhấn Ctrl+/ để focus)..."
               value={input}
               onChange={e => setInput(e.target.value)}
@@ -1953,7 +2282,7 @@ function Studio() {
               className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 transition-all ${
                 isRecording 
                   ? 'bg-red-500 text-white animate-pulse shadow-lg shadow-red-500/50' 
-                  : 'bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white'
+                  : (isDark ? 'bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-900')
               }`}
               title={isRecording ? "Đang ghi âm giọng nói (Bấm để dừng)..." : "Nói để nhập câu hỏi (Voice Input)"}
             >
@@ -1975,7 +2304,7 @@ function Studio() {
                 className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 transition-all duration-300 ${
                   input.trim()
                     ? 'bg-blue-600 text-white hover:bg-blue-500 shadow-lg cursor-pointer' 
-                    : 'bg-white/5 text-gray-500 cursor-not-allowed'
+                    : (isDark ? 'bg-white/5 text-gray-500 cursor-not-allowed' : 'bg-slate-100 text-slate-400 cursor-not-allowed')
                 }`}
                 onClick={handleSend} 
                 disabled={!input.trim()}
@@ -1985,7 +2314,7 @@ function Studio() {
               </button>
             )}
           </div>
-          <div className="text-center mt-2 text-[11px] text-gray-500">
+          <div className={`text-center mt-2 text-[11px] ${isDark ? 'text-gray-500' : 'text-slate-400'}`}>
             NotebookLM Mini • Nhấn Ctrl+Enter để gửi • Ctrl+K đổi mô hình AI • Ctrl+F tìm kiếm
           </div>
         </div>
@@ -1997,26 +2326,32 @@ function Studio() {
       } ${mobileActiveTab === 'studio' ? 'flex fixed inset-0 z-40 w-full md:relative md:w-80 xl:md:w-88' : 'hidden lg:flex'}`}>
         
         {/* Top Header Bar - aligned with Col 1 & Col 2 */}
-        <div className="flex justify-between items-center pb-3.5 border-b border-white/10 mb-1 min-h-[44px]">
+        <div className={`flex justify-between items-center pb-3.5 mb-1 min-h-[44px] border-b ${
+          isDark ? 'border-white/10' : 'border-slate-200'
+        }`}>
           <div className="flex items-center gap-2">
             <Sparkles size={16} className="text-purple-400" />
-            <span className="font-bold text-sm text-gray-200">Studio Học Tập</span>
+            <span className={`font-bold text-sm ${isDark ? 'text-gray-200' : 'text-slate-800'}`}>Studio Học Tập</span>
           </div>
           {mobileActiveTab === 'studio' ? (
             <button onClick={() => setMobileActiveTab('chat')} className="lg:hidden text-xs px-2.5 py-1 rounded-lg bg-white/10 text-white">
               Đóng
             </button>
           ) : (
-            <span className="text-[10px] text-gray-400 font-medium bg-white/5 px-2 py-0.5 rounded-full border border-white/10">
+            <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full border ${
+              isDark ? 'text-gray-400 bg-white/5 border-white/10' : 'text-slate-500 bg-slate-100 border-slate-200'
+            }`}>
               AI Copilot
             </span>
           )}
         </div>
         
         {/* Study Guide Card */}
-        <div className="p-4 rounded-2xl bg-[#181a20] border border-white/10">
+        <div className={`p-4 rounded-2xl border ${
+          isDark ? 'bg-[#181a20] border-white/10 text-white' : 'bg-slate-50 border-slate-200 text-slate-800 shadow-sm'
+        }`}>
           <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-bold text-blue-400 flex items-center gap-1.5">
+            <h3 className="text-sm font-bold text-blue-500 flex items-center gap-1.5">
               <BookOpen size={16} /> Cẩm Nang Học Tập
             </h3>
             {documents.length > 0 && (
@@ -2024,7 +2359,7 @@ function Studio() {
                 <button 
                   onClick={() => setShowGuideConfigModal(true)}
                   disabled={regeneratingGuide}
-                  className="text-[11px] bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/30 px-2 py-0.5 rounded-lg flex items-center gap-1 transition"
+                  className="text-[11px] bg-blue-500/10 hover:bg-blue-500/20 text-blue-500 border border-blue-500/30 px-2 py-0.5 rounded-lg flex items-center gap-1 transition cursor-pointer"
                   title="Tùy chỉnh số lượng câu hỏi, flashcards và chủ đề"
                 >
                   <SlidersHorizontal size={11} /> Tùy chỉnh
@@ -2032,7 +2367,9 @@ function Studio() {
                 <button 
                   onClick={handleRegenerateStudyGuide}
                   disabled={regeneratingGuide}
-                  className="text-[11px] text-gray-400 hover:text-white p-1 hover:bg-white/5 rounded-lg transition"
+                  className={`text-[11px] p-1 rounded-lg transition cursor-pointer ${
+                    isDark ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-slate-500 hover:text-slate-900 hover:bg-slate-200'
+                  }`}
                   title="Làm mới nhanh"
                 >
                   <RefreshCw size={12} className={regeneratingGuide ? 'animate-spin' : ''} />
@@ -2042,11 +2379,11 @@ function Studio() {
           </div>
           
           {documents.length === 0 ? (
-            <div className="text-gray-500 text-xs py-6 text-center leading-relaxed">
+            <div className={`text-xs py-6 text-center leading-relaxed ${isDark ? 'text-gray-500' : 'text-slate-400'}`}>
               Tải lên tài liệu ở cột bên trái để AI tự động trích xuất bản tóm tắt và câu hỏi ôn tập.
             </div>
           ) : !studyGuide ? (
-            <div className="flex flex-col items-center justify-center py-8 text-gray-400 gap-2.5">
+            <div className={`flex flex-col items-center justify-center py-8 gap-2.5 ${isDark ? 'text-gray-400' : 'text-slate-500'}`}>
               <Loader className="animate-spin text-blue-500" size={20} />
               <span className="text-xs">Đang đọc & phân tích tài liệu...</span>
             </div>
@@ -2054,34 +2391,34 @@ function Studio() {
             <div className="space-y-3.5 text-xs">
               {studyGuide.summary && (
                 <div>
-                  <h4 className="font-semibold text-gray-300 mb-1">Tóm tắt cốt lõi:</h4>
-                  <div className="text-gray-300 leading-relaxed max-h-36 overflow-y-auto scrollbar-hide text-xs">
+                  <h4 className={`font-semibold mb-1 ${isDark ? 'text-gray-300' : 'text-slate-700'}`}>Tóm tắt cốt lõi:</h4>
+                  <div className={`leading-relaxed max-h-36 overflow-y-auto scrollbar-hide text-xs ${isDark ? 'text-gray-300' : 'text-slate-700'}`}>
                     <MarkdownRenderer content={studyGuide.summary.replace(/^#+\s*(Tóm tắt|Summary)[^\n]*\n+/i, '').trim()} isDark={isDark} />
                   </div>
                 </div>
               )}
               {studyGuide.faq && (
-                <div className="pt-2 border-t border-white/10">
-                  <h4 className="font-semibold text-gray-300 mb-1">Câu hỏi thường gặp:</h4>
-                  <div className="text-gray-300 leading-relaxed max-h-36 overflow-y-auto scrollbar-hide text-xs">
+                <div className={`pt-2 border-t ${isDark ? 'border-white/10' : 'border-slate-200'}`}>
+                  <h4 className={`font-semibold mb-1 ${isDark ? 'text-gray-300' : 'text-slate-700'}`}>Câu hỏi thường gặp:</h4>
+                  <div className={`leading-relaxed max-h-36 overflow-y-auto scrollbar-hide text-xs ${isDark ? 'text-gray-300' : 'text-slate-700'}`}>
                     <MarkdownRenderer content={studyGuide.faq.replace(/^#+\s*(Câu hỏi thường gặp|FAQ)[^\n]*\n+/i, '').trim()} isDark={isDark} />
                   </div>
                 </div>
               )}
               {studyGuide.glossary && studyGuide.glossary !== "N/A" && !studyGuide.glossary.startsWith("⚠️") && (
-                <div className="pt-2 border-t border-white/10">
-                  <h4 className="font-semibold text-gray-300 mb-1">Thuật ngữ cốt lõi (Glossary):</h4>
-                  <div className="text-gray-300 leading-relaxed max-h-32 overflow-y-auto scrollbar-hide text-xs">
+                <div className={`pt-2 border-t ${isDark ? 'border-white/10' : 'border-slate-200'}`}>
+                  <h4 className={`font-semibold mb-1 ${isDark ? 'text-gray-300' : 'text-slate-700'}`}>Thuật ngữ cốt lõi (Glossary):</h4>
+                  <div className={`leading-relaxed max-h-32 overflow-y-auto scrollbar-hide text-xs ${isDark ? 'text-gray-300' : 'text-slate-700'}`}>
                     <MarkdownRenderer content={studyGuide.glossary.replace(/^#+\s*(Thuật ngữ|Glossary)[^\n]*\n+/i, '').trim()} isDark={isDark} />
                   </div>
                 </div>
               )}
 
-              <div className="pt-3 grid grid-cols-2 gap-2 border-t border-white/10">
+              <div className={`pt-3 grid grid-cols-2 gap-2 border-t ${isDark ? 'border-white/10' : 'border-slate-200'}`}>
                 <button 
                   onClick={() => setShowQuiz(true)}
                   disabled={!studyGuide.quiz || studyGuide.quiz.length === 0}
-                  className="min-w-0 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/30 py-2 px-2 rounded-xl transition flex items-center justify-center gap-1.5 font-semibold text-xs disabled:opacity-40"
+                  className="min-w-0 bg-blue-500/10 hover:bg-blue-500/20 text-blue-500 border border-blue-500/30 py-2 px-2 rounded-xl transition flex items-center justify-center gap-1.5 font-semibold text-xs disabled:opacity-40 cursor-pointer"
                 >
                   <Brain size={14} className="shrink-0" /> 
                   <span className="truncate">Trắc nghiệm ({studyGuide.quiz?.length || 0})</span>
@@ -2089,7 +2426,7 @@ function Studio() {
                 <button 
                   onClick={() => setShowFlashcards(true)}
                   disabled={!studyGuide.flashcards || studyGuide.flashcards.length === 0}
-                  className="min-w-0 bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 border border-purple-500/30 py-2 px-2 rounded-xl transition flex items-center justify-center gap-1.5 font-semibold text-xs disabled:opacity-40"
+                  className="min-w-0 bg-purple-500/10 hover:bg-purple-500/20 text-purple-500 border border-purple-500/30 py-2 px-2 rounded-xl transition flex items-center justify-center gap-1.5 font-semibold text-xs disabled:opacity-40 cursor-pointer"
                   title="Mở bộ thẻ lật 3D, game ghép thẻ và xuất Quizlet"
                 >
                   <Layers size={14} className="shrink-0" /> 
@@ -2101,7 +2438,9 @@ function Studio() {
         </div>
 
         {/* Feature #8: Mind Map Card */}
-        <div className="p-4 rounded-2xl bg-[#181a20] border border-white/10">
+        <div className={`p-4 rounded-2xl border ${
+          isDark ? 'bg-[#181a20] border-white/10 text-white' : 'bg-slate-50 border-slate-200 text-slate-800 shadow-sm'
+        }`}>
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-sm font-bold text-indigo-400 flex items-center gap-1.5">
               <Network size={16} /> Sơ Đồ Tư Duy (Mind Map)
@@ -2110,27 +2449,31 @@ function Studio() {
               <button
                 onClick={() => handleRegenerateMindmap()}
                 disabled={loadingMindmap}
-                className="text-[11px] text-gray-400 hover:text-white p-1 hover:bg-white/5 rounded-lg transition"
+                className={`text-[11px] p-1 rounded-lg transition cursor-pointer ${
+                  isDark ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-slate-500 hover:text-slate-900 hover:bg-slate-200'
+                }`}
                 title="Tái tạo sơ đồ tư duy"
               >
                 <RefreshCw size={12} className={loadingMindmap ? 'animate-spin' : ''} />
               </button>
             )}
           </div>
-          <p className="text-xs text-gray-400 mb-3 leading-relaxed">
+          <p className={`text-xs mb-3 leading-relaxed ${isDark ? 'text-gray-400' : 'text-slate-500'}`}>
             Trực quan hóa mạng lưới khái niệm và luận điểm trọng tâm trong tài liệu.
           </p>
           <button
             onClick={handleOpenMindmap}
             disabled={documents.length === 0}
-            className="w-full bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-semibold text-xs py-2.5 rounded-xl transition disabled:opacity-40 flex justify-center items-center gap-2"
+            className="w-full bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 font-semibold text-xs py-2.5 rounded-xl transition disabled:opacity-40 flex justify-center items-center gap-2 cursor-pointer"
           >
             <Network size={14} /> Mở Sơ đồ tư duy 2D
           </button>
         </div>
 
         {/* Feature #15: Timeline & Outline Card */}
-        <div className="p-4 rounded-2xl bg-[#181a20] border border-white/10">
+        <div className={`p-4 rounded-2xl border ${
+          isDark ? 'bg-[#181a20] border-white/10 text-white' : 'bg-slate-50 border-slate-200 text-slate-800 shadow-sm'
+        }`}>
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-sm font-bold text-emerald-400 flex items-center gap-1.5">
               <Clock size={16} /> Dòng Thời Gian & Dàn Ý
@@ -2139,27 +2482,31 @@ function Studio() {
               <button
                 onClick={() => handleRegenerateTimeline()}
                 disabled={loadingTimeline}
-                className="text-[11px] text-gray-400 hover:text-white p-1 hover:bg-white/5 rounded-lg transition"
+                className={`text-[11px] p-1 rounded-lg transition cursor-pointer ${
+                  isDark ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-slate-500 hover:text-slate-900 hover:bg-slate-200'
+                }`}
                 title="Tái tạo tiến trình & dàn ý"
               >
                 <RefreshCw size={12} className={loadingTimeline ? 'animate-spin' : ''} />
               </button>
             )}
           </div>
-          <p className="text-xs text-gray-400 mb-3 leading-relaxed">
+          <p className={`text-xs mb-3 leading-relaxed ${isDark ? 'text-gray-400' : 'text-slate-500'}`}>
             Xem niên biểu các mốc sự kiện và dàn ý phân cấp cấu trúc của tài liệu.
           </p>
           <button
             onClick={handleOpenTimeline}
             disabled={documents.length === 0}
-            className="w-full bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-semibold text-xs py-2.5 rounded-xl transition disabled:opacity-40 flex justify-center items-center gap-2"
+            className="w-full bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-semibold text-xs py-2.5 rounded-xl transition disabled:opacity-40 flex justify-center items-center gap-2 cursor-pointer"
           >
             <Clock size={14} /> Xem Niên biểu & Dàn bài
           </button>
         </div>
 
         {/* Podcast Card */}
-        <div className="p-4 rounded-2xl bg-[#181a20] border border-white/10">
+        <div className={`p-4 rounded-2xl border ${
+          isDark ? 'bg-[#181a20] border-white/10 text-white' : 'bg-slate-50 border-slate-200 text-slate-800 shadow-sm'
+        }`}>
           <div className="flex items-center justify-between mb-2.5">
             <h3 className="text-sm font-bold text-purple-400 flex items-center gap-1.5">
               <Headphones size={16} /> Trò Chuyện Audio (Podcast)
@@ -2168,7 +2515,7 @@ function Studio() {
               <button 
                 onClick={() => setShowPodcastModal(true)}
                 disabled={podcastGenerating}
-                className="text-[11px] bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 border border-purple-500/30 px-2 py-0.5 rounded-lg flex items-center gap-1 transition"
+                className="text-[11px] bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 border border-purple-500/30 px-2 py-0.5 rounded-lg flex items-center gap-1 transition cursor-pointer"
                 title="Tùy chỉnh chủ đề và phong cách Podcast"
               >
                 <SlidersHorizontal size={11} /> Tùy chỉnh
@@ -2176,7 +2523,7 @@ function Studio() {
             )}
           </div>
           
-          <p className="text-xs text-gray-400 mb-3 leading-relaxed">
+          <p className={`text-xs mb-3 leading-relaxed ${isDark ? 'text-gray-400' : 'text-slate-500'}`}>
             AI tự động viết kịch bản và thảo luận bằng âm thanh giữa 2 người dẫn chương trình.
           </p>
 
@@ -2184,7 +2531,7 @@ function Studio() {
             <button 
               onClick={generatePodcast}
               disabled={podcastGenerating || documents.length === 0}
-              className="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:opacity-90 text-white font-semibold text-xs py-2.5 rounded-xl transition disabled:opacity-40 flex justify-center items-center gap-2"
+              className="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:opacity-90 text-white font-semibold text-xs py-2.5 rounded-xl transition disabled:opacity-40 flex justify-center items-center gap-2 cursor-pointer shadow"
             >
               {podcastGenerating ? <RefreshCw className="animate-spin" size={14} /> : <Headphones size={14} />}
               {podcastGenerating ? "Đang tạo âm thanh (vui lòng đợi)..." : "Tạo Podcast AI"}
@@ -2195,7 +2542,9 @@ function Studio() {
               <button 
                 onClick={() => setShowPodcastModal(true)}
                 disabled={podcastGenerating}
-                className="w-full py-1.5 text-[11px] text-gray-400 hover:text-white hover:bg-white/5 rounded-lg transition text-center"
+                className={`w-full py-1.5 text-[11px] rounded-lg transition text-center cursor-pointer ${
+                  isDark ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-slate-500 hover:text-slate-900 hover:bg-slate-200'
+                }`}
               >
                 Tạo bản thu khác (Tùy chỉnh)
               </button>
@@ -2204,38 +2553,42 @@ function Studio() {
         </div>
 
         {/* Feature: Phản biện AI (Deep Critique) */}
-        <div className="p-4 rounded-2xl bg-[#181a20] border border-white/10">
+        <div className={`p-4 rounded-2xl border ${
+          isDark ? 'bg-[#181a20] border-white/10 text-white' : 'bg-slate-50 border-slate-200 text-slate-800 shadow-sm'
+        }`}>
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-sm font-bold text-rose-400 flex items-center gap-1.5">
               <ShieldAlert size={16} /> Phản Biện AI (Peer Review)
             </h3>
           </div>
-          <p className="text-xs text-gray-400 mb-3 leading-relaxed">
+          <p className={`text-xs mb-3 leading-relaxed ${isDark ? 'text-gray-400' : 'text-slate-500'}`}>
             Tìm điểm mù, lỗ hổng lập luận, thiếu sót dữ liệu và các câu hỏi phản biện sắc bén.
           </p>
           <button
             onClick={() => handleRunStudioTool('critique')}
             disabled={documents.length === 0}
-            className="w-full bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 font-semibold text-xs py-2.5 rounded-xl transition disabled:opacity-40 flex justify-center items-center gap-2 cursor-pointer"
+            className="w-full bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 font-semibold text-xs py-2.5 rounded-xl transition disabled:opacity-40 flex justify-center items-center gap-2 cursor-pointer"
           >
             <ShieldAlert size={14} /> Tạo Báo cáo Phản biện
           </button>
         </div>
 
         {/* Feature: Kế hoạch hành động (Action Plan) */}
-        <div className="p-4 rounded-2xl bg-[#181a20] border border-white/10">
+        <div className={`p-4 rounded-2xl border ${
+          isDark ? 'bg-[#181a20] border-white/10 text-white' : 'bg-slate-50 border-slate-200 text-slate-800 shadow-sm'
+        }`}>
           <div className="flex items-center justify-between mb-2">
-            <h3 className="text-sm font-bold text-lime-400 flex items-center gap-1.5">
+            <h3 className="text-sm font-bold text-lime-500 flex items-center gap-1.5">
               <ClipboardCheck size={16} /> Kế Hoạch Hành Động
             </h3>
           </div>
-          <p className="text-xs text-gray-400 mb-3 leading-relaxed">
+          <p className={`text-xs mb-3 leading-relaxed ${isDark ? 'text-gray-400' : 'text-slate-500'}`}>
             Chuyển hóa lý thuyết thành ma trận hành động (Action Matrix) và checklist thực thi.
           </p>
           <button
             onClick={() => handleRunStudioTool('action_plan')}
             disabled={documents.length === 0}
-            className="w-full bg-lime-500/10 hover:bg-lime-500/20 text-lime-300 border border-lime-500/30 font-semibold text-xs py-2.5 rounded-xl transition disabled:opacity-40 flex justify-center items-center gap-2 cursor-pointer"
+            className="w-full bg-lime-500/10 hover:bg-lime-500/20 text-lime-500 border border-lime-500/30 font-semibold text-xs py-2.5 rounded-xl transition disabled:opacity-40 flex justify-center items-center gap-2 cursor-pointer"
           >
             <ClipboardCheck size={14} /> Lập Kế hoạch Thực thi
           </button>
@@ -2908,18 +3261,30 @@ function Studio() {
               </div>
               <div className="flex items-center gap-2">
                 {critiqueModal.content && !critiqueModal.loading && (
-                  <button 
-                    onClick={() => {
-                      navigator.clipboard.writeText(critiqueModal.content);
-                      alert("Đã sao chép nội dung vào Clipboard!");
-                    }}
-                    className="p-1.5 text-gray-400 hover:text-white rounded-lg hover:bg-white/10 transition"
-                    title="Sao chép nội dung"
-                  >
-                    <Copy size={16} />
-                  </button>
+                  <>
+                    <button 
+                      type="button"
+                      onClick={() => handlePinNote(critiqueModal.content, critiqueModal.title, critiqueModal.type)}
+                      className="p-1.5 text-gray-400 hover:text-amber-300 rounded-lg hover:bg-white/10 transition flex items-center gap-1 text-xs cursor-pointer"
+                      title="Ghim vào Bảng Ghi chú"
+                    >
+                      <BookmarkPlus size={16} />
+                      <span className="hidden sm:inline">Ghim</span>
+                    </button>
+                    <button 
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(critiqueModal.content);
+                        alert("Đã sao chép nội dung vào Clipboard!");
+                      }}
+                      className="p-1.5 text-gray-400 hover:text-white rounded-lg hover:bg-white/10 transition cursor-pointer"
+                      title="Sao chép nội dung"
+                    >
+                      <Copy size={16} />
+                    </button>
+                  </>
                 )}
-                <button onClick={() => setCritiqueModal(prev => ({ ...prev, isOpen: false }))} className="p-1.5 text-gray-400 hover:text-white rounded-lg">
+                <button type="button" onClick={() => setCritiqueModal(prev => ({ ...prev, isOpen: false }))} className="p-1.5 text-gray-400 hover:text-white rounded-lg cursor-pointer">
                   <X className="w-5 h-5" />
                 </button>
               </div>
@@ -2933,6 +3298,116 @@ function Studio() {
                 </div>
               ) : (
                 <MarkdownRenderer content={critiqueModal.content} isDark={isDark} />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Pinned Notes (Bảng Ghi chú Nghiên cứu) */}
+      {showNotesModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in font-sans">
+          <div className={`rounded-2xl max-w-2xl w-full max-h-[85vh] flex flex-col shadow-2xl border overflow-hidden ${
+            isDark ? 'bg-[#181a20] border-white/15 text-white' : 'bg-white border-slate-200 text-slate-800'
+          }`}>
+            <div className={`p-4 border-b flex items-center justify-between ${
+              isDark ? 'border-white/10 bg-amber-500/10' : 'border-slate-200 bg-amber-50'
+            }`}>
+              <div className="flex items-center gap-2">
+                <Bookmark className="w-5 h-5 text-amber-500" />
+                <h3 className="font-bold text-base">Bảng Ghi chú Nghiên cứu ({pinnedNotes.length})</h3>
+              </div>
+              <button 
+                type="button"
+                onClick={() => setShowNotesModal(false)} 
+                className={`p-1.5 rounded-lg transition cursor-pointer ${isDark ? 'text-gray-400 hover:text-white' : 'text-slate-400 hover:text-slate-800'}`}
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className={`p-4 border-b space-y-2.5 ${isDark ? 'border-white/10 bg-white/[0.01]' : 'border-slate-200 bg-slate-50/50'}`}>
+              <input 
+                type="text"
+                value={newNoteTitle}
+                onChange={e => setNewNoteTitle(e.target.value)}
+                placeholder="Tiêu đề ghi chú mới (tùy chọn)..."
+                className={`w-full px-3 py-2 text-xs rounded-xl border outline-none ${
+                  isDark ? 'bg-black/40 border-white/10 text-white placeholder-gray-500' : 'bg-white border-slate-300 text-slate-900 placeholder-slate-400'
+                }`}
+              />
+              <div className="flex gap-2">
+                <textarea
+                  value={newNoteContent}
+                  onChange={e => setNewNoteContent(e.target.value)}
+                  placeholder="Viết ghi chú cá nhân hoặc nhận định của bạn..."
+                  rows={2}
+                  className={`flex-1 px-3 py-2 text-xs rounded-xl border outline-none resize-none ${
+                    isDark ? 'bg-black/40 border-white/10 text-white placeholder-gray-500' : 'bg-white border-slate-300 text-slate-900 placeholder-slate-400'
+                  }`}
+                />
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!newNoteContent.trim()) return;
+                    setSavingNote(true);
+                    await handlePinNote(newNoteContent, newNoteTitle || 'Ghi chú tự tạo', 'manual');
+                    setNewNoteContent('');
+                    setNewNoteTitle('');
+                    setSavingNote(false);
+                  }}
+                  disabled={savingNote || !newNoteContent.trim()}
+                  className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-semibold self-end transition disabled:opacity-50 cursor-pointer shadow"
+                >
+                  {savingNote ? 'Đang lưu...' : 'Thêm'}
+                </button>
+              </div>
+            </div>
+
+            <div className="p-4 overflow-y-auto flex-1 space-y-3 scrollbar-hide">
+              {pinnedNotes.length === 0 ? (
+                <div className="text-center py-12 text-gray-400 text-xs leading-relaxed">
+                  <Bookmark className="w-8 h-8 mx-auto mb-2 opacity-30 text-amber-400" />
+                  Chưa có ghi chú nào được ghim.<br />Hãy bấm biểu tượng ghim trên tin nhắn AI hoặc Studio tools để lưu lại!
+                </div>
+              ) : (
+                pinnedNotes.map((note) => (
+                  <div 
+                    key={note.id}
+                    className={`p-3.5 rounded-xl border transition ${
+                      isDark ? 'bg-white/[0.03] border-white/10 hover:border-white/20' : 'bg-slate-50 border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="font-semibold text-xs text-amber-500">{note.title || 'Ghi chú'}</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] text-gray-500">{note.created_at}</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard.writeText(note.content);
+                            alert("Đã sao chép ghi chú!");
+                          }}
+                          className={`p-1 rounded cursor-pointer ${isDark ? 'text-gray-400 hover:text-white' : 'text-slate-500 hover:text-slate-900'}`}
+                          title="Sao chép"
+                        >
+                          <Copy size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteNote(note.id)}
+                          className={`p-1 rounded cursor-pointer ${isDark ? 'text-gray-400 hover:text-red-400' : 'text-slate-500 hover:text-red-600'}`}
+                          title="Xóa ghi chú"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </div>
+                    <p className={`text-xs whitespace-pre-wrap leading-relaxed ${isDark ? 'text-gray-300' : 'text-slate-700'}`}>
+                      {note.content}
+                    </p>
+                  </div>
+                ))
               )}
             </div>
           </div>

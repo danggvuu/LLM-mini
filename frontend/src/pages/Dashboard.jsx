@@ -110,6 +110,7 @@ function Dashboard() {
       if (provider === 'gemini') finalKey = globalSettings.gemini_api_key || '';
       else if (provider === 'openai') finalKey = globalSettings.openai_api_key || '';
       else if (provider === 'groq') finalKey = globalSettings.groq_api_key || '';
+      else if (provider === '9router') finalKey = globalSettings.router9_api_key || '9router-local';
     }
 
     if (['gemini', 'openai', 'groq'].includes(provider) && !finalKey) {
@@ -153,6 +154,12 @@ function Dashboard() {
       return {
         label: `LM Studio: ${nb.model_name || 'Local'}`,
         color: 'bg-teal-500/20 text-teal-300 border-teal-500/30'
+      };
+    }
+    if (prov === '9router') {
+      return {
+        label: `9Router: ${nb.model_name || 'Multi-model'}`,
+        color: 'bg-orange-500/20 text-orange-400 border-orange-500/30'
       };
     }
     if (prov === 'gemini') {
@@ -271,13 +278,17 @@ function Dashboard() {
           {/* Create New Card */}
           <div 
             onClick={handleOpenCreateModal}
-            className="aspect-[4/3] rounded-2xl bg-white/[0.03] hover:bg-white/[0.07] border border-dashed border-white/15 hover:border-white/30 transition-all cursor-pointer flex flex-col items-center justify-center group"
+            className={`aspect-[4/3] rounded-2xl border border-dashed transition-all cursor-pointer flex flex-col items-center justify-center group ${
+              isDark 
+                ? 'bg-white/[0.03] hover:bg-white/[0.07] border-white/15 hover:border-white/30' 
+                : 'bg-white hover:bg-slate-50 border-slate-300 hover:border-slate-400 shadow-sm'
+            }`}
           >
-            <div className="w-12 h-12 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+            <div className="w-12 h-12 rounded-full bg-blue-500/20 text-blue-500 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
               <Plus size={24} />
             </div>
-            <span className="font-semibold text-base text-gray-200">Tạo sổ ghi chú mới</span>
-            <span className="text-xs text-gray-500 mt-1">Cắm Local hoặc Cloud AI</span>
+            <span className={`font-semibold text-base ${isDark ? 'text-gray-200' : 'text-slate-800'}`}>Tạo sổ ghi chú mới</span>
+            <span className={`text-xs mt-1 ${isDark ? 'text-gray-500' : 'text-slate-400'}`}>Cắm Local hoặc Cloud AI</span>
           </div>
 
           {/* Existing Notebooks */}
@@ -287,7 +298,11 @@ function Dashboard() {
               <div 
                 key={nb.id}
                 onClick={() => navigate(`/notebook/${nb.id}`)}
-                className="aspect-[4/3] rounded-2xl bg-[#181a20] border border-white/10 p-5 flex flex-col justify-between cursor-pointer hover:border-white/25 transition-all hover:-translate-y-1 hover:shadow-xl relative overflow-hidden group"
+                className={`aspect-[4/3] rounded-2xl border p-5 flex flex-col justify-between cursor-pointer transition-all hover:-translate-y-1 hover:shadow-xl relative overflow-hidden group ${
+                  isDark 
+                    ? 'bg-[#181a20] border-white/10 hover:border-white/25 text-white' 
+                    : 'bg-white border-slate-200 hover:border-slate-300 text-slate-800 shadow-sm'
+                }`}
               >
                 <div className="flex items-center justify-between">
                   <span className={`text-[11px] font-medium px-2.5 py-1 rounded-full border ${badge.color}`}>
@@ -295,7 +310,9 @@ function Dashboard() {
                   </span>
                   <button 
                     onClick={(e) => handleDeleteNotebook(e, nb.id)}
-                    className="opacity-0 group-hover:opacity-100 p-1.5 text-gray-400 hover:text-red-400 hover:bg-white/10 rounded-lg transition"
+                    className={`opacity-0 group-hover:opacity-100 p-1.5 rounded-lg transition ${
+                      isDark ? 'text-gray-400 hover:text-red-400 hover:bg-white/10' : 'text-slate-400 hover:text-red-500 hover:bg-slate-100'
+                    }`}
                     title="Xóa sổ ghi chú"
                   >
                     <Trash2 size={15} />
@@ -303,8 +320,8 @@ function Dashboard() {
                 </div>
                 
                 <div>
-                  <h3 className="font-semibold text-lg text-white mb-1.5 line-clamp-2 leading-snug">{nb.title}</h3>
-                  <p className="text-xs text-gray-500">{new Date(nb.created_at).toLocaleDateString('vi-VN')}</p>
+                  <h3 className={`font-semibold text-lg mb-1.5 line-clamp-2 leading-snug ${isDark ? 'text-white' : 'text-slate-900'}`}>{nb.title}</h3>
+                  <p className={`text-xs ${isDark ? 'text-gray-500' : 'text-slate-400'}`}>{new Date(nb.created_at).toLocaleDateString('vi-VN')}</p>
                 </div>
               </div>
             );

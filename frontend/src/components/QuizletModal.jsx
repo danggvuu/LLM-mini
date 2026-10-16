@@ -61,6 +61,20 @@ export default function QuizletModal({
     }
   }, [flashcards, isOpen]);
 
+  // Cleanup toàn bộ timers khi đóng modal hoặc đổi tab để tránh rò rỉ bộ nhớ (Memory Leak)
+  useEffect(() => {
+    if (!isOpen) {
+      if (practiceTimerRef.current) clearInterval(practiceTimerRef.current);
+      if (timerRef.current) clearInterval(timerRef.current);
+      setPracticeActive(false);
+      setGameActive(false);
+    }
+    return () => {
+      if (practiceTimerRef.current) clearInterval(practiceTimerRef.current);
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, [isOpen]);
+
   // Fetch SRS progress from backend
   useEffect(() => {
     if (isOpen && notebookId) {

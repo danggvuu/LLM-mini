@@ -1,4 +1,4 @@
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from src.llm.llm_client import LLMEngine
 from src.retrieval.vector_store import VectorStoreManager
 from src.utils.logger import logger
@@ -14,9 +14,23 @@ class CritiqueAndActionGenerator:
         self.store = vector_store
         self.notebook_id = notebook_id
 
-    def _collect_context(self, source_filter: Optional[str] = None, max_chars: int = 16000) -> str:
+    def _collect_context(
+        self,
+        source_filter: Optional[str] = None,
+        selected_documents: Optional[List[str]] = None,
+        max_chars: int = 16000
+    ) -> str:
         chunks = self.store.get_all_chunks(limit=250, notebook_id=self.notebook_id)
-        if source_filter:
+        if selected_documents:
+            chunks = [
+                c for c in chunks
+                if c.get("metadata", {}).get("source") in selected_documents
+                or c.get("metadata", {}).get("filename") in selected_documents
+                or c.get("metadata", {}).get("source_file") in selected_documents
+                or c.get("metadata", {}).get("title") in selected_documents
+                or c.get("metadata", {}).get("document_id") in selected_documents
+            ]
+        elif source_filter:
             chunks = [
                 c for c in chunks 
                 if c.get("metadata", {}).get("source") == source_filter 
@@ -38,9 +52,13 @@ class CritiqueAndActionGenerator:
             total += len(block)
         return "".join(text_parts)
 
-    def generate_critique(self, source_filter: Optional[str] = None) -> Dict[str, Any]:
-        logger.info(f"Đang tạo Báo cáo Phản biện (Critique) (source={source_filter})")
-        context = self._collect_context(source_filter)
+    def generate_critique(
+        self,
+        source_filter: Optional[str] = None,
+        selected_documents: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        logger.info(f"Đang tạo Báo cáo Phản biện (Critique) (source={source_filter}, selected_docs={selected_documents})")
+        context = self._collect_context(source_filter=source_filter, selected_documents=selected_documents)
         if not context:
             return {"error": "Chưa có tài liệu nào để phân tích phản biện."}
 
@@ -70,9 +88,13 @@ NỘI DUNG TÀI LIỆU:
             res = "".join(chunks).strip() if hasattr(chunks, "__iter__") and not isinstance(chunks, str) else str(chunks)
         return {"content": res}
 
-    def generate_action_plan(self, source_filter: Optional[str] = None) -> Dict[str, Any]:
-        logger.info(f"Đang tạo Action Plan (source={source_filter})")
-        context = self._collect_context(source_filter)
+    def generate_action_plan(
+        self,
+        source_filter: Optional[str] = None,
+        selected_documents: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        logger.info(f"Đang tạo Action Plan (source={source_filter}, selected_docs={selected_documents})")
+        context = self._collect_context(source_filter=source_filter, selected_documents=selected_documents)
         if not context:
             return {"error": "Chưa có tài liệu nào để lập kế hoạch hành động."}
 

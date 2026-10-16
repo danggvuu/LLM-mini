@@ -1,6 +1,8 @@
 import os
 import json
 import sys
+import time
+from datetime import datetime
 import logging
 
 if sys.stdout.encoding != 'utf-8':
@@ -1363,9 +1365,11 @@ async def get_document_chunks(
 ):
     """Xem toàn bộ các đoạn (chunks) đã bóc tách của 1 tài liệu cụ thể."""
     target_nb = notebook_id
-    if not target_nb or target_nb == "default":
-        if request and request.query_params.get("notebook_id"):
+    if (not target_nb or target_nb == "default") and request:
+        if request.query_params.get("notebook_id"):
             target_nb = request.query_params.get("notebook_id")
+        elif request.headers.get("x-notebook-id"):
+            target_nb = request.headers.get("x-notebook-id")
     engines = get_notebook_engines(target_nb)
     all_chunks = engines["store"].get_all_chunks(limit=500, notebook_id=target_nb)
     matched = [
@@ -1406,12 +1410,14 @@ async def create_critique(
 ):
     """Tạo Báo cáo Phản biện & Tìm lỗ hổng (Peer Review)."""
     target_nb = req.notebook_id or notebook_id
-    if not target_nb or target_nb == "default":
-        if request and request.headers.get("x-notebook-id"):
+    if (not target_nb or target_nb == "default") and request:
+        if request.query_params.get("notebook_id"):
+            target_nb = request.query_params.get("notebook_id")
+        elif request.headers.get("x-notebook-id"):
             target_nb = request.headers.get("x-notebook-id")
     engines = get_notebook_engines(target_nb)
     source_filter = req.source_filter or (req.selected_documents[0] if req.selected_documents and len(req.selected_documents) == 1 else None)
-    return engines["critique"].generate_critique(source_filter=source_filter)
+    return engines["critique"].generate_critique(source_filter=source_filter, selected_documents=req.selected_documents)
 
 
 @app.post("/api/studio/action-plan")
@@ -1423,12 +1429,83 @@ async def create_action_plan(
 ):
     """Tạo Kế hoạch hành động (Action Matrix & Checklist)."""
     target_nb = req.notebook_id or notebook_id
-    if not target_nb or target_nb == "default":
-        if request and request.headers.get("x-notebook-id"):
+    if (not target_nb or target_nb == "default") and request:
+        if request.query_params.get("notebook_id"):
+            target_nb = request.query_params.get("notebook_id")
+        elif request.headers.get("x-notebook-id"):
             target_nb = request.headers.get("x-notebook-id")
     engines = get_notebook_engines(target_nb)
     source_filter = req.source_filter or (req.selected_documents[0] if req.selected_documents and len(req.selected_documents) == 1 else None)
-    return engines["critique"].generate_action_plan(source_filter=source_filter)
+    return engines["critique"].generate_action_plan(source_filter=source_filter, selected_documents=req.selected_documents)
+
+
+# --- Pinned Notes (Bảng Ghi chú Nghiên cứu) APIs ---
+NOTES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "storage", "notes")
+os.makedirs(NOTES_DIR, exist_ok=True)
+
+def _get_notes_path(notebook_id: str) -> str:
+    safe_id = "".join([c for c in notebook_id if c.isalnum() or c in ("-", "_")]) or "default"
+    return os.path.join(NOTES_DIR, f"{safe_id}_notes.json")
+
+def _load_notes(notebook_id: str) -> List[Dict[str, Any]]:
+    path = _get_notes_path(notebook_id)
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        logger.error(f"Lỗi khi đọc ghi chú notebook {notebook_id}: {e}")
+        return []
+
+def _save_notes(notebook_id: str, notes: List[Dict[str, Any]]) -> None:
+    path = _get_notes_path(notebook_id)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(notes, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f"Lỗi khi lưu ghi chú notebook {notebook_id}: {e}")
+
+
+class NoteItemRequest(BaseModel):
+    content: str
+    title: Optional[str] = "Ghi chú"
+    source: Optional[str] = "manual"
+
+
+@app.get("/api/notebooks/{notebook_id}/notes")
+def get_notebook_notes(notebook_id: str):
+    """Lấy danh sách ghi chú đã ghim của sổ tay."""
+    notes = _load_notes(notebook_id)
+    return {"notes": notes}
+
+
+@app.post("/api/notebooks/{notebook_id}/notes")
+def create_notebook_note(notebook_id: str, payload: NoteItemRequest):
+    """Thêm ghi chú mới vào sổ tay."""
+    if not payload.content or not payload.content.strip():
+        raise HTTPException(status_code=400, detail="Nội dung ghi chú không được để trống")
+    notes = _load_notes(notebook_id)
+    new_note = {
+        "id": f"note_{int(time.time() * 1000)}",
+        "title": payload.title.strip() if payload.title else "Ghi chú",
+        "content": payload.content.strip(),
+        "source": payload.source or "manual",
+        "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    }
+    notes.insert(0, new_note)
+    _save_notes(notebook_id, notes)
+    return {"message": "Đã lưu ghi chú thành công", "note": new_note, "notes": notes}
+
+
+@app.delete("/api/notebooks/{notebook_id}/notes/{note_id}")
+def delete_notebook_note(notebook_id: str, note_id: str):
+    """Xóa một ghi chú theo id."""
+    notes = _load_notes(notebook_id)
+    new_notes = [n for n in notes if n.get("id") != note_id]
+    _save_notes(notebook_id, new_notes)
+    return {"message": "Đã xóa ghi chú", "notes": new_notes}
+
 
 # --- Phục vụ Giao Diện React Frontend (SPA) ---
 FRONTEND_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "frontend", "dist")
