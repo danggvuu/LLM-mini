@@ -108,10 +108,6 @@ class PodcastGenerator:
 
     def _generate_with_edge_tts_multi_voice(self, dialogues: List[Tuple[str, str]], output_file: str):
         """Sử dụng edge-tts CLI ghép trực tiếp luồng âm thanh 2 giọng Nam & Nữ chuẩn xác."""
-        edge_bin = shutil.which("edge-tts") or "/opt/anaconda3/bin/edge-tts"
-        if not os.path.exists(edge_bin) and not shutil.which("edge-tts"):
-            raise RuntimeError("edge-tts command not found")
-        
         voice_a = "vi-VN-NamMinhNeural"
         voice_b = "vi-VN-HoaiMyNeural"
 
@@ -124,8 +120,13 @@ class PodcastGenerator:
                     continue
                 voice = voice_a if speaker == 'A' else voice_b
                 chunk_path = os.path.join(temp_dir, f"chunk_{i}.mp3")
-                cmd = [edge_bin, "--text", text.strip(), "--voice", voice, "--write-media", chunk_path]
+                cmd = [sys.executable, "-m", "edge_tts", "--text", text.strip(), "--voice", voice, "--write-media", chunk_path]
                 res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=25)
+                if res.returncode != 0 or not os.path.exists(chunk_path) or os.path.getsize(chunk_path) <= 100:
+                    edge_bin = shutil.which("edge-tts")
+                    if edge_bin:
+                        cmd = [edge_bin, "--text", text.strip(), "--voice", voice, "--write-media", chunk_path]
+                        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=25)
                 if res.returncode == 0 and os.path.exists(chunk_path) and os.path.getsize(chunk_path) > 100:
                     chunk_files.append(chunk_path)
             

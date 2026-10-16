@@ -23,6 +23,12 @@ else
     echo "⚠️ Không tìm thấy thư mục .venv, dùng Python hệ thống..."
 fi
 
+# Đảm bảo các thư viện phát âm thanh Podcast (edge-tts) đã sẵn sàng
+if ! python3 -c "import edge_tts" &> /dev/null; then
+    echo "📦 Đang nạp thư viện phát âm thanh Podcast (edge-tts)..."
+    python3 -m pip install edge-tts pyttsx3 2>/dev/null || ~/.local/bin/uv pip install edge-tts pyttsx3 2>/dev/null || true
+fi
+
 # 2. Kiểm tra bản build Frontend React
 if [ ! -d "frontend/dist" ] || [ ! -f "frontend/dist/index.html" ]; then
     echo "⚙️ Chưa tìm thấy bản build Frontend. Đang biên dịch React..."

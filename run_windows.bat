@@ -25,6 +25,12 @@ if exist ".venv\Scripts\activate.bat" (
     echo [1/3] Dùng Python hệ thống...
 )
 
+python -c "import edge_tts" >nul 2>&1
+if errorlevel 1 (
+    echo [1.5/3] Đang nạp thư viện phát âm thanh Podcast (edge-tts)...
+    pip install edge-tts pyttsx3 >nul 2>&1
+)
+
 :: 2. Kiểm tra bản build Frontend React
 if not exist "frontend\dist\index.html" (
     echo [2/3] Chưa tìm thấy bản build Frontend. Đang biên dịch React...
