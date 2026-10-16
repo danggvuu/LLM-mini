@@ -634,7 +634,7 @@ function Studio() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...guideConfig,
-          selected_documents: Array.from(selectedDocs)
+          selected_documents: selectedDocs.size > 0 ? Array.from(selectedDocs) : (documents || []).map(d => d.filename)
         })
       });
       setStudyGuide(null); // Kích hoạt polling
@@ -657,7 +657,7 @@ function Studio() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...guideConfig,
-          selected_documents: Array.from(selectedDocs)
+          selected_documents: selectedDocs.size > 0 ? Array.from(selectedDocs) : (documents || []).map(d => d.filename)
         })
       });
       setStudyGuide(null); // Kích hoạt polling cập nhật giao diện
@@ -681,7 +681,7 @@ function Studio() {
           notebook_id: activeNotebook.id,
           focus_topic: podcastConfig.focus_topic,
           style: podcastConfig.style,
-          selected_documents: Array.from(selectedDocs)
+          selected_documents: selectedDocs.size > 0 ? Array.from(selectedDocs) : (documents || []).map(d => d.filename)
         })
       });
       if (!res.ok) throw new Error("Lỗi khi gọi API tạo Podcast");
@@ -909,7 +909,7 @@ function Studio() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           focus_topic: topic,
-          selected_documents: Array.from(selectedDocs)
+          selected_documents: selectedDocs.size > 0 ? Array.from(selectedDocs) : (documents || []).map(d => d.filename)
         })
       });
       if (!res.ok) {
@@ -960,7 +960,7 @@ function Studio() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           focus_topic: topic,
-          selected_documents: Array.from(selectedDocs)
+          selected_documents: selectedDocs.size > 0 ? Array.from(selectedDocs) : (documents || []).map(d => d.filename)
         })
       });
       if (!res.ok) {
@@ -1082,7 +1082,7 @@ function Studio() {
         body: JSON.stringify({
           notebook_id: nbId,
           source_filter: selectedDocs.size === 1 ? Array.from(selectedDocs)[0] : null,
-          selected_documents: Array.from(selectedDocs)
+          selected_documents: selectedDocs.size > 0 ? Array.from(selectedDocs) : (documents || []).map(d => d.filename)
         })
       });
       if (res.ok) {

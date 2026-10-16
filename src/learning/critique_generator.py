@@ -1,3 +1,5 @@
+import os
+import json
 from typing import Dict, Any, Optional, List
 from src.llm.llm_client import LLMEngine
 from src.ingestion.indexing import VectorStoreManager
@@ -42,39 +44,94 @@ class CritiqueAndActionGenerator:
 
         if target_filenames and hasattr(self.store, "get_chunks_by_document"):
             for fname in target_filenames:
-                raw_chunks = self.store.get_chunks_by_document(self.notebook_id, fname, limit=20)
-                for ch_text in raw_chunks:
-                    if not ch_text:
+                try:
+                    raw_chunks = self.store.get_chunks_by_document(self.notebook_id, fname, limit=20)
+                    for ch_text in raw_chunks:
+                        if not ch_text:
+                            continue
+                        block = f"[Nguồn: {fname}]\n{ch_text}\n\n"
+                        if total + len(block) > max_chars:
+                            break
+                        text_parts.append(block)
+                        total += len(block)
+                    if total >= max_chars:
+                        break
+                except Exception as e:
+                    logger.warning(f"Lỗi lấy chunks cho file {fname}: {e}")
+
+        # Ưu tiên 2: Fallback trực tiếp vào kho chỉ mục BM25 (storage/bm25/{notebook_id}/bm25_docs.json)
+        if not text_parts:
+            bm25_path = os.path.join("storage", "bm25", str(self.notebook_id), "bm25_docs.json")
+            if os.path.exists(bm25_path):
+                try:
+                    with open(bm25_path, "r", encoding="utf-8") as f:
+                        b_docs = json.load(f)
+                    for item in b_docs:
+                        meta = item.get("metadata", {})
+                        src = meta.get("filename") or meta.get("source_file") or meta.get("source") or meta.get("title") or "Tài liệu"
+                        if selected_documents and src not in selected_documents and os.path.basename(str(src)) not in [os.path.basename(s) for s in selected_documents]:
+                            continue
+                        if source_filter and src != source_filter and os.path.basename(str(src)) != os.path.basename(source_filter):
+                            continue
+                        txt = item.get("text", "")
+                        if txt and txt.strip():
+                            block = f"[Nguồn: {src}]\n{txt}\n\n"
+                            if total + len(block) > max_chars:
+                                break
+                            text_parts.append(block)
+                            total += len(block)
+                except Exception as be:
+                    logger.warning(f"Lỗi đọc BM25 docs cache trong CritiqueGenerator: {be}")
+
+        # Ưu tiên 3: Fallback sang get_all_chunks nếu có
+        if not text_parts and hasattr(self.store, "get_all_chunks"):
+            try:
+                chunks = self.store.get_all_chunks(limit=250, notebook_id=self.notebook_id)
+                for c in chunks:
+                    meta = c.get("metadata", {})
+                    src = meta.get("filename") or meta.get("source") or meta.get("source_file") or "Tài liệu"
+                    if selected_documents and src not in selected_documents:
                         continue
-                    block = f"[Nguồn: {fname}]\n{ch_text}\n\n"
+                    if source_filter and src != source_filter:
+                        continue
+                    block = f"[Nguồn: {src}]\n{c.get('content', '')}\n\n"
                     if total + len(block) > max_chars:
                         break
                     text_parts.append(block)
                     total += len(block)
-                if total >= max_chars:
-                    break
+            except Exception as e:
+                logger.warning(f"Lỗi get_all_chunks trong CritiqueGenerator: {e}")
 
-        # Ưu tiên 2: Fallback sang get_all_chunks nếu có
-        if not text_parts and hasattr(self.store, "get_all_chunks"):
-            chunks = self.store.get_all_chunks(limit=250, notebook_id=self.notebook_id)
-            for c in chunks:
-                meta = c.get("metadata", {})
-                src = meta.get("filename") or meta.get("source") or meta.get("source_file") or "Tài liệu"
-                if selected_documents and src not in selected_documents:
-                    continue
-                if source_filter and src != source_filter:
-                    continue
-                block = f"[Nguồn: {src}]\n{c.get('content', '')}\n\n"
-                if total + len(block) > max_chars:
-                    break
-                text_parts.append(block)
-                total += len(block)
-
-        # Ưu tiên 3: Fallback sang bản tóm tắt Study Guide nếu Vector Store chưa trả kết quả
+        # Ưu tiên 4: Fallback sang bản tóm tắt Study Guide nếu Vector Store & BM25 chưa trả kết quả
         if not text_parts and self.sm is not None:
-            sg = self.sm.get_study_guide(self.notebook_id)
-            if sg and (sg.get("summary") or sg.get("faq")):
-                return f"Tóm tắt tài liệu:\n{sg.get('summary', '')}\n\nCâu hỏi trọng tâm:\n{sg.get('faq', '')}"
+            try:
+                sg = self.sm.get_study_guide(self.notebook_id)
+                if sg and (sg.get("summary") or sg.get("faq")):
+                    return f"Tóm tắt tài liệu:\n{sg.get('summary', '')}\n\nCâu hỏi trọng tâm:\n{sg.get('faq', '')}"
+            except Exception as e:
+                logger.warning(f"Lỗi đọc study guide trong CritiqueGenerator: {e}")
+
+        # Ưu tiên 5: Fallback đọc trực tiếp file từ uploads/
+        if not text_parts and self.sm is not None:
+            try:
+                docs = self.sm.get_documents(self.notebook_id) or []
+                for d in docs:
+                    fn = d.get("filename")
+                    up_file = os.path.join("uploads", fn) if fn else None
+                    if up_file and os.path.exists(up_file):
+                        ext = os.path.splitext(fn)[1].lower()
+                        if ext in ['.txt', '.md', '.json', '.csv', '.html']:
+                            with open(up_file, "r", encoding="utf-8", errors="ignore") as f:
+                                text_parts.append(f"[Nguồn: {fn}]\n{f.read()[:max_chars]}\n\n")
+                                break
+                        else:
+                            from src.ingestion.parsers.markitdown_parser import MarkItDownParser
+                            tree = MarkItDownParser().parse(up_file)
+                            if tree and tree.content:
+                                text_parts.append(f"[Nguồn: {fn}]\n{tree.content[:max_chars]}\n\n")
+                                break
+            except Exception as e:
+                logger.warning(f"Lỗi đọc trực tiếp file uploads trong CritiqueGenerator: {e}")
 
         return "".join(text_parts)
 

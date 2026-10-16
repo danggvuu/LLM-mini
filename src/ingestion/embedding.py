@@ -19,7 +19,10 @@ class LocalEmbedder:
         try:
             from sentence_transformers import SentenceTransformer
             logger.info(f"Đang tải Local Embedding Model: {self.model_name}...")
-            self.model = SentenceTransformer(self.model_name, device=self.device)
+            try:
+                self.model = SentenceTransformer(self.model_name, device=self.device, local_files_only=True)
+            except Exception:
+                self.model = SentenceTransformer(self.model_name, device=self.device, local_files_only=False)
             logger.info("Tải Local Embedding Model thành công!")
         except Exception as e:
             fallback = "sentence-transformers/all-MiniLM-L6-v2"
@@ -28,7 +31,10 @@ class LocalEmbedder:
                 try:
                     from sentence_transformers import SentenceTransformer
                     self.model_name = fallback
-                    self.model = SentenceTransformer(fallback, device=self.device)
+                    try:
+                        self.model = SentenceTransformer(fallback, device=self.device, local_files_only=True)
+                    except Exception:
+                        self.model = SentenceTransformer(fallback, device=self.device, local_files_only=False)
                     return
                 except Exception as inner_e:
                     logger.error(f"Lỗi tải fallback model: {inner_e}")

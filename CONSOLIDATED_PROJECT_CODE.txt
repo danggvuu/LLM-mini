@@ -3,7 +3,6 @@ NOTEBOOKLM MINI - CONSOLIDATED SOURCE CODE REPOSITORY
 TOTAL FILES: 100
 ================================================================================
 
-
 # ==============================================================================
 # FILE: DESIGN.md
 # ==============================================================================
@@ -2915,8 +2914,6 @@ Sự kết hợp giữa tài liệu Kiến trúc (DESIGN 1) và Cấu trúc Code
 **Kết luận:** Bản thiết kế hoàn chỉnh này biến dự án từ một "demo pipeline" nhỏ lẻ thành một **Nền tảng RAG Đa phương thức Cấp Doanh nghiệp**. Đổi lại, kỹ sư cần giải quyết triệt để bài toán tối ưu phần cứng và quản lý dependency bằng Docker.
 
 
-
-
 # ==============================================================================
 # FILE: Dockerfile
 # ==============================================================================
@@ -2969,8 +2966,6 @@ RUN mkdir -p storage/qdrant storage/bm25 storage/notes data
 EXPOSE 8000
 
 CMD ["uvicorn", "src.api.api:app", "--host", "0.0.0.0", "--port", "8000"]
-
-
 
 
 # ==============================================================================
@@ -3098,8 +3093,6 @@ Bạn có thể thay đổi cách hệ thống hoạt động thông qua file `.
 *Dự án tối ưu hóa trải nghiệm Local AI 1-Click.*
 
 
-
-
 # ==============================================================================
 # FILE: frontend/README.md
 # ==============================================================================
@@ -3120,8 +3113,6 @@ The React Compiler is not enabled on this template because of its impact on dev 
 ## Expanding the ESLint configuration
 
 If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
-
-
 
 
 # ==============================================================================
@@ -3151,8 +3142,6 @@ export default defineConfig([
 ])
 
 
-
-
 # ==============================================================================
 # FILE: frontend/index.html
 # ==============================================================================
@@ -3170,8 +3159,6 @@ export default defineConfig([
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
-
-
 
 
 # ==============================================================================
@@ -3215,8 +3202,6 @@ export default defineConfig([
 }
 
 
-
-
 # ==============================================================================
 # FILE: frontend/postcss.config.js
 # ==============================================================================
@@ -3227,8 +3212,6 @@ export default {
     autoprefixer: {},
   },
 }
-
-
 
 
 # ==============================================================================
@@ -3482,8 +3465,6 @@ h1, h2, h3 {
 }
 
 
-
-
 # ==============================================================================
 # FILE: frontend/src/App.jsx
 # ==============================================================================
@@ -3504,8 +3485,6 @@ function App() {
 }
 
 export default App;
-
-
 
 
 # ==============================================================================
@@ -3731,8 +3710,6 @@ export default function DocCompareModal({
 }
 
 
-
-
 # ==============================================================================
 # FILE: frontend/src/components/MarkdownRenderer.jsx
 # ==============================================================================
@@ -3866,8 +3843,6 @@ export default function MarkdownRenderer({ content, isDark = true }) {
     </div>
   );
 }
-
-
 
 
 # ==============================================================================
@@ -4369,8 +4344,6 @@ export default function MindmapModal({ isOpen, onClose, mindmapData, onRegenerat
     </div>
   );
 }
-
-
 
 
 # ==============================================================================
@@ -5001,8 +4974,6 @@ export default function ModelManagerModal({
     </div>
   );
 }
-
-
 
 
 # ==============================================================================
@@ -5751,8 +5722,6 @@ export default function QuizletModal({
 }
 
 
-
-
 # ==============================================================================
 # FILE: frontend/src/components/SettingsModal.jsx
 # ==============================================================================
@@ -6362,8 +6331,6 @@ export default function SettingsModal({ isOpen, onClose, onSettingsSaved }) {
 }
 
 
-
-
 # ==============================================================================
 # FILE: frontend/src/components/ShareModal.jsx
 # ==============================================================================
@@ -6494,8 +6461,6 @@ export default function ShareModal({ isOpen, onClose, notebook, studyGuide, onEx
 }
 
 
-
-
 # ==============================================================================
 # FILE: frontend/src/components/ShortcutsModal.jsx
 # ==============================================================================
@@ -6562,8 +6527,6 @@ export default function ShortcutsModal({ isOpen, onClose, isDark = true }) {
     </div>
   );
 }
-
-
 
 
 # ==============================================================================
@@ -6814,8 +6777,6 @@ export default function TimelineOutlineModal({
 }
 
 
-
-
 # ==============================================================================
 # FILE: frontend/src/index.css
 # ==============================================================================
@@ -6882,8 +6843,6 @@ export default function TimelineOutlineModal({
 }
 
 
-
-
 # ==============================================================================
 # FILE: frontend/src/main.jsx
 # ==============================================================================
@@ -6901,8 +6860,6 @@ ReactDOM.createRoot(document.getElementById('root')).render(
     </BrowserRouter>
   </React.StrictMode>,
 )
-
-
 
 
 # ==============================================================================
@@ -7465,8 +7422,6 @@ function Dashboard() {
 export default Dashboard;
 
 
-
-
 # ==============================================================================
 # FILE: frontend/src/pages/Landing.jsx
 # ==============================================================================
@@ -7525,8 +7480,6 @@ function Landing() {
 }
 
 export default Landing;
-
-
 
 
 # ==============================================================================
@@ -8169,7 +8122,7 @@ function Studio() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...guideConfig,
-          selected_documents: Array.from(selectedDocs)
+          selected_documents: selectedDocs.size > 0 ? Array.from(selectedDocs) : (documents || []).map(d => d.filename)
         })
       });
       setStudyGuide(null); // Kích hoạt polling
@@ -8192,7 +8145,7 @@ function Studio() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...guideConfig,
-          selected_documents: Array.from(selectedDocs)
+          selected_documents: selectedDocs.size > 0 ? Array.from(selectedDocs) : (documents || []).map(d => d.filename)
         })
       });
       setStudyGuide(null); // Kích hoạt polling cập nhật giao diện
@@ -8216,7 +8169,7 @@ function Studio() {
           notebook_id: activeNotebook.id,
           focus_topic: podcastConfig.focus_topic,
           style: podcastConfig.style,
-          selected_documents: Array.from(selectedDocs)
+          selected_documents: selectedDocs.size > 0 ? Array.from(selectedDocs) : (documents || []).map(d => d.filename)
         })
       });
       if (!res.ok) throw new Error("Lỗi khi gọi API tạo Podcast");
@@ -8444,7 +8397,7 @@ function Studio() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           focus_topic: topic,
-          selected_documents: Array.from(selectedDocs)
+          selected_documents: selectedDocs.size > 0 ? Array.from(selectedDocs) : (documents || []).map(d => d.filename)
         })
       });
       if (!res.ok) {
@@ -8495,7 +8448,7 @@ function Studio() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           focus_topic: topic,
-          selected_documents: Array.from(selectedDocs)
+          selected_documents: selectedDocs.size > 0 ? Array.from(selectedDocs) : (documents || []).map(d => d.filename)
         })
       });
       if (!res.ok) {
@@ -8617,7 +8570,7 @@ function Studio() {
         body: JSON.stringify({
           notebook_id: nbId,
           source_filter: selectedDocs.size === 1 ? Array.from(selectedDocs)[0] : null,
-          selected_documents: Array.from(selectedDocs)
+          selected_documents: selectedDocs.size > 0 ? Array.from(selectedDocs) : (documents || []).map(d => d.filename)
         })
       });
       if (res.ok) {
@@ -11106,8 +11059,6 @@ function Studio() {
 export default Studio;
 
 
-
-
 # ==============================================================================
 # FILE: frontend/tailwind.config.js
 # ==============================================================================
@@ -11148,8 +11099,6 @@ export default {
 }
 
 
-
-
 # ==============================================================================
 # FILE: frontend/vite.config.js
 # ==============================================================================
@@ -11169,8 +11118,6 @@ export default defineConfig({
     }
   }
 })
-
-
 
 
 # ==============================================================================
@@ -11263,7 +11210,6 @@ sử dụng kiến trúc Retrieval-Augmented Generation (RAG) để truy xuất 
 quan từ tài liệu đã được nạp trước, sau đó đưa các ngữ cảnh này vào prompt để sinh phản hồi.
 Cách tiếp cận này ... [CẮT BỚT CHO GỌN]
 `
-
 
 
 # ==============================================================================
@@ -12550,8 +12496,6 @@ window.addEventListener('load', () => {
 </html>
 
 
-
-
 # ==============================================================================
 # FILE: requirements.txt
 # ==============================================================================
@@ -12618,7 +12562,6 @@ google-genai>=0.1.0
 # --- Text-to-Speech (Podcast Generator) ---
 edge-tts>=6.1.9
 pyttsx3>=2.90
-
 
 
 # ==============================================================================
@@ -12719,8 +12662,6 @@ with open(design_path, "w", encoding="utf-8") as f:
 print("Ingestion folder aligned successfully!")
 
 
-
-
 # ==============================================================================
 # FILE: scratch/merge_design.py
 # ==============================================================================
@@ -12761,8 +12702,6 @@ with open(file2, 'w', encoding='utf-8') as f:
 
 os.remove(file1)
 print("Merge complete!")
-
-
 
 
 # ==============================================================================
@@ -12883,8 +12822,6 @@ with open(file_path, 'w', encoding='utf-8') as f:
     f.write(final_content)
 
 print("Update successfully!")
-
-
 
 
 # ==============================================================================
@@ -13041,8 +12978,6 @@ for p in parsers:
 print("Refactoring completed perfectly!")
 
 
-
-
 # ==============================================================================
 # FILE: scratch/update_design.py
 # ==============================================================================
@@ -13153,8 +13088,6 @@ with open(file_path, 'w', encoding='utf-8') as f:
 print("Update complete!")
 
 
-
-
 # ==============================================================================
 # FILE: scratch/upload.py
 # ==============================================================================
@@ -13175,15 +13108,11 @@ with open(filename, "rb") as f:
 print("Upload response:", res.text)
 
 
-
-
 # ==============================================================================
 # FILE: src/__init__.py
 # ==============================================================================
 
 ﻿# src package
-
-
 
 
 # ==============================================================================
@@ -14867,8 +14796,6 @@ else:
         return {"message": "Hệ thống đang chạy ngầm. Giao diện React chưa được build (thiếu thư mục frontend/dist)."}
 
 
-
-
 # ==============================================================================
 # FILE: src/db/session_manager.py
 # ==============================================================================
@@ -15522,15 +15449,11 @@ class SessionManager:
         return new_id
 
 
-
-
 # ==============================================================================
 # FILE: src/evaluation/__init__.py
 # ==============================================================================
 
 ﻿# evaluation package
-
-
 
 
 # ==============================================================================
@@ -15604,8 +15527,6 @@ class SemanticChunkerWrapper:
         
     def split_text(self, text: str) -> List[str]:
         return self._splitter().split_text(text)
-
-
 
 
 # ==============================================================================
@@ -15709,7 +15630,6 @@ class RagasEvaluator:
             return {"error": str(e)}
 
 
-
 # ==============================================================================
 # FILE: src/evaluation/run_chunking.py
 # ==============================================================================
@@ -15764,8 +15684,6 @@ if __name__ == "__main__":
     evaluate_chunking(target)
 
 
-
-
 # ==============================================================================
 # FILE: src/evaluation/run_reranking.py
 # ==============================================================================
@@ -15814,14 +15732,11 @@ if __name__ == "__main__":
     evaluate_reranking(nb)
 
 
-
-
 # ==============================================================================
 # FILE: src/ingestion/__init__.py
 # ==============================================================================
 
 ﻿
-
 
 
 # ==============================================================================
@@ -16053,8 +15968,6 @@ class AdaptiveChunker:
         return chunks
 
 
-
-
 # ==============================================================================
 # FILE: src/ingestion/document_tree.py
 # ==============================================================================
@@ -16068,8 +15981,6 @@ __all__ = [
     "NodeType", "Node", "DocumentNode", "HeadingNode", "ParagraphNode",
     "TableNode", "ImageNode", "CodeBlockNode", "ListNode", "ListItemNode"
 ]
-
-
 
 
 # ==============================================================================
@@ -16097,7 +16008,10 @@ class LocalEmbedder:
         try:
             from sentence_transformers import SentenceTransformer
             logger.info(f"Đang tải Local Embedding Model: {self.model_name}...")
-            self.model = SentenceTransformer(self.model_name, device=self.device)
+            try:
+                self.model = SentenceTransformer(self.model_name, device=self.device, local_files_only=True)
+            except Exception:
+                self.model = SentenceTransformer(self.model_name, device=self.device, local_files_only=False)
             logger.info("Tải Local Embedding Model thành công!")
         except Exception as e:
             fallback = "sentence-transformers/all-MiniLM-L6-v2"
@@ -16106,7 +16020,10 @@ class LocalEmbedder:
                 try:
                     from sentence_transformers import SentenceTransformer
                     self.model_name = fallback
-                    self.model = SentenceTransformer(fallback, device=self.device)
+                    try:
+                        self.model = SentenceTransformer(fallback, device=self.device, local_files_only=True)
+                    except Exception:
+                        self.model = SentenceTransformer(fallback, device=self.device, local_files_only=False)
                     return
                 except Exception as inner_e:
                     logger.error(f"Lỗi tải fallback model: {inner_e}")
@@ -16154,14 +16071,11 @@ class LocalEmbedder:
         return [0.0] * 384
 
 
-
-
 # ==============================================================================
 # FILE: src/ingestion/format_detector.py
 # ==============================================================================
 
 ﻿
-
 
 
 # ==============================================================================
@@ -16422,6 +16336,22 @@ class VectorStoreManager:
             except Exception as e:
                 logger.warning(f"Lỗi scroll fallback Qdrant: {e}")
 
+        # Fallback từ BM25 index nếu Qdrant hoàn toàn rỗng
+        if not chunks and target_nb and target_nb != "default":
+            bm25_path = os.path.join("storage", "bm25", str(target_nb), "bm25_docs.json")
+            if os.path.exists(bm25_path):
+                try:
+                    with open(bm25_path, "r", encoding="utf-8") as f:
+                        b_docs = json.load(f)
+                    for item in b_docs[:limit]:
+                        chunks.append({
+                            "chunk_id": item.get("chunk_id", ""),
+                            "content": item.get("text", ""),
+                            "metadata": item.get("metadata", {})
+                        })
+                except Exception as e:
+                    logger.warning(f"Lỗi đọc BM25 docs trong get_all_chunks: {e}")
+
         return chunks
 
     def get_chunks_by_document(self, notebook_id: str, filename: str, limit: int = 100) -> List[str]:
@@ -16455,7 +16385,26 @@ class VectorStoreManager:
         except Exception as e:
             logger.warning(f"Lỗi scroll Qdrant cho file {filename}: {e}")
 
-        # Fallback nếu Qdrant chưa có hoặc trả về rỗng: đọc trực tiếp file từ uploads/
+        # Fallback 1: Đọc từ BM25 index storage (storage/bm25/{notebook_id}/bm25_docs.json)
+        if not chunks:
+            bm25_path = os.path.join("storage", "bm25", str(notebook_id), "bm25_docs.json")
+            if os.path.exists(bm25_path):
+                try:
+                    with open(bm25_path, "r", encoding="utf-8") as f:
+                        b_docs = json.load(f)
+                    for item in b_docs:
+                        meta = item.get("metadata", {})
+                        src = meta.get("filename") or meta.get("source_file") or meta.get("source") or meta.get("title")
+                        if not src or src == filename or os.path.basename(str(src)) == os.path.basename(str(filename)):
+                            txt = item.get("text", "")
+                            if txt and txt.strip():
+                                chunks.append(txt)
+                                if len(chunks) >= limit:
+                                    break
+                except Exception as be:
+                    logger.warning(f"Lỗi đọc BM25 fallback cho {filename}: {be}")
+
+        # Fallback 2: nếu vẫn chưa có thì đọc trực tiếp file từ uploads/
         if not chunks:
             upload_path = os.path.join("uploads", filename)
             if os.path.exists(upload_path):
@@ -16478,14 +16427,11 @@ class VectorStoreManager:
         return chunks
 
 
-
-
 # ==============================================================================
 # FILE: src/ingestion/layout/__init__.py
 # ==============================================================================
 
 ﻿
-
 
 
 # ==============================================================================
@@ -16495,7 +16441,6 @@ class VectorStoreManager:
 ﻿
 
 
-
 # ==============================================================================
 # FILE: src/ingestion/layout/relationship_builder.py
 # ==============================================================================
@@ -16503,13 +16448,11 @@ class VectorStoreManager:
 ﻿
 
 
-
 # ==============================================================================
 # FILE: src/ingestion/layout/semantic_classifier.py
 # ==============================================================================
 
 ﻿
-
 
 
 # ==============================================================================
@@ -16572,14 +16515,11 @@ class MarkdownRenderer:
         return ""
 
 
-
-
 # ==============================================================================
 # FILE: src/ingestion/parsers/__init__.py
 # ==============================================================================
 
 ﻿
-
 
 
 # ==============================================================================
@@ -16690,8 +16630,6 @@ class AudioParser:
         return doc_node
 
 
-
-
 # ==============================================================================
 # FILE: src/ingestion/parsers/image_parser.py
 # ==============================================================================
@@ -16796,8 +16734,6 @@ class ImageParser:
         return doc_node
 
 
-
-
 # ==============================================================================
 # FILE: src/ingestion/parsers/markdown_parser.py
 # ==============================================================================
@@ -16858,8 +16794,6 @@ class MarkdownParser:
         return root
 
 
-
-
 # ==============================================================================
 # FILE: src/ingestion/parsers/markitdown_parser.py
 # ==============================================================================
@@ -16898,8 +16832,6 @@ class MarkItDownParser:
         document_tree = self.md_parser.parse(raw_markdown, source_metadata=meta)
         
         return document_tree
-
-
 
 
 # ==============================================================================
@@ -16962,8 +16894,6 @@ class TextParser:
                 doc_node.add_child(ParagraphNode(content=clean_paragraph))
 
         return doc_node
-
-
 
 
 # ==============================================================================
@@ -17126,8 +17056,6 @@ class WebParser:
             return root
 
 
-
-
 # ==============================================================================
 # FILE: src/ingestion/parsers/youtube_parser.py
 # ==============================================================================
@@ -17243,8 +17171,6 @@ class YouTubeParser:
         return doc_node
 
 
-
-
 # ==============================================================================
 # FILE: src/ingestion/router.py
 # ==============================================================================
@@ -17274,8 +17200,6 @@ class DocumentRouter:
             return TextParser()
         else:
             return MarkItDownParser()
-
-
 
 
 # ==============================================================================
@@ -17417,14 +17341,11 @@ class ListItemNode(Node):
         super().__init__(NodeType.LIST_ITEM, content, metadata)
 
 
-
-
 # ==============================================================================
 # FILE: src/ingestion/vision/__init__.py
 # ==============================================================================
 
 ﻿
-
 
 
 # ==============================================================================
@@ -17434,13 +17355,11 @@ class ListItemNode(Node):
 ﻿
 
 
-
 # ==============================================================================
 # FILE: src/ingestion/vision/tesseract_ocr.py
 # ==============================================================================
 
 ﻿
-
 
 
 # ==============================================================================
@@ -17450,14 +17369,11 @@ class ListItemNode(Node):
 ﻿
 
 
-
 # ==============================================================================
 # FILE: src/interfaces/__init__.py
 # ==============================================================================
 
 ﻿# interfaces package
-
-
 
 
 # ==============================================================================
@@ -17514,8 +17430,6 @@ def ask(question: str, notebook_id: str = "default"):
 
 if __name__ == "__main__":
     app()
-
-
 
 
 # ==============================================================================
@@ -17721,8 +17635,6 @@ div.stButton > button:active {
 }
 </style>
 """
-
-
 
 
 # ==============================================================================
@@ -18341,12 +18253,12 @@ if __name__ == "__main__":
     run()
 
 
-
-
 # ==============================================================================
 # FILE: src/learning/critique_generator.py
 # ==============================================================================
 
+import os
+import json
 from typing import Dict, Any, Optional, List
 from src.llm.llm_client import LLMEngine
 from src.ingestion.indexing import VectorStoreManager
@@ -18391,39 +18303,94 @@ class CritiqueAndActionGenerator:
 
         if target_filenames and hasattr(self.store, "get_chunks_by_document"):
             for fname in target_filenames:
-                raw_chunks = self.store.get_chunks_by_document(self.notebook_id, fname, limit=20)
-                for ch_text in raw_chunks:
-                    if not ch_text:
+                try:
+                    raw_chunks = self.store.get_chunks_by_document(self.notebook_id, fname, limit=20)
+                    for ch_text in raw_chunks:
+                        if not ch_text:
+                            continue
+                        block = f"[Nguồn: {fname}]\n{ch_text}\n\n"
+                        if total + len(block) > max_chars:
+                            break
+                        text_parts.append(block)
+                        total += len(block)
+                    if total >= max_chars:
+                        break
+                except Exception as e:
+                    logger.warning(f"Lỗi lấy chunks cho file {fname}: {e}")
+
+        # Ưu tiên 2: Fallback trực tiếp vào kho chỉ mục BM25 (storage/bm25/{notebook_id}/bm25_docs.json)
+        if not text_parts:
+            bm25_path = os.path.join("storage", "bm25", str(self.notebook_id), "bm25_docs.json")
+            if os.path.exists(bm25_path):
+                try:
+                    with open(bm25_path, "r", encoding="utf-8") as f:
+                        b_docs = json.load(f)
+                    for item in b_docs:
+                        meta = item.get("metadata", {})
+                        src = meta.get("filename") or meta.get("source_file") or meta.get("source") or meta.get("title") or "Tài liệu"
+                        if selected_documents and src not in selected_documents and os.path.basename(str(src)) not in [os.path.basename(s) for s in selected_documents]:
+                            continue
+                        if source_filter and src != source_filter and os.path.basename(str(src)) != os.path.basename(source_filter):
+                            continue
+                        txt = item.get("text", "")
+                        if txt and txt.strip():
+                            block = f"[Nguồn: {src}]\n{txt}\n\n"
+                            if total + len(block) > max_chars:
+                                break
+                            text_parts.append(block)
+                            total += len(block)
+                except Exception as be:
+                    logger.warning(f"Lỗi đọc BM25 docs cache trong CritiqueGenerator: {be}")
+
+        # Ưu tiên 3: Fallback sang get_all_chunks nếu có
+        if not text_parts and hasattr(self.store, "get_all_chunks"):
+            try:
+                chunks = self.store.get_all_chunks(limit=250, notebook_id=self.notebook_id)
+                for c in chunks:
+                    meta = c.get("metadata", {})
+                    src = meta.get("filename") or meta.get("source") or meta.get("source_file") or "Tài liệu"
+                    if selected_documents and src not in selected_documents:
                         continue
-                    block = f"[Nguồn: {fname}]\n{ch_text}\n\n"
+                    if source_filter and src != source_filter:
+                        continue
+                    block = f"[Nguồn: {src}]\n{c.get('content', '')}\n\n"
                     if total + len(block) > max_chars:
                         break
                     text_parts.append(block)
                     total += len(block)
-                if total >= max_chars:
-                    break
+            except Exception as e:
+                logger.warning(f"Lỗi get_all_chunks trong CritiqueGenerator: {e}")
 
-        # Ưu tiên 2: Fallback sang get_all_chunks nếu có
-        if not text_parts and hasattr(self.store, "get_all_chunks"):
-            chunks = self.store.get_all_chunks(limit=250, notebook_id=self.notebook_id)
-            for c in chunks:
-                meta = c.get("metadata", {})
-                src = meta.get("filename") or meta.get("source") or meta.get("source_file") or "Tài liệu"
-                if selected_documents and src not in selected_documents:
-                    continue
-                if source_filter and src != source_filter:
-                    continue
-                block = f"[Nguồn: {src}]\n{c.get('content', '')}\n\n"
-                if total + len(block) > max_chars:
-                    break
-                text_parts.append(block)
-                total += len(block)
-
-        # Ưu tiên 3: Fallback sang bản tóm tắt Study Guide nếu Vector Store chưa trả kết quả
+        # Ưu tiên 4: Fallback sang bản tóm tắt Study Guide nếu Vector Store & BM25 chưa trả kết quả
         if not text_parts and self.sm is not None:
-            sg = self.sm.get_study_guide(self.notebook_id)
-            if sg and (sg.get("summary") or sg.get("faq")):
-                return f"Tóm tắt tài liệu:\n{sg.get('summary', '')}\n\nCâu hỏi trọng tâm:\n{sg.get('faq', '')}"
+            try:
+                sg = self.sm.get_study_guide(self.notebook_id)
+                if sg and (sg.get("summary") or sg.get("faq")):
+                    return f"Tóm tắt tài liệu:\n{sg.get('summary', '')}\n\nCâu hỏi trọng tâm:\n{sg.get('faq', '')}"
+            except Exception as e:
+                logger.warning(f"Lỗi đọc study guide trong CritiqueGenerator: {e}")
+
+        # Ưu tiên 5: Fallback đọc trực tiếp file từ uploads/
+        if not text_parts and self.sm is not None:
+            try:
+                docs = self.sm.get_documents(self.notebook_id) or []
+                for d in docs:
+                    fn = d.get("filename")
+                    up_file = os.path.join("uploads", fn) if fn else None
+                    if up_file and os.path.exists(up_file):
+                        ext = os.path.splitext(fn)[1].lower()
+                        if ext in ['.txt', '.md', '.json', '.csv', '.html']:
+                            with open(up_file, "r", encoding="utf-8", errors="ignore") as f:
+                                text_parts.append(f"[Nguồn: {fn}]\n{f.read()[:max_chars]}\n\n")
+                                break
+                        else:
+                            from src.ingestion.parsers.markitdown_parser import MarkItDownParser
+                            tree = MarkItDownParser().parse(up_file)
+                            if tree and tree.content:
+                                text_parts.append(f"[Nguồn: {fn}]\n{tree.content[:max_chars]}\n\n")
+                                break
+            except Exception as e:
+                logger.warning(f"Lỗi đọc trực tiếp file uploads trong CritiqueGenerator: {e}")
 
         return "".join(text_parts)
 
@@ -18500,8 +18467,6 @@ NỘI DUNG TÀI LIỆU:
         return {"content": res}
 
 
-
-
 # ==============================================================================
 # FILE: src/learning/doc_comparator.py
 # ==============================================================================
@@ -18567,8 +18532,6 @@ Viết chi tiết, chuẩn văn phong tiếng Việt, sử dụng Markdown heade
         ))
         
         return "".join(chunks).strip()
-
-
 
 
 # ==============================================================================
@@ -18691,8 +18654,6 @@ class Evaluator:
                 "strengths": ["Nắm bắt tốt nội dung cơ bản"],
                 "weaknesses": ["Cần đào sâu thêm chi tiết nâng cao"]
             }
-
-
 
 
 # ==============================================================================
@@ -18929,8 +18890,6 @@ class GuideGenerator:
             )
 
 
-
-
 # ==============================================================================
 # FILE: src/learning/mindmap_generator.py
 # ==============================================================================
@@ -19071,8 +19030,6 @@ Hãy tạo từ 3 đến 6 nhánh chính, mỗi nhánh có từ 2 đến 5 mục
             }
             self.db.save_mindmap(notebook_id, fallback)
             return fallback
-
-
 
 
 # ==============================================================================
@@ -19282,8 +19239,6 @@ class PodcastGenerator:
             shutil.copy(wav_path, output_file)
 
 
-
-
 # ==============================================================================
 # FILE: src/learning/timeline_generator.py
 # ==============================================================================
@@ -19443,8 +19398,6 @@ Hãy cung cấp từ 4-8 mốc timeline và dàn ý 3-5 phần rõ ràng. Sử d
             }
             self.db.save_timeline_outline(notebook_id, fallback)
             return fallback
-
-
 
 
 # ==============================================================================
@@ -19965,7 +19918,6 @@ class LLMEngine:
         return "".join(chunks).strip()
 
 
-
 # ==============================================================================
 # FILE: src/llm/prompt_builder.py
 # ==============================================================================
@@ -20006,15 +19958,11 @@ HƯỚNG DẪN TRẢ LỜI:
 """
 
 
-
-
 # ==============================================================================
 # FILE: src/retrieval/__init__.py
 # ==============================================================================
 
 ﻿# retrieval package
-
-
 
 
 # ==============================================================================
@@ -20222,8 +20170,6 @@ def delete_bm25_folder(notebook_id: str):
             logger.error("Failed to delete BM25 directory %s: %s", notebook_dir, exc)
 
 
-
-
 # ==============================================================================
 # FILE: src/retrieval/context_builder.py
 # ==============================================================================
@@ -20278,8 +20224,6 @@ class ContextBuilder:
         logger.info(f"Context built with {len(chunks)} sources.")
         
         return context_text, citations
-
-
 
 
 # ==============================================================================
@@ -20398,8 +20342,6 @@ class HybridSearcher:
         return _reciprocal_rank_fusion(semantic_results, bm25_results)
 
 
-
-
 # ==============================================================================
 # FILE: src/retrieval/query_rewriter.py
 # ==============================================================================
@@ -20443,8 +20385,6 @@ class QueryRewriter:
         except Exception as e:
             logger.error(f"Lỗi khi rewrite query: {e}")
             return query
-
-
 
 
 # ==============================================================================
@@ -20543,8 +20483,6 @@ class CrossEncoderReranker:
         return scored_chunks[:rerank_k]
 
 
-
-
 # ==============================================================================
 # FILE: src/retrieval/router.py
 # ==============================================================================
@@ -20629,8 +20567,6 @@ def get_router() -> ScopeRouter:
     if _router is None:
         _router = ScopeRouter()
     return _router
-
-
 
 
 # ==============================================================================
@@ -20828,8 +20764,6 @@ class SearchEngine:
 
 
 
-
-
 # ==============================================================================
 # FILE: src/retrieval/vector_store.py
 # ==============================================================================
@@ -20837,8 +20771,6 @@ class SearchEngine:
 from src.ingestion.indexing import VectorStoreManager
 
 __all__ = ["VectorStoreManager"]
-
-
 
 
 # ==============================================================================
@@ -20870,7 +20802,7 @@ class Settings(BaseSettings):
     top_k: int = Field(default=5, ge=1, le=64)
 
     # Embedding Configuration
-    embedding_model: str = "GreenNode/GreenNode-Embedding-Large-VN-Mixed-V1"
+    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
 
     # LLM Providers Configuration
     llm_provider: Literal["hf_local", "gemini", "vllm"] = "hf_local"
@@ -20962,8 +20894,6 @@ def get_settings() -> Settings:
     return Settings()
 
 settings = get_settings()
-
-
 
 
 # ==============================================================================
@@ -21081,8 +21011,6 @@ if __name__ == "__main__":
     manager.auto_setup()
 
 
-
-
 # ==============================================================================
 # FILE: src/utils/logger.py
 # ==============================================================================
@@ -21102,8 +21030,6 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 )
 logger = logging.getLogger("notebooklm")
-
-
 
 
 # ==============================================================================
@@ -21155,8 +21081,6 @@ if __name__ == "__main__":
     test_chat_stream()
 
 
-
-
 # ==============================================================================
 # FILE: test_data/00_Test_Questions.md
 # ==============================================================================
@@ -21183,8 +21107,6 @@ if __name__ == "__main__":
 * Bấm nút **"🎙️ Tạo Podcast"**, nghe xem hai Host có tranh luận về việc sửa van oxy và bão mặt trời hay không!
 
 
-
-
 # ==============================================================================
 # FILE: test_data/01_SoTayNhiemVu.md
 # ==============================================================================
@@ -21198,8 +21120,6 @@ Sứ mệnh giải cứu trạm không gian K-9 đang xoay quanh 3 con tàu: Apo
 Nếu bất kỳ tàu nào gặp sự cố rò rỉ khí nghiêm trọng, phải lập tức kích hoạt Giao thức 77-A để phong tỏa khu vực. Tuyệt đối không được mở cửa khoang tự do.
 
 
-
-
 # ==============================================================================
 # FILE: test_data/01_TongQuan.md
 # ==============================================================================
@@ -21211,8 +21131,6 @@ Dự án được chia làm 3 giai đoạn chính:
 - Giai đoạn 2 (2050): Đưa đội tiên phong gồm 4 phi hành gia lên căn cứ.
 - Giai đoạn 3 (2052): Vận chuyển thiết bị nông nghiệp không gian.
 Mục tiêu quan trọng nhất là duy trì sự sống độc lập trên Hành tinh Đỏ.
-
-
 
 
 # ==============================================================================
@@ -21295,8 +21213,6 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
 
 
 # ==============================================================================
@@ -21393,8 +21309,6 @@ Lưu ý: Chỉ duy nhất Kỹ sư trưởng mới có thẩm quyền cao nhất
 
 if __name__ == "__main__":
     generate_complex_test_data()
-
-
 
 
 # ==============================================================================
@@ -21561,6 +21475,5 @@ try:
 except Exception as e:
     print(e)
     sys.exit(1)
-
 
 

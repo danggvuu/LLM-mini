@@ -252,6 +252,22 @@ class VectorStoreManager:
             except Exception as e:
                 logger.warning(f"Lỗi scroll fallback Qdrant: {e}")
 
+        # Fallback từ BM25 index nếu Qdrant hoàn toàn rỗng
+        if not chunks and target_nb and target_nb != "default":
+            bm25_path = os.path.join("storage", "bm25", str(target_nb), "bm25_docs.json")
+            if os.path.exists(bm25_path):
+                try:
+                    with open(bm25_path, "r", encoding="utf-8") as f:
+                        b_docs = json.load(f)
+                    for item in b_docs[:limit]:
+                        chunks.append({
+                            "chunk_id": item.get("chunk_id", ""),
+                            "content": item.get("text", ""),
+                            "metadata": item.get("metadata", {})
+                        })
+                except Exception as e:
+                    logger.warning(f"Lỗi đọc BM25 docs trong get_all_chunks: {e}")
+
         return chunks
 
     def get_chunks_by_document(self, notebook_id: str, filename: str, limit: int = 100) -> List[str]:
@@ -285,7 +301,26 @@ class VectorStoreManager:
         except Exception as e:
             logger.warning(f"Lỗi scroll Qdrant cho file {filename}: {e}")
 
-        # Fallback nếu Qdrant chưa có hoặc trả về rỗng: đọc trực tiếp file từ uploads/
+        # Fallback 1: Đọc từ BM25 index storage (storage/bm25/{notebook_id}/bm25_docs.json)
+        if not chunks:
+            bm25_path = os.path.join("storage", "bm25", str(notebook_id), "bm25_docs.json")
+            if os.path.exists(bm25_path):
+                try:
+                    with open(bm25_path, "r", encoding="utf-8") as f:
+                        b_docs = json.load(f)
+                    for item in b_docs:
+                        meta = item.get("metadata", {})
+                        src = meta.get("filename") or meta.get("source_file") or meta.get("source") or meta.get("title")
+                        if not src or src == filename or os.path.basename(str(src)) == os.path.basename(str(filename)):
+                            txt = item.get("text", "")
+                            if txt and txt.strip():
+                                chunks.append(txt)
+                                if len(chunks) >= limit:
+                                    break
+                except Exception as be:
+                    logger.warning(f"Lỗi đọc BM25 fallback cho {filename}: {be}")
+
+        # Fallback 2: nếu vẫn chưa có thì đọc trực tiếp file từ uploads/
         if not chunks:
             upload_path = os.path.join("uploads", filename)
             if os.path.exists(upload_path):

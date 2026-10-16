@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     top_k: int = Field(default=5, ge=1, le=64)
 
     # Embedding Configuration
-    embedding_model: str = "GreenNode/GreenNode-Embedding-Large-VN-Mixed-V1"
+    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
 
     # LLM Providers Configuration
     llm_provider: Literal["hf_local", "gemini", "vllm"] = "hf_local"
