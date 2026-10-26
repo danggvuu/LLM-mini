@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { motion, AnimatePresence } from 'motion/react';
+import { spring, transition, blur } from '@animate-ui/react/utils/motion';
 import { 
   Send, Bot, User, FileText, ChevronRight, Paperclip, Loader, Headphones, 
   RefreshCw, BookOpen, Brain, Layers, X, Check, XCircle, Trash2, 
@@ -2112,9 +2114,12 @@ function Studio() {
             const isCurrentMatch = isMatchedInSearch && matchedIndices[currentMatchIdx] === idx;
 
             return (
-              <div 
+              <motion.div 
                 key={idx} 
                 id={`msg-${idx}`}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={spring.pop}
                 className={`flex gap-3.5 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'} ${
                   isMatchedInSearch 
                     ? (isCurrentMatch ? 'ring-2 ring-blue-400 bg-blue-500/15 rounded-2xl p-1' : 'ring-1 ring-blue-500/40 bg-blue-500/5 rounded-2xl p-1')
@@ -2254,7 +2259,7 @@ function Studio() {
                     </div>
                   )}
                 </div>
-              </div>
+              </motion.div>
             );
           })}
           <div ref={messagesEndRef} />
@@ -2264,7 +2269,7 @@ function Studio() {
         <div className="pt-2">
           {/* Consolidated Single Control Bar */}
           <div className="flex items-center justify-between pb-2 px-1 gap-2 flex-wrap text-xs">
-            {/* Left: Persona Pills */}
+            {/* Left: Persona Pills with Animate UI Sliding Indicator */}
             <div className="flex items-center gap-1 shrink-0">
               {[
                 { id: 'strict', name: 'Bám sát', icon: Shield, activeClass: 'bg-blue-500/20 text-blue-300 border-blue-500/50' },
@@ -2274,20 +2279,31 @@ function Studio() {
                 const Icon = p.icon;
                 const isSelected = chatPersona === p.id;
                 return (
-                  <button
+                  <motion.button
                     key={p.id}
                     type="button"
+                    whileTap={{ scale: 0.95 }}
+                    transition={spring.press}
                     onClick={() => setChatPersona(p.id)}
-                    className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition cursor-pointer ${
+                    className={`relative flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium border cursor-pointer ${
                       isSelected 
                         ? p.activeClass 
                         : (isDark ? 'bg-white/5 border-white/10 text-gray-400 hover:text-white hover:bg-white/10' : 'bg-slate-100 border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-200')
                     }`}
                     title={PERSONA_CONFIGS[p.id]?.desc}
                   >
-                    <Icon size={12} />
-                    <span>{p.name}</span>
-                  </button>
+                    {isSelected && (
+                      <motion.div
+                        layoutId="personaIndicator"
+                        className="absolute inset-0 rounded-lg bg-white/10 pointer-events-none"
+                        transition={spring.selection}
+                      />
+                    )}
+                    <span className="relative z-10 flex items-center gap-1">
+                      <Icon size={12} />
+                      <span>{p.name}</span>
+                    </span>
+                  </motion.button>
                 );
               })}
             </div>
@@ -2461,10 +2477,13 @@ function Studio() {
             />
 
             {/* Voice Input Microphone Button */}
-            <button
+            <motion.button
               type="button"
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              transition={spring.press}
               onClick={handleVoiceToggle}
-              className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 transition-all ${
+              className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 cursor-pointer ${
                 isRecording 
                   ? 'bg-red-500 text-white animate-pulse shadow-lg shadow-red-500/50' 
                   : (isDark ? 'bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-900')
@@ -2472,21 +2491,27 @@ function Studio() {
               title={isRecording ? "Đang ghi âm giọng nói (Bấm để dừng)..." : "Nói để nhập câu hỏi (Voice Input)"}
             >
               {isRecording ? <MicOff size={17} /> : <Mic size={17} />}
-            </button>
+            </motion.button>
 
             {loading ? (
-              <button 
+              <motion.button 
                 type="button"
-                className="w-10 h-10 rounded-xl bg-red-600/90 hover:bg-red-500 text-white flex items-center justify-center flex-shrink-0 transition-all duration-300 shadow-lg shadow-red-500/30 group cursor-pointer"
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                transition={spring.press}
+                className="w-10 h-10 rounded-xl bg-red-600/90 hover:bg-red-500 text-white flex items-center justify-center flex-shrink-0 shadow-lg shadow-red-500/30 group cursor-pointer"
                 onClick={handleStopGenerating} 
                 title="Dừng tạo câu trả lời (Esc)"
               >
                 <Square size={15} className="fill-current group-hover:scale-110 transition-transform" />
-              </button>
+              </motion.button>
             ) : (
-              <button 
+              <motion.button 
                 type="button"
-                className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 transition-all duration-300 ${
+                whileHover={input.trim() ? { scale: 1.05 } : {}}
+                whileTap={input.trim() ? { scale: 0.95 } : {}}
+                transition={spring.press}
+                className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${
                   input.trim()
                     ? 'bg-blue-600 text-white hover:bg-blue-500 shadow-lg cursor-pointer' 
                     : (isDark ? 'bg-white/5 text-gray-500 cursor-not-allowed' : 'bg-slate-100 text-slate-400 cursor-not-allowed')
@@ -2496,7 +2521,7 @@ function Studio() {
                 title="Gửi câu hỏi (Enter)"
               >
                 <Send size={16} className={input.trim() ? 'translate-x-0.5 -translate-y-0.5' : ''} />
-              </button>
+              </motion.button>
             )}
           </div>
         </div>
@@ -2542,37 +2567,65 @@ function Studio() {
           </div>
         </div>
 
-        {/* Segmented Tab Switcher */}
-        <div className={`p-1 rounded-xl flex items-center gap-1 border shrink-0 ${
+        {/* Segmented Tab Switcher with Animate UI Sliding Indicator */}
+        <div className={`p-1 rounded-xl flex items-center gap-1 border shrink-0 relative ${
           isDark ? 'bg-[#181a20] border-white/10' : 'bg-slate-100 border-slate-200'
         }`}>
           <button
+            type="button"
             onClick={() => setStudioTab('tools')}
-            className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition cursor-pointer ${
+            className={`relative flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
               studioTab === 'tools'
-                ? (isDark ? 'bg-purple-600 text-white shadow-sm' : 'bg-white text-purple-700 shadow-sm')
+                ? 'text-white'
                 : (isDark ? 'text-gray-400 hover:text-white' : 'text-slate-600 hover:text-slate-900')
             }`}
           >
-            <Sparkles size={13} />
-            <span>Công cụ AI</span>
+            {studioTab === 'tools' && (
+              <motion.div
+                layoutId="studioTabIndicator"
+                className="absolute inset-0 rounded-lg bg-purple-600 shadow-sm"
+                transition={spring.selection}
+              />
+            )}
+            <span className="relative z-10 flex items-center gap-1.5">
+              <Sparkles size={13} />
+              <span>Công cụ AI</span>
+            </span>
           </button>
           <button
+            type="button"
             onClick={() => setStudioTab('guide')}
-            className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition cursor-pointer ${
+            className={`relative flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
               studioTab === 'guide'
-                ? (isDark ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-blue-700 shadow-sm')
+                ? 'text-white'
                 : (isDark ? 'text-gray-400 hover:text-white' : 'text-slate-600 hover:text-slate-900')
             }`}
           >
-            <BookOpen size={13} />
-            <span>Cẩm nang học</span>
+            {studioTab === 'guide' && (
+              <motion.div
+                layoutId="studioTabIndicator"
+                className="absolute inset-0 rounded-lg bg-blue-600 shadow-sm"
+                transition={spring.selection}
+              />
+            )}
+            <span className="relative z-10 flex items-center gap-1.5">
+              <BookOpen size={13} />
+              <span>Cẩm nang học</span>
+            </span>
           </button>
         </div>
         
-        {/* TAB 1: CÔNG CỤ AI (QUICK ACTION GRID) */}
-        {studioTab === 'tools' && (
-          <div className="space-y-3">
+        {/* TAB PANELS WITH ANIMATE UI PRESENCE */}
+        <AnimatePresence mode="wait">
+          {studioTab === 'tools' && (
+            <motion.div 
+              key="tools"
+              initial={{ opacity: 0, y: 6, filter: 'blur(3px)' }}
+              animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+              exit={{ opacity: 0, y: -6, filter: 'blur(3px)' }}
+              transition={spring.slide}
+              className="space-y-3"
+            >
             {documents.length === 0 ? (
               <div className={`p-6 rounded-2xl border text-center text-xs leading-relaxed ${
                 isDark ? 'bg-[#181a20] border-white/10 text-gray-400' : 'bg-slate-50 border-slate-200 text-slate-500'
@@ -2631,9 +2684,14 @@ function Studio() {
                 <div className="grid grid-cols-2 gap-2">
                   
                   {/* Tool 1: Mind Map */}
-                  <div className={`p-2.5 rounded-xl border flex flex-col justify-between ${
-                    isDark ? 'bg-[#181a20] border-white/10' : 'bg-slate-50 border-slate-200 shadow-sm'
-                  }`}>
+                  <motion.div 
+                    whileHover={{ y: -3 }}
+                    whileTap={{ scale: 0.98 }}
+                    transition={spring.highlight}
+                    className={`p-2.5 rounded-xl border flex flex-col justify-between ${
+                      isDark ? 'bg-[#181a20] border-white/10' : 'bg-slate-50 border-slate-200 shadow-sm'
+                    }`}
+                  >
                     <div className="flex items-start justify-between mb-2">
                       <div className="flex items-center gap-1.5">
                         <Network size={14} className="text-indigo-400 shrink-0" />
@@ -2656,12 +2714,17 @@ function Studio() {
                     >
                       <Network size={12} /> Mở Sơ đồ 2D
                     </button>
-                  </div>
+                  </motion.div>
 
                   {/* Tool 2: Timeline */}
-                  <div className={`p-2.5 rounded-xl border flex flex-col justify-between ${
-                    isDark ? 'bg-[#181a20] border-white/10' : 'bg-slate-50 border-slate-200 shadow-sm'
-                  }`}>
+                  <motion.div 
+                    whileHover={{ y: -3 }}
+                    whileTap={{ scale: 0.98 }}
+                    transition={spring.highlight}
+                    className={`p-2.5 rounded-xl border flex flex-col justify-between ${
+                      isDark ? 'bg-[#181a20] border-white/10' : 'bg-slate-50 border-slate-200 shadow-sm'
+                    }`}
+                  >
                     <div className="flex items-start justify-between mb-2">
                       <div className="flex items-center gap-1.5">
                         <Clock size={14} className="text-emerald-400 shrink-0" />
@@ -2684,12 +2747,17 @@ function Studio() {
                     >
                       <Clock size={12} /> Xem Niên biểu
                     </button>
-                  </div>
+                  </motion.div>
 
                   {/* Tool 3: Phản biện AI */}
-                  <div className={`p-2.5 rounded-xl border flex flex-col justify-between ${
-                    isDark ? 'bg-[#181a20] border-white/10' : 'bg-slate-50 border-slate-200 shadow-sm'
-                  }`}>
+                  <motion.div 
+                    whileHover={{ y: -3 }}
+                    whileTap={{ scale: 0.98 }}
+                    transition={spring.highlight}
+                    className={`p-2.5 rounded-xl border flex flex-col justify-between ${
+                      isDark ? 'bg-[#181a20] border-white/10' : 'bg-slate-50 border-slate-200 shadow-sm'
+                    }`}
+                  >
                     <div className="flex items-center gap-1.5 mb-2">
                       <ShieldAlert size={14} className="text-rose-400 shrink-0" />
                       <span className="font-bold text-xs truncate">Phản Biện AI</span>
@@ -2700,12 +2768,17 @@ function Studio() {
                     >
                       <ShieldAlert size={12} /> Báo cáo phản biện
                     </button>
-                  </div>
+                  </motion.div>
 
                   {/* Tool 4: Kế hoạch hành động */}
-                  <div className={`p-2.5 rounded-xl border flex flex-col justify-between ${
-                    isDark ? 'bg-[#181a20] border-white/10' : 'bg-slate-50 border-slate-200 shadow-sm'
-                  }`}>
+                  <motion.div 
+                    whileHover={{ y: -3 }}
+                    whileTap={{ scale: 0.98 }}
+                    transition={spring.highlight}
+                    className={`p-2.5 rounded-xl border flex flex-col justify-between ${
+                      isDark ? 'bg-[#181a20] border-white/10' : 'bg-slate-50 border-slate-200 shadow-sm'
+                    }`}
+                  >
                     <div className="flex items-center gap-1.5 mb-2">
                       <ClipboardCheck size={14} className="text-lime-500 shrink-0" />
                       <span className="font-bold text-xs truncate">Kế Hoạch Thực Thi</span>
@@ -2716,12 +2789,17 @@ function Studio() {
                     >
                       <ClipboardCheck size={12} /> Lập Kế hoạch
                     </button>
-                  </div>
+                  </motion.div>
 
                   {/* Tool 5: Trắc nghiệm */}
-                  <div className={`p-2.5 rounded-xl border flex flex-col justify-between ${
-                    isDark ? 'bg-[#181a20] border-white/10' : 'bg-slate-50 border-slate-200 shadow-sm'
-                  }`}>
+                  <motion.div 
+                    whileHover={{ y: -3 }}
+                    whileTap={{ scale: 0.98 }}
+                    transition={spring.highlight}
+                    className={`p-2.5 rounded-xl border flex flex-col justify-between ${
+                      isDark ? 'bg-[#181a20] border-white/10' : 'bg-slate-50 border-slate-200 shadow-sm'
+                    }`}
+                  >
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-1.5">
                         <Brain size={14} className="text-blue-400 shrink-0" />
@@ -2738,12 +2816,17 @@ function Studio() {
                     >
                       <Brain size={12} /> Làm bài thi
                     </button>
-                  </div>
+                  </motion.div>
 
                   {/* Tool 6: Quizlet / Flashcards */}
-                  <div className={`p-2.5 rounded-xl border flex flex-col justify-between ${
-                    isDark ? 'bg-[#181a20] border-white/10' : 'bg-slate-50 border-slate-200 shadow-sm'
-                  }`}>
+                  <motion.div 
+                    whileHover={{ y: -3 }}
+                    whileTap={{ scale: 0.98 }}
+                    transition={spring.highlight}
+                    className={`p-2.5 rounded-xl border flex flex-col justify-between ${
+                      isDark ? 'bg-[#181a20] border-white/10' : 'bg-slate-50 border-slate-200 shadow-sm'
+                    }`}
+                  >
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-1.5">
                         <Layers size={14} className="text-purple-400 shrink-0" />
@@ -2760,12 +2843,17 @@ function Studio() {
                     >
                       <Layers size={12} /> Học thẻ 3D
                     </button>
-                  </div>
+                  </motion.div>
 
                   {/* Tool 7: So sánh tài liệu */}
-                  <div className={`p-2.5 rounded-xl border flex flex-col justify-between ${
-                    isDark ? 'bg-[#181a20] border-white/10' : 'bg-slate-50 border-slate-200 shadow-sm'
-                  }`}>
+                  <motion.div 
+                    whileHover={{ y: -3 }}
+                    whileTap={{ scale: 0.98 }}
+                    transition={spring.highlight}
+                    className={`p-2.5 rounded-xl border flex flex-col justify-between ${
+                      isDark ? 'bg-[#181a20] border-white/10' : 'bg-slate-50 border-slate-200 shadow-sm'
+                    }`}
+                  >
                     <div className="flex items-center gap-1.5 mb-2">
                       <Scale size={14} className="text-amber-400 shrink-0" />
                       <span className="font-bold text-xs truncate">So Sánh Tài Liệu</span>
@@ -2778,12 +2866,17 @@ function Studio() {
                     >
                       <Scale size={12} /> So sánh đối chiếu
                     </button>
-                  </div>
+                  </motion.div>
 
                   {/* Tool 8: Cấu hình đề thi */}
-                  <div className={`p-2.5 rounded-xl border flex flex-col justify-between ${
-                    isDark ? 'bg-[#181a20] border-white/10' : 'bg-slate-50 border-slate-200 shadow-sm'
-                  }`}>
+                  <motion.div 
+                    whileHover={{ y: -3 }}
+                    whileTap={{ scale: 0.98 }}
+                    transition={spring.highlight}
+                    className={`p-2.5 rounded-xl border flex flex-col justify-between ${
+                      isDark ? 'bg-[#181a20] border-white/10' : 'bg-slate-50 border-slate-200 shadow-sm'
+                    }`}
+                  >
                     <div className="flex items-center gap-1.5 mb-2">
                       <SlidersHorizontal size={14} className="text-cyan-400 shrink-0" />
                       <span className="font-bold text-xs truncate">Cấu Hình Đề Thi</span>
@@ -2794,7 +2887,7 @@ function Studio() {
                     >
                       <SlidersHorizontal size={12} /> Tùy chỉnh câu hỏi
                     </button>
-                  </div>
+                  </motion.div>
 
                 </div>
 
@@ -2814,12 +2907,19 @@ function Studio() {
                 </div>
               </>
             )}
-          </div>
+          </motion.div>
         )}
 
         {/* TAB 2: CẨM NANG HỌC TẬP (READING & REFERENCE GUIDE) */}
         {studioTab === 'guide' && (
-          <div className="space-y-3">
+          <motion.div 
+            key="guide"
+            initial={{ opacity: 0, y: 6, filter: 'blur(3px)' }}
+            animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+            exit={{ opacity: 0, y: -6, filter: 'blur(3px)' }}
+            transition={spring.slide}
+            className="space-y-3"
+          >
             <div className={`p-4 rounded-2xl border ${
               isDark ? 'bg-[#181a20] border-white/10 text-white' : 'bg-slate-50 border-slate-200 text-slate-800 shadow-sm'
             }`}>
@@ -2909,8 +3009,9 @@ function Studio() {
                 </div>
               )}
             </div>
-          </div>
+          </motion.div>
         )}
+        </AnimatePresence>
 
       </div>
 

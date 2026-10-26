@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BookOpen, Plus, Search, Check, Settings, Trash2, Cpu, Cloud, Server, ExternalLink, Sun, Moon, Upload, FileJson } from 'lucide-react';
 import axios from 'axios';
+import { motion, AnimatePresence } from 'motion/react';
+import { spring, transition, blur } from '@animate-ui/react/utils/motion';
 import SettingsModal from '../components/SettingsModal';
 
 function Dashboard() {
@@ -251,34 +253,45 @@ function Dashboard() {
             </div>
 
             {/* Import Notebook Button */}
-            <button 
+            <motion.button 
+              type="button"
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.97 }}
+              transition={spring.press}
               onClick={() => importInputRef.current?.click()}
               disabled={importing}
-              className={`flex items-center gap-1.5 px-4 py-2 rounded-full font-semibold text-xs border transition shadow shrink-0 ${
+              className={`flex items-center gap-1.5 px-4 py-2 rounded-full font-semibold text-xs border transition shadow shrink-0 cursor-pointer ${
                 isDark ? 'bg-white/5 hover:bg-white/10 border-white/15 text-gray-200' : 'bg-white hover:bg-slate-100 border-slate-300 text-slate-700'
               }`}
               title="Nhập sổ tay từ file backup JSON"
             >
               <Upload size={15} />
               <span>{importing ? "Đang nhập..." : "Nhập .json"}</span>
-            </button>
+            </motion.button>
 
             {/* Create Notebook Button */}
-            <button 
+            <motion.button 
+              type="button"
+              whileHover={{ scale: 1.03 }}
+              whileTap={{ scale: 0.97 }}
+              transition={spring.press}
               onClick={handleOpenCreateModal}
-              className="flex items-center gap-2 bg-blue-600 text-white hover:bg-blue-500 px-5 py-2 rounded-full font-semibold text-sm transition-colors shadow-lg shrink-0"
+              className="flex items-center gap-2 bg-blue-600 text-white hover:bg-blue-500 px-5 py-2 rounded-full font-semibold text-sm transition-colors shadow-lg shrink-0 cursor-pointer"
             >
               <Plus size={18} /> Tạo mới
-            </button>
+            </motion.button>
           </div>
         </div>
 
         {/* Notebooks Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
           {/* Create New Card */}
-          <div 
+          <motion.div 
+            whileHover={{ y: -4 }}
+            whileTap={{ scale: 0.985 }}
+            transition={spring.highlight}
             onClick={handleOpenCreateModal}
-            className={`aspect-[4/3] rounded-2xl border border-dashed transition-all cursor-pointer flex flex-col items-center justify-center group ${
+            className={`aspect-[4/3] rounded-2xl border border-dashed transition-colors cursor-pointer flex flex-col items-center justify-center group ${
               isDark 
                 ? 'bg-white/[0.03] hover:bg-white/[0.07] border-white/15 hover:border-white/30' 
                 : 'bg-white hover:bg-slate-50 border-slate-300 hover:border-slate-400 shadow-sm'
@@ -289,16 +302,19 @@ function Dashboard() {
             </div>
             <span className={`font-semibold text-base ${isDark ? 'text-gray-200' : 'text-slate-800'}`}>Tạo sổ ghi chú mới</span>
             <span className={`text-xs mt-1 ${isDark ? 'text-gray-500' : 'text-slate-400'}`}>Cắm Local hoặc Cloud AI</span>
-          </div>
+          </motion.div>
 
           {/* Existing Notebooks */}
           {filteredNotebooks.map(nb => {
             const badge = getProviderBadge(nb);
             return (
-              <div 
+              <motion.div 
                 key={nb.id}
+                whileHover={{ y: -4 }}
+                whileTap={{ scale: 0.985 }}
+                transition={spring.highlight}
                 onClick={() => navigate(`/notebook/${nb.id}`)}
-                className={`aspect-[4/3] rounded-2xl border p-5 flex flex-col justify-between cursor-pointer transition-all hover:-translate-y-1 hover:shadow-xl relative overflow-hidden group ${
+                className={`aspect-[4/3] rounded-2xl border p-5 flex flex-col justify-between cursor-pointer transition-shadow hover:shadow-xl relative overflow-hidden group ${
                   isDark 
                     ? 'bg-[#181a20] border-white/10 hover:border-white/25 text-white' 
                     : 'bg-white border-slate-200 hover:border-slate-300 text-slate-800 shadow-sm'
@@ -323,7 +339,7 @@ function Dashboard() {
                   <h3 className={`font-semibold text-lg mb-1.5 line-clamp-2 leading-snug ${isDark ? 'text-white' : 'text-slate-900'}`}>{nb.title}</h3>
                   <p className={`text-xs ${isDark ? 'text-gray-500' : 'text-slate-400'}`}>{new Date(nb.created_at).toLocaleDateString('vi-VN')}</p>
                 </div>
-              </div>
+              </motion.div>
             );
           })}
         </div>
@@ -331,13 +347,28 @@ function Dashboard() {
       </main>
 
       {/* Create Modal */}
-      {showModal && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 backdrop-blur-sm p-4 animate-fade-in">
-          <div className="bg-[#181a20] border border-white/10 rounded-2xl p-6 max-w-lg w-full shadow-2xl space-y-5">
-            <div className="flex items-center justify-between pb-3 border-b border-white/10">
-              <h3 className="text-xl font-bold text-white">Tạo Sổ ghi chú mới</h3>
-              <button onClick={() => setShowModal(false)} className="text-gray-400 hover:text-white">✕</button>
-            </div>
+      <AnimatePresence>
+        {showModal && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={transition.overlay}
+            className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 backdrop-blur-sm p-4"
+            onClick={() => setShowModal(false)}
+          >
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.94, y: 10, filter: blur.surface }}
+              animate={{ opacity: 1, scale: 1, y: 0, filter: 'blur(0px)' }}
+              exit={{ opacity: 0, scale: 0.94, y: 10, filter: blur.surface }}
+              transition={spring.dialog}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-[#181a20] border border-white/10 rounded-2xl p-6 max-w-lg w-full shadow-2xl space-y-5"
+            >
+              <div className="flex items-center justify-between pb-3 border-b border-white/10">
+                <h3 className="text-xl font-bold text-white">Tạo Sổ ghi chú mới</h3>
+                <button onClick={() => setShowModal(false)} className="text-gray-400 hover:text-white">✕</button>
+              </div>
             
             <div>
               <label className="block text-xs font-semibold text-gray-300 mb-1.5">Tên sổ ghi chú</label>
@@ -521,22 +552,26 @@ function Dashboard() {
               <button 
                 type="button"
                 onClick={() => setShowModal(false)}
-                className="px-4 py-2 rounded-xl text-xs font-medium text-gray-400 hover:text-white hover:bg-white/5 transition"
+                className="px-4 py-2 rounded-xl text-xs font-medium text-gray-400 hover:text-white hover:bg-white/5 transition cursor-pointer"
               >
                 Hủy
               </button>
-              <button 
+              <motion.button 
                 type="button"
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                transition={spring.press}
                 onClick={handleCreate}
                 disabled={!newTitle.trim()}
-                className="px-5 py-2 rounded-xl text-xs font-semibold bg-white text-black hover:bg-gray-200 disabled:opacity-50 transition shadow-lg"
+                className="px-5 py-2 rounded-xl text-xs font-semibold bg-white text-black hover:bg-gray-200 disabled:opacity-50 transition shadow-lg cursor-pointer"
               >
                 Tạo sổ ghi chú
-              </button>
+              </motion.button>
             </div>
-          </div>
-        </div>
+          </motion.div>
+        </motion.div>
       )}
+    </AnimatePresence>
 
       {/* Global Settings Modal */}
       <SettingsModal 
