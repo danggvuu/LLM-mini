@@ -303,30 +303,30 @@ function Dashboard() {
           </div>
         </div>
 
-        {/* Research & Local Education Highlight Banner */}
+        {/* Universal Multimodal AI Study Assistant Banner */}
         <motion.div 
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={spring.pop}
           className={`mb-8 p-5 rounded-3xl border transition flex flex-col md:flex-row items-center justify-between gap-5 relative overflow-hidden shadow-lg ${
             isDark 
-              ? 'bg-gradient-to-r from-emerald-950/40 via-[#162127] to-blue-950/40 border-emerald-500/30 text-white' 
-              : 'bg-gradient-to-r from-emerald-50 via-teal-50/50 to-blue-50/50 border-emerald-200 text-slate-800'
+              ? 'bg-gradient-to-r from-blue-950/40 via-[#181d26] to-purple-950/40 border-blue-500/30 text-white' 
+              : 'bg-gradient-to-r from-blue-50 via-indigo-50/50 to-purple-50/50 border-blue-200 text-slate-800'
           }`}
         >
           <div className="flex items-start sm:items-center gap-4">
-            <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center text-white shadow-md shrink-0">
-              <Mountain size={24} />
+            <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-blue-600 to-purple-600 flex items-center justify-center text-white shadow-md shrink-0">
+              <BookOpen size={24} />
             </div>
             <div>
               <div className="flex items-center gap-2 flex-wrap">
-                <h3 className="font-bold text-base">Học Liệu Số: Giáo Dục Địa Phương Tỉnh Lào Cai</h3>
-                <span className="text-[11px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 px-2.5 py-0.5 rounded-full font-semibold">
-                  Mẫu Nghiên Cứu Khoa Học
+                <h3 className="font-bold text-base">Trợ Lý Học Tập & Khảo Thí Đa Phương Thức (Multimodal AI)</h3>
+                <span className="text-[11px] bg-blue-500/20 text-blue-400 border border-blue-500/40 px-2.5 py-0.5 rounded-full font-semibold">
+                  Mô hình Tự Học & Lớp Học Đảo Ngược
                 </span>
               </div>
               <p className={`text-xs mt-1 max-w-2xl leading-relaxed ${isDark ? 'text-gray-300' : 'text-slate-600'}`}>
-                Trọn bộ 4 chuyên đề (Địa lý Fansipan - Lũng Pô, Lịch sử Phố Ràng - Đền Bảo Hà, Bản sắc 25 dân tộc, Chợ phiên Bắc Hà) tích hợp sẵn 10 câu trắc nghiệm, Flashcards 3D, Mindmap và Podcast tiếng Việt.
+                Nạp bất kỳ tài liệu nào (SGK, giáo trình ĐH, slide ôn thi, tài liệu chuyên ngành) để AI tự động tạo <strong>Podcast đối thoại tiếng Việt</strong>, <strong>Sơ đồ tư duy 2D</strong>, <strong>Flashcards 3D (Anki SRS)</strong> và <strong>In đề thi trắc nghiệm A4 kèm đáp án</strong> trong 30 giây.
               </p>
             </div>
           </div>
@@ -338,10 +338,10 @@ function Dashboard() {
             transition={spring.press}
             onClick={handleSeedLaoCai}
             disabled={seedingLaoCai}
-            className="w-full md:w-auto px-5 py-2.5 rounded-xl font-semibold text-xs bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white shadow-lg shadow-emerald-500/25 flex items-center justify-center gap-2 shrink-0 cursor-pointer disabled:opacity-50"
+            className="w-full md:w-auto px-5 py-2.5 rounded-xl font-semibold text-xs bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-lg shadow-blue-500/25 flex items-center justify-center gap-2 shrink-0 cursor-pointer disabled:opacity-50"
           >
             {seedingLaoCai ? <RefreshCw className="animate-spin" size={14} /> : <Sparkles size={14} />}
-            <span>{seedingLaoCai ? "Đang chuẩn bị học liệu..." : "Mở Sổ Tay Mẫu (1-Click)"}</span>
+            <span>{seedingLaoCai ? "Đang khởi tạo học liệu..." : "Nạp Dữ Liệu Mẫu Khảo Thí (1-Click)"}</span>
           </motion.button>
         </motion.div>
 

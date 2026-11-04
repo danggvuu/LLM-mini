@@ -738,20 +738,20 @@ function Studio() {
           <table class="header-table">
             <tr>
               <td class="center" style="width: 45%;">
-                <div class="bold" style="font-size: 13px;">SỞ GIÁO DỤC VÀ ĐÀO TẠO LÀO CAI</div>
-                <div class="bold" style="font-size: 13px;">TRƯỜNG PHỔ THÔNG DÂN TỘC BÁN TRÚ</div>
+                <div class="bold" style="font-size: 13px;">BỘ / SỞ GIÁO DỤC VÀ ĐÀO TẠO</div>
+                <div class="bold" style="font-size: 13px;">TRƯỜNG THPT / ĐẠI HỌC ....................</div>
                 <div style="font-size: 12px;">Năm học: 2026 - 2027</div>
               </td>
               <td class="center" style="width: 55%;">
                 <div class="bold" style="font-size: 15px;">ĐỀ KIỂM TRA ĐỊNH KỲ / ÔN TẬP</div>
-                <div class="bold" style="font-size: 13px; text-transform: uppercase;">CHUYÊN ĐỀ: ${title}</div>
-                <div style="font-style: italic; font-size: 12px;">(Thời gian làm bài: 20 phút - Không kể thời gian giao đề)</div>
+                <div class="bold" style="font-size: 13px; text-transform: uppercase;">HỌC PHẦN: ${title}</div>
+                <div style="font-style: italic; font-size: 12px;">(Thời gian làm bài: 15 - 45 phút - Không kể thời gian phát đề)</div>
               </td>
             </tr>
           </table>
 
           <div style="margin-bottom: 20px; font-size: 13px; display: flex; justify-content: space-between; border-bottom: 1px dashed #666; padding-bottom: 8px;">
-            <div>Họ và tên học sinh: ............................................................................</div>
+            <div>Họ và tên học sinh / sinh viên: ............................................................................</div>
             <div>Lớp: ......................... Điểm: ...............</div>
           </div>
 
@@ -763,7 +763,7 @@ function Studio() {
 
           <div class="page-break" style="margin-top: 40px; border-top: 2px solid #000; padding-top: 25px;">
             <div class="center bold" style="font-size: 16px; margin-bottom: 15px; text-transform: uppercase;">
-              ĐÁP ÁN VÀ THANG ĐIỂM (DÀNH CHO GIÁO VIÊN)
+              ĐÁP ÁN VÀ THANG ĐIỂM (DÀNH CHO GIÁO VIÊN / GIẢNG VIÊN)
             </div>
             <div style="font-size: 13px; margin-bottom: 15px;">
               Mỗi câu trắc nghiệm đúng được <strong>${(10 / studyGuide.quiz.length).toFixed(2)} điểm</strong> (Tổng điểm: 10.0 điểm).
@@ -772,7 +772,7 @@ function Studio() {
               ${answersHtml}
             </div>
             <div style="font-style: italic; font-size: 12px; color: #555; text-align: center;">
-              Đề thi được khởi tạo tự động từ Trợ lý Trí tuệ Nhân tạo Phục vụ Giáo dục Địa phương tỉnh Lào Cai.
+              Đề thi và thang điểm được khởi tạo tự động từ Trợ lý Trí tuệ Nhân tạo Đa phương thức phục vụ Dạy và Học.
             </div>
           </div>
         </body>
