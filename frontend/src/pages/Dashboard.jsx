@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { BookOpen, Plus, Search, Check, Settings, Trash2, Cpu, Cloud, Server, ExternalLink, Sun, Moon, Upload, FileJson } from 'lucide-react';
+import { 
+  BookOpen, Plus, Search, Check, Settings, Trash2, Cpu, Cloud, Server, 
+  ExternalLink, Sun, Moon, Upload, FileJson, Mountain, Sparkles, RefreshCw 
+} from 'lucide-react';
 import axios from 'axios';
 import { motion, AnimatePresence } from 'motion/react';
 import { spring, transition, blur } from '@animate-ui/react/utils/motion';
@@ -44,6 +47,23 @@ function Dashboard() {
     } finally {
       setImporting(false);
       if (importInputRef.current) importInputRef.current.value = "";
+    }
+  };
+
+  // Seed Lao Cai Sample Notebook State
+  const [seedingLaoCai, setSeedingLaoCai] = useState(false);
+  const handleSeedLaoCai = async () => {
+    setSeedingLaoCai(true);
+    try {
+      const res = await axios.post('/api/notebooks/seed/lao-cai');
+      if (res.data && res.data.notebook_id) {
+        fetchNotebooks();
+        navigate(`/notebook/${res.data.notebook_id}`);
+      }
+    } catch (err) {
+      alert("Lỗi khi nạp Sổ tay Lào Cai: " + (err.response?.data?.detail || err.message));
+    } finally {
+      setSeedingLaoCai(false);
     }
   };
 
@@ -282,6 +302,48 @@ function Dashboard() {
             </motion.button>
           </div>
         </div>
+
+        {/* Research & Local Education Highlight Banner */}
+        <motion.div 
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={spring.pop}
+          className={`mb-8 p-5 rounded-3xl border transition flex flex-col md:flex-row items-center justify-between gap-5 relative overflow-hidden shadow-lg ${
+            isDark 
+              ? 'bg-gradient-to-r from-emerald-950/40 via-[#162127] to-blue-950/40 border-emerald-500/30 text-white' 
+              : 'bg-gradient-to-r from-emerald-50 via-teal-50/50 to-blue-50/50 border-emerald-200 text-slate-800'
+          }`}
+        >
+          <div className="flex items-start sm:items-center gap-4">
+            <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center text-white shadow-md shrink-0">
+              <Mountain size={24} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="font-bold text-base">Học Liệu Số: Giáo Dục Địa Phương Tỉnh Lào Cai</h3>
+                <span className="text-[11px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 px-2.5 py-0.5 rounded-full font-semibold">
+                  Mẫu Nghiên Cứu Khoa Học
+                </span>
+              </div>
+              <p className={`text-xs mt-1 max-w-2xl leading-relaxed ${isDark ? 'text-gray-300' : 'text-slate-600'}`}>
+                Trọn bộ 4 chuyên đề (Địa lý Fansipan - Lũng Pô, Lịch sử Phố Ràng - Đền Bảo Hà, Bản sắc 25 dân tộc, Chợ phiên Bắc Hà) tích hợp sẵn 10 câu trắc nghiệm, Flashcards 3D, Mindmap và Podcast tiếng Việt.
+              </p>
+            </div>
+          </div>
+          
+          <motion.button
+            type="button"
+            whileHover={{ scale: 1.03 }}
+            whileTap={{ scale: 0.97 }}
+            transition={spring.press}
+            onClick={handleSeedLaoCai}
+            disabled={seedingLaoCai}
+            className="w-full md:w-auto px-5 py-2.5 rounded-xl font-semibold text-xs bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white shadow-lg shadow-emerald-500/25 flex items-center justify-center gap-2 shrink-0 cursor-pointer disabled:opacity-50"
+          >
+            {seedingLaoCai ? <RefreshCw className="animate-spin" size={14} /> : <Sparkles size={14} />}
+            <span>{seedingLaoCai ? "Đang chuẩn bị học liệu..." : "Mở Sổ Tay Mẫu (1-Click)"}</span>
+          </motion.button>
+        </motion.div>
 
         {/* Notebooks Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">

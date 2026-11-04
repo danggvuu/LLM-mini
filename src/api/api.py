@@ -540,6 +540,24 @@ def create_notebook(data: NotebookCreate):
     )
     return {"status": "success", "notebook": sm.get_notebook(data.id)}
 
+@app.post("/api/notebooks/seed/lao-cai")
+def seed_lao_cai_notebook_endpoint():
+    """Khởi tạo 1-click Sổ tay mẫu chuẩn Giáo Dục Địa Phương Tỉnh Lào Cai (phục vụ NCKH / Demo)."""
+    try:
+        from src.learning.lao_cai_seeder import seed_lao_cai_preset
+        sm = get_session_manager()
+        store = get_vector_store()
+        embed = get_embedder()
+        nb_id = seed_lao_cai_preset(sm, store, embed)
+        return {
+            "status": "success", 
+            "notebook_id": nb_id,
+            "message": "Đã khởi tạo thành công Sổ tay Giáo dục Địa phương Lào Cai!"
+        }
+    except Exception as e:
+        logger.error(f"Lỗi khởi tạo Sổ tay Lào Cai: {e}")
+        raise HTTPException(status_code=500, detail=f"Lỗi khi nạp dữ liệu Lào Cai: {str(e)}")
+
 @app.get("/api/notebooks")
 def list_notebooks():
     sm = get_session_manager()

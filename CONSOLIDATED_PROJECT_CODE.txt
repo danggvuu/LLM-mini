@@ -6870,7 +6870,10 @@ ReactDOM.createRoot(document.getElementById('root')).render(
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { BookOpen, Plus, Search, Check, Settings, Trash2, Cpu, Cloud, Server, ExternalLink, Sun, Moon, Upload, FileJson } from 'lucide-react';
+import { 
+  BookOpen, Plus, Search, Check, Settings, Trash2, Cpu, Cloud, Server, 
+  ExternalLink, Sun, Moon, Upload, FileJson, Mountain, Sparkles, RefreshCw 
+} from 'lucide-react';
 import axios from 'axios';
 import { motion, AnimatePresence } from 'motion/react';
 import { spring, transition, blur } from '@animate-ui/react/utils/motion';
@@ -6914,6 +6917,23 @@ function Dashboard() {
     } finally {
       setImporting(false);
       if (importInputRef.current) importInputRef.current.value = "";
+    }
+  };
+
+  // Seed Lao Cai Sample Notebook State
+  const [seedingLaoCai, setSeedingLaoCai] = useState(false);
+  const handleSeedLaoCai = async () => {
+    setSeedingLaoCai(true);
+    try {
+      const res = await axios.post('/api/notebooks/seed/lao-cai');
+      if (res.data && res.data.notebook_id) {
+        fetchNotebooks();
+        navigate(`/notebook/${res.data.notebook_id}`);
+      }
+    } catch (err) {
+      alert("Lỗi khi nạp Sổ tay Lào Cai: " + (err.response?.data?.detail || err.message));
+    } finally {
+      setSeedingLaoCai(false);
     }
   };
 
@@ -7152,6 +7172,48 @@ function Dashboard() {
             </motion.button>
           </div>
         </div>
+
+        {/* Research & Local Education Highlight Banner */}
+        <motion.div 
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={spring.pop}
+          className={`mb-8 p-5 rounded-3xl border transition flex flex-col md:flex-row items-center justify-between gap-5 relative overflow-hidden shadow-lg ${
+            isDark 
+              ? 'bg-gradient-to-r from-emerald-950/40 via-[#162127] to-blue-950/40 border-emerald-500/30 text-white' 
+              : 'bg-gradient-to-r from-emerald-50 via-teal-50/50 to-blue-50/50 border-emerald-200 text-slate-800'
+          }`}
+        >
+          <div className="flex items-start sm:items-center gap-4">
+            <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center text-white shadow-md shrink-0">
+              <Mountain size={24} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="font-bold text-base">Học Liệu Số: Giáo Dục Địa Phương Tỉnh Lào Cai</h3>
+                <span className="text-[11px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 px-2.5 py-0.5 rounded-full font-semibold">
+                  Mẫu Nghiên Cứu Khoa Học
+                </span>
+              </div>
+              <p className={`text-xs mt-1 max-w-2xl leading-relaxed ${isDark ? 'text-gray-300' : 'text-slate-600'}`}>
+                Trọn bộ 4 chuyên đề (Địa lý Fansipan - Lũng Pô, Lịch sử Phố Ràng - Đền Bảo Hà, Bản sắc 25 dân tộc, Chợ phiên Bắc Hà) tích hợp sẵn 10 câu trắc nghiệm, Flashcards 3D, Mindmap và Podcast tiếng Việt.
+              </p>
+            </div>
+          </div>
+          
+          <motion.button
+            type="button"
+            whileHover={{ scale: 1.03 }}
+            whileTap={{ scale: 0.97 }}
+            transition={spring.press}
+            onClick={handleSeedLaoCai}
+            disabled={seedingLaoCai}
+            className="w-full md:w-auto px-5 py-2.5 rounded-xl font-semibold text-xs bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white shadow-lg shadow-emerald-500/25 flex items-center justify-center gap-2 shrink-0 cursor-pointer disabled:opacity-50"
+          >
+            {seedingLaoCai ? <RefreshCw className="animate-spin" size={14} /> : <Sparkles size={14} />}
+            <span>{seedingLaoCai ? "Đang chuẩn bị học liệu..." : "Mở Sổ Tay Mẫu (1-Click)"}</span>
+          </motion.button>
+        </motion.div>
 
         {/* Notebooks Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -7534,7 +7596,7 @@ import {
   Copy, Download, Eye, SlidersHorizontal, FileDown, Sun, Moon, Mic, MicOff,
   Search, HelpCircle, Network, Scale, Clock, Share2, Flame, ArrowUp, ArrowDown,
   Square, ShieldAlert, ClipboardCheck, Volume2, VolumeX, Bookmark, BookmarkPlus, Shield,
-  PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, ChevronDown, ChevronUp, LayoutGrid
+  PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, ChevronDown, ChevronUp, LayoutGrid, Printer
 } from 'lucide-react';
 import SettingsModal from '../components/SettingsModal';
 import QuizletModal from '../components/QuizletModal';
@@ -8200,6 +8262,112 @@ function Studio() {
     } finally {
       setTimeout(() => setRegeneratingGuide(false), 2000);
     }
+  };
+
+  const handlePrintExam = () => {
+    if (!studyGuide?.quiz || studyGuide.quiz.length === 0) {
+      alert("Chưa có dữ liệu bài thi trắc nghiệm để in.");
+      return;
+    }
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      alert("Vui lòng cho phép trình duyệt mở tab mới để in đề thi.");
+      return;
+    }
+    
+    const title = activeNotebook?.title || "BÀI KIỂM TRA ĐỊNH KỲ";
+    const letters = ['A', 'B', 'C', 'D'];
+    
+    const questionsHtml = studyGuide.quiz.map((q, idx) => `
+      <div style="margin-bottom: 18px; page-break-inside: avoid;">
+        <p style="margin: 0 0 6px 0; font-weight: bold; font-size: 14px;">
+          Câu ${idx + 1}: ${q.question}
+        </p>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding-left: 15px; font-size: 13px;">
+          ${q.options.map((opt, oIdx) => `
+            <div><strong>${letters[oIdx]}.</strong> ${opt}</div>
+          `).join('')}
+        </div>
+      </div>
+    `).join('');
+
+    const answersHtml = studyGuide.quiz.map((q, idx) => `
+      <div style="display: inline-block; width: 18%; margin: 4px 1%; border: 1px solid #ccc; padding: 4px 8px; text-align: center; font-size: 13px;">
+        <strong>Câu ${idx + 1}:</strong> <span style="color: #d9534f; font-weight: bold;">${letters[q.answer] || 'A'}</span>
+      </div>
+    `).join('');
+
+    const fullHtml = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Đề thi - ${title}</title>
+          <meta charset="utf-8">
+          <style>
+            body { font-family: "Times New Roman", Times, serif; margin: 40px; color: #111; line-height: 1.5; }
+            .header-table { width: 100%; border-collapse: collapse; margin-bottom: 25px; }
+            .header-table td { vertical-align: top; }
+            .center { text-align: center; }
+            .bold { font-weight: bold; }
+            @media print {
+              body { margin: 15mm; }
+              .no-print { display: none; }
+              .page-break { page-break-before: always; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="no-print" style="margin-bottom: 20px; padding: 12px; background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 8px; display: flex; justify-content: space-between; align-items: center;">
+            <span style="font-size: 13px;">💡 <strong>Hướng dẫn:</strong> Bấm nút bên phải hoặc dùng phím <code>Ctrl+P</code> (hoặc <code>Cmd+P</code>) để In trực tiếp hoặc Lưu thành file PDF.</span>
+            <button onclick="window.print()" style="padding: 8px 16px; background: #2563eb; color: #fff; font-weight: bold; border: none; border-radius: 6px; cursor: pointer;">🖨️ In Đề Thi Ngay</button>
+          </div>
+
+          <table class="header-table">
+            <tr>
+              <td class="center" style="width: 45%;">
+                <div class="bold" style="font-size: 13px;">SỞ GIÁO DỤC VÀ ĐÀO TẠO LÀO CAI</div>
+                <div class="bold" style="font-size: 13px;">TRƯỜNG PHỔ THÔNG DÂN TỘC BÁN TRÚ</div>
+                <div style="font-size: 12px;">Năm học: 2026 - 2027</div>
+              </td>
+              <td class="center" style="width: 55%;">
+                <div class="bold" style="font-size: 15px;">ĐỀ KIỂM TRA ĐỊNH KỲ / ÔN TẬP</div>
+                <div class="bold" style="font-size: 13px; text-transform: uppercase;">CHUYÊN ĐỀ: ${title}</div>
+                <div style="font-style: italic; font-size: 12px;">(Thời gian làm bài: 20 phút - Không kể thời gian giao đề)</div>
+              </td>
+            </tr>
+          </table>
+
+          <div style="margin-bottom: 20px; font-size: 13px; display: flex; justify-content: space-between; border-bottom: 1px dashed #666; padding-bottom: 8px;">
+            <div>Họ và tên học sinh: ............................................................................</div>
+            <div>Lớp: ......................... Điểm: ...............</div>
+          </div>
+
+          <div class="bold" style="margin-bottom: 15px; font-size: 14px;">PHẦN I: CÂU HỎI TRẮC NGHIỆM (${studyGuide.quiz.length} câu)</div>
+          
+          <div>
+            ${questionsHtml}
+          </div>
+
+          <div class="page-break" style="margin-top: 40px; border-top: 2px solid #000; padding-top: 25px;">
+            <div class="center bold" style="font-size: 16px; margin-bottom: 15px; text-transform: uppercase;">
+              ĐÁP ÁN VÀ THANG ĐIỂM (DÀNH CHO GIÁO VIÊN)
+            </div>
+            <div style="font-size: 13px; margin-bottom: 15px;">
+              Mỗi câu trắc nghiệm đúng được <strong>${(10 / studyGuide.quiz.length).toFixed(2)} điểm</strong> (Tổng điểm: 10.0 điểm).
+            </div>
+            <div style="display: flex; flex-wrap: wrap; margin-bottom: 25px;">
+              ${answersHtml}
+            </div>
+            <div style="font-style: italic; font-size: 12px; color: #555; text-align: center;">
+              Đề thi được khởi tạo tự động từ Trợ lý Trí tuệ Nhân tạo Phục vụ Giáo dục Địa phương tỉnh Lào Cai.
+            </div>
+          </div>
+        </body>
+      </html>
+    `;
+
+    printWindow.document.write(fullHtml);
+    printWindow.document.close();
   };
 
   const handleGenerateCustomGuide = async () => {
@@ -10549,6 +10717,14 @@ function Studio() {
                 <Brain className="text-blue-400" size={18} /> Ôn tập trắc nghiệm ({studyGuide.quiz.length} câu)
               </h2>
               <div className="flex items-center gap-2">
+                <button 
+                  type="button"
+                  onClick={handlePrintExam}
+                  className="text-xs bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 px-2.5 py-1 rounded-xl transition font-medium flex items-center gap-1.5 cursor-pointer shadow-sm"
+                  title="In hoặc xuất đề thi trắc nghiệm kèm bảng đáp án cho giáo viên"
+                >
+                  <Printer size={13}/> In / Xuất Đề Thi
+                </button>
                 <button 
                   onClick={() => { setShowQuiz(false); setShowGuideConfigModal(true); }}
                   className="text-xs bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 border border-blue-500/30 px-2.5 py-1 rounded-xl transition font-medium flex items-center gap-1"
@@ -14039,6 +14215,24 @@ def create_notebook(data: NotebookCreate):
         base_url=base_url
     )
     return {"status": "success", "notebook": sm.get_notebook(data.id)}
+
+@app.post("/api/notebooks/seed/lao-cai")
+def seed_lao_cai_notebook_endpoint():
+    """Khởi tạo 1-click Sổ tay mẫu chuẩn Giáo Dục Địa Phương Tỉnh Lào Cai (phục vụ NCKH / Demo)."""
+    try:
+        from src.learning.lao_cai_seeder import seed_lao_cai_preset
+        sm = get_session_manager()
+        store = get_vector_store()
+        embed = get_embedder()
+        nb_id = seed_lao_cai_preset(sm, store, embed)
+        return {
+            "status": "success", 
+            "notebook_id": nb_id,
+            "message": "Đã khởi tạo thành công Sổ tay Giáo dục Địa phương Lào Cai!"
+        }
+    except Exception as e:
+        logger.error(f"Lỗi khởi tạo Sổ tay Lào Cai: {e}")
+        raise HTTPException(status_code=500, detail=f"Lỗi khi nạp dữ liệu Lào Cai: {str(e)}")
 
 @app.get("/api/notebooks")
 def list_notebooks():

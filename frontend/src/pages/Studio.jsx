@@ -9,7 +9,7 @@ import {
   Copy, Download, Eye, SlidersHorizontal, FileDown, Sun, Moon, Mic, MicOff,
   Search, HelpCircle, Network, Scale, Clock, Share2, Flame, ArrowUp, ArrowDown,
   Square, ShieldAlert, ClipboardCheck, Volume2, VolumeX, Bookmark, BookmarkPlus, Shield,
-  PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, ChevronDown, ChevronUp, LayoutGrid
+  PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, ChevronDown, ChevronUp, LayoutGrid, Printer
 } from 'lucide-react';
 import SettingsModal from '../components/SettingsModal';
 import QuizletModal from '../components/QuizletModal';
@@ -675,6 +675,112 @@ function Studio() {
     } finally {
       setTimeout(() => setRegeneratingGuide(false), 2000);
     }
+  };
+
+  const handlePrintExam = () => {
+    if (!studyGuide?.quiz || studyGuide.quiz.length === 0) {
+      alert("Chưa có dữ liệu bài thi trắc nghiệm để in.");
+      return;
+    }
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      alert("Vui lòng cho phép trình duyệt mở tab mới để in đề thi.");
+      return;
+    }
+    
+    const title = activeNotebook?.title || "BÀI KIỂM TRA ĐỊNH KỲ";
+    const letters = ['A', 'B', 'C', 'D'];
+    
+    const questionsHtml = studyGuide.quiz.map((q, idx) => `
+      <div style="margin-bottom: 18px; page-break-inside: avoid;">
+        <p style="margin: 0 0 6px 0; font-weight: bold; font-size: 14px;">
+          Câu ${idx + 1}: ${q.question}
+        </p>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding-left: 15px; font-size: 13px;">
+          ${q.options.map((opt, oIdx) => `
+            <div><strong>${letters[oIdx]}.</strong> ${opt}</div>
+          `).join('')}
+        </div>
+      </div>
+    `).join('');
+
+    const answersHtml = studyGuide.quiz.map((q, idx) => `
+      <div style="display: inline-block; width: 18%; margin: 4px 1%; border: 1px solid #ccc; padding: 4px 8px; text-align: center; font-size: 13px;">
+        <strong>Câu ${idx + 1}:</strong> <span style="color: #d9534f; font-weight: bold;">${letters[q.answer] || 'A'}</span>
+      </div>
+    `).join('');
+
+    const fullHtml = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Đề thi - ${title}</title>
+          <meta charset="utf-8">
+          <style>
+            body { font-family: "Times New Roman", Times, serif; margin: 40px; color: #111; line-height: 1.5; }
+            .header-table { width: 100%; border-collapse: collapse; margin-bottom: 25px; }
+            .header-table td { vertical-align: top; }
+            .center { text-align: center; }
+            .bold { font-weight: bold; }
+            @media print {
+              body { margin: 15mm; }
+              .no-print { display: none; }
+              .page-break { page-break-before: always; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="no-print" style="margin-bottom: 20px; padding: 12px; background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 8px; display: flex; justify-content: space-between; align-items: center;">
+            <span style="font-size: 13px;">💡 <strong>Hướng dẫn:</strong> Bấm nút bên phải hoặc dùng phím <code>Ctrl+P</code> (hoặc <code>Cmd+P</code>) để In trực tiếp hoặc Lưu thành file PDF.</span>
+            <button onclick="window.print()" style="padding: 8px 16px; background: #2563eb; color: #fff; font-weight: bold; border: none; border-radius: 6px; cursor: pointer;">🖨️ In Đề Thi Ngay</button>
+          </div>
+
+          <table class="header-table">
+            <tr>
+              <td class="center" style="width: 45%;">
+                <div class="bold" style="font-size: 13px;">SỞ GIÁO DỤC VÀ ĐÀO TẠO LÀO CAI</div>
+                <div class="bold" style="font-size: 13px;">TRƯỜNG PHỔ THÔNG DÂN TỘC BÁN TRÚ</div>
+                <div style="font-size: 12px;">Năm học: 2026 - 2027</div>
+              </td>
+              <td class="center" style="width: 55%;">
+                <div class="bold" style="font-size: 15px;">ĐỀ KIỂM TRA ĐỊNH KỲ / ÔN TẬP</div>
+                <div class="bold" style="font-size: 13px; text-transform: uppercase;">CHUYÊN ĐỀ: ${title}</div>
+                <div style="font-style: italic; font-size: 12px;">(Thời gian làm bài: 20 phút - Không kể thời gian giao đề)</div>
+              </td>
+            </tr>
+          </table>
+
+          <div style="margin-bottom: 20px; font-size: 13px; display: flex; justify-content: space-between; border-bottom: 1px dashed #666; padding-bottom: 8px;">
+            <div>Họ và tên học sinh: ............................................................................</div>
+            <div>Lớp: ......................... Điểm: ...............</div>
+          </div>
+
+          <div class="bold" style="margin-bottom: 15px; font-size: 14px;">PHẦN I: CÂU HỎI TRẮC NGHIỆM (${studyGuide.quiz.length} câu)</div>
+          
+          <div>
+            ${questionsHtml}
+          </div>
+
+          <div class="page-break" style="margin-top: 40px; border-top: 2px solid #000; padding-top: 25px;">
+            <div class="center bold" style="font-size: 16px; margin-bottom: 15px; text-transform: uppercase;">
+              ĐÁP ÁN VÀ THANG ĐIỂM (DÀNH CHO GIÁO VIÊN)
+            </div>
+            <div style="font-size: 13px; margin-bottom: 15px;">
+              Mỗi câu trắc nghiệm đúng được <strong>${(10 / studyGuide.quiz.length).toFixed(2)} điểm</strong> (Tổng điểm: 10.0 điểm).
+            </div>
+            <div style="display: flex; flex-wrap: wrap; margin-bottom: 25px;">
+              ${answersHtml}
+            </div>
+            <div style="font-style: italic; font-size: 12px; color: #555; text-align: center;">
+              Đề thi được khởi tạo tự động từ Trợ lý Trí tuệ Nhân tạo Phục vụ Giáo dục Địa phương tỉnh Lào Cai.
+            </div>
+          </div>
+        </body>
+      </html>
+    `;
+
+    printWindow.document.write(fullHtml);
+    printWindow.document.close();
   };
 
   const handleGenerateCustomGuide = async () => {
@@ -3024,6 +3130,14 @@ function Studio() {
                 <Brain className="text-blue-400" size={18} /> Ôn tập trắc nghiệm ({studyGuide.quiz.length} câu)
               </h2>
               <div className="flex items-center gap-2">
+                <button 
+                  type="button"
+                  onClick={handlePrintExam}
+                  className="text-xs bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 px-2.5 py-1 rounded-xl transition font-medium flex items-center gap-1.5 cursor-pointer shadow-sm"
+                  title="In hoặc xuất đề thi trắc nghiệm kèm bảng đáp án cho giáo viên"
+                >
+                  <Printer size={13}/> In / Xuất Đề Thi
+                </button>
                 <button 
                   onClick={() => { setShowQuiz(false); setShowGuideConfigModal(true); }}
                   className="text-xs bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 border border-blue-500/30 px-2.5 py-1 rounded-xl transition font-medium flex items-center gap-1"
