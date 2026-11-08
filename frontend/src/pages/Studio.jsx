@@ -9,7 +9,8 @@ import {
   Copy, Download, Eye, SlidersHorizontal, FileDown, Sun, Moon, Mic, MicOff,
   Search, HelpCircle, Network, Scale, Clock, Share2, Flame, ArrowUp, ArrowDown,
   Square, ShieldAlert, ClipboardCheck, Volume2, VolumeX, Bookmark, BookmarkPlus, Shield,
-  PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, ChevronDown, ChevronUp, LayoutGrid, Printer
+  PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, ChevronDown, ChevronUp, LayoutGrid, Printer,
+  Activity
 } from 'lucide-react';
 import SettingsModal from '../components/SettingsModal';
 import QuizletModal from '../components/QuizletModal';
@@ -20,6 +21,16 @@ import TimelineOutlineModal from '../components/TimelineOutlineModal';
 import ShortcutsModal from '../components/ShortcutsModal';
 import ShareModal from '../components/ShareModal';
 import ModelManagerModal from '../components/ModelManagerModal';
+import SystemHealthModal from '../components/SystemHealthModal';
+import QuizModal from '../components/studio/QuizModal';
+import EvalModal from '../components/studio/EvalModal';
+import GuideConfigModal from '../components/studio/GuideConfigModal';
+import PodcastConfigModal from '../components/studio/PodcastConfigModal';
+import DocPreviewModal from '../components/studio/DocPreviewModal';
+import SourceInspectorModal from '../components/studio/SourceInspectorModal';
+import CritiqueModal from '../components/studio/CritiqueModal';
+import NotesModal from '../components/studio/NotesModal';
+import PasteTextModal from '../components/studio/PasteTextModal';
 
 function Studio() {
   const { id } = useParams();
@@ -62,6 +73,7 @@ function Studio() {
 
   // Settings & Model Switching State
   const [showSettings, setShowSettings] = useState(false);
+  const [showSystemHealth, setShowSystemHealth] = useState(false);
   const [showModelPicker, setShowModelPicker] = useState(false);
   const [availableLocalModels, setAvailableLocalModels] = useState([]);
   const [showModelManagerModal, setShowModelManagerModal] = useState(false);
@@ -2104,6 +2116,18 @@ function Studio() {
               <HelpCircle size={14} />
             </button>
 
+            {/* System Health Diagnostics */}
+            <button 
+              onClick={() => setShowSystemHealth(true)}
+              className={`h-8 px-2.5 rounded-xl flex items-center gap-1.5 transition shrink-0 border text-xs font-medium cursor-pointer ${
+                isDark ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20' : 'border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+              }`}
+              title="Chẩn đoán sức khỏe hệ thống AI & Vector DB (Self-Diagnostics)"
+            >
+              <Activity size={13} className="animate-pulse" />
+              <span className="hidden xl:inline">Hệ thống</span>
+            </button>
+
             {/* Global Settings */}
             <button 
               onClick={() => setShowSettings(true)}
@@ -3121,95 +3145,18 @@ function Studio() {
 
       </div>
 
-      {/* MODAL: QUIZ */}
-      {showQuiz && studyGuide?.quiz && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-fade-in font-sans">
-          <div className="bg-[#181a20] border border-blue-500/30 w-full max-w-xl max-h-[85vh] flex flex-col rounded-2xl shadow-2xl overflow-hidden">
-            <div className="p-4 border-b border-white/10 flex justify-between items-center bg-blue-500/10">
-              <h2 className="text-base font-bold flex items-center gap-2 text-white">
-                <Brain className="text-blue-400" size={18} /> Ôn tập trắc nghiệm ({studyGuide.quiz.length} câu)
-              </h2>
-              <div className="flex items-center gap-2">
-                <button 
-                  type="button"
-                  onClick={handlePrintExam}
-                  className="text-xs bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 px-2.5 py-1 rounded-xl transition font-medium flex items-center gap-1.5 cursor-pointer shadow-sm"
-                  title="In hoặc xuất đề thi trắc nghiệm kèm bảng đáp án cho giáo viên"
-                >
-                  <Printer size={13}/> In / Xuất Đề Thi
-                </button>
-                <button 
-                  onClick={() => { setShowQuiz(false); setShowGuideConfigModal(true); }}
-                  className="text-xs bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 border border-blue-500/30 px-2.5 py-1 rounded-xl transition font-medium flex items-center gap-1"
-                  title="Thay đổi số câu hoặc chủ đề đề thi"
-                >
-                  <SlidersHorizontal size={12}/> Đổi số câu / Đề
-                </button>
-                <button onClick={() => { setShowQuiz(false); setQuizAnswers({}); setQuizSubmitted(false); }} className="text-gray-400 hover:text-white">
-                  <X size={20}/>
-                </button>
-              </div>
-            </div>
-            
-            <div className="p-5 overflow-y-auto flex-1 space-y-5 scrollbar-hide">
-              {studyGuide.quiz.map((q, idx) => (
-                <div key={idx} className="bg-white/[0.03] p-4 rounded-xl border border-white/10">
-                  <p className="font-semibold text-sm mb-3 text-gray-100">{idx + 1}. {q.question}</p>
-                  <div className="space-y-2">
-                    {q.options.map((opt, oIdx) => {
-                      const isSelected = quizAnswers[idx] === oIdx;
-                      const isCorrect = q.answer === oIdx;
-                      let btnClass = "w-full text-left p-2.5 rounded-lg border text-xs transition-all ";
-                      
-                      if (!quizSubmitted) {
-                        btnClass += isSelected ? "border-blue-500 bg-blue-500/20 text-white" : "border-white/10 hover:bg-white/10 text-gray-300";
-                      } else {
-                        if (isCorrect) btnClass += "border-green-500 bg-green-500/20 text-white";
-                        else if (isSelected && !isCorrect) btnClass += "border-red-500 bg-red-500/20 text-white";
-                        else btnClass += "border-white/5 text-gray-500 opacity-40";
-                      }
-
-                      return (
-                        <button 
-                          key={oIdx} 
-                          disabled={quizSubmitted}
-                          onClick={() => setQuizAnswers({...quizAnswers, [idx]: oIdx})}
-                          className={btnClass}
-                        >
-                          <div className="flex justify-between items-center">
-                            <span>{opt}</span>
-                            {quizSubmitted && isCorrect && <Check size={14} className="text-green-400" />}
-                            {quizSubmitted && isSelected && !isCorrect && <XCircle size={14} className="text-red-400" />}
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="p-4 border-t border-white/10 bg-black/20 flex justify-end">
-              {!quizSubmitted ? (
-                <button 
-                  onClick={() => setQuizSubmitted(true)}
-                  disabled={Object.keys(quizAnswers).length !== studyGuide.quiz.length}
-                  className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2 rounded-xl text-xs font-semibold disabled:opacity-40 transition"
-                >
-                  Nộp bài chấm điểm
-                </button>
-              ) : (
-                <button 
-                  onClick={() => { setQuizAnswers({}); setQuizSubmitted(false); }}
-                  className="bg-white/10 hover:bg-white/20 text-white px-5 py-2 rounded-xl text-xs font-semibold transition"
-                >
-                  Làm lại
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      {/* MODAL: QUIZ (Modular Component) */}
+      <QuizModal
+        isOpen={showQuiz && !!studyGuide?.quiz}
+        onClose={() => setShowQuiz(false)}
+        quiz={studyGuide?.quiz || []}
+        quizAnswers={quizAnswers}
+        setQuizAnswers={setQuizAnswers}
+        quizSubmitted={quizSubmitted}
+        setQuizSubmitted={setQuizSubmitted}
+        onOpenConfig={() => setShowGuideConfigModal(true)}
+        onPrintExam={handlePrintExam}
+      />
 
       {/* MODAL: QUIZLET SUITE (Flashcards 3D, Anki SRS, Practice Timer, Match Game, Export) */}
       <QuizletModal
@@ -3222,407 +3169,43 @@ function Studio() {
         isDark={isDark}
       />
 
-      {/* MODAL: EVALUATION RESULTS */}
-      {showEvalModal && evalResult && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-fade-in font-sans">
-          <div className="bg-[#181a20] border border-yellow-500/30 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden p-6 space-y-4">
-            <div className="flex justify-between items-center pb-3 border-b border-white/10">
-              <div className="flex items-center gap-2 text-yellow-400 font-bold">
-                <Award size={20} />
-                <span>Kết Quả Đánh Giá Năng Lực Học Tập</span>
-              </div>
-              <button onClick={() => setShowEvalModal(false)} className="text-gray-400 hover:text-white">
-                <X size={18} />
-              </button>
-            </div>
+      {/* MODAL: EVALUATION RESULTS (Modular Component) */}
+      <EvalModal
+        isOpen={showEvalModal && !!evalResult}
+        onClose={() => setShowEvalModal(false)}
+        evalResult={evalResult}
+      />
 
-            {/* Scores Grid */}
-            <div className="grid grid-cols-3 gap-3 text-center">
-              <div className="bg-white/5 p-3 rounded-xl border border-white/10">
-                <div className="text-2xl font-black text-yellow-400">{evalResult.score?.toFixed(1) || '8.0'}<span className="text-xs text-gray-400">/10</span></div>
-                <div className="text-[11px] text-gray-400 mt-0.5">Điểm tổng quan</div>
-              </div>
-              <div className="bg-white/5 p-3 rounded-xl border border-white/10">
-                <div className="text-2xl font-black text-green-400">{((evalResult.faithfulness || 0.9) * 100).toFixed(0)}%</div>
-                <div className="text-[11px] text-gray-400 mt-0.5">Độ bám sát tài liệu</div>
-              </div>
-              <div className="bg-white/5 p-3 rounded-xl border border-white/10">
-                <div className="text-2xl font-black text-blue-400">{((evalResult.context_precision || 0.85) * 100).toFixed(0)}%</div>
-                <div className="text-[11px] text-gray-400 mt-0.5">Độ chuẩn ngữ cảnh</div>
-              </div>
-            </div>
+      {/* MODAL: CUSTOM STUDY GUIDE & QUIZLET CONFIG (Modular Component) */}
+      <GuideConfigModal
+        isOpen={showGuideConfigModal}
+        onClose={() => setShowGuideConfigModal(false)}
+        guideConfig={guideConfig}
+        setGuideConfig={setGuideConfig}
+        onGenerate={handleGenerateCustomGuide}
+        regeneratingGuide={regeneratingGuide}
+      />
 
-            {/* AI Feedback */}
-            <div className="bg-white/[0.02] p-3.5 rounded-xl border border-white/10">
-              <h4 className="text-xs font-semibold text-gray-300 mb-1">Nhận xét chi tiết từ AI:</h4>
-              <p className="text-xs text-gray-400 leading-relaxed">{evalResult.feedback}</p>
-            </div>
+      {/* MODAL: CUSTOM PODCAST CONFIG (Modular Component) */}
+      <PodcastConfigModal
+        isOpen={showPodcastModal}
+        onClose={() => setShowPodcastModal(false)}
+        podcastConfig={podcastConfig}
+        setPodcastConfig={setPodcastConfig}
+        onGenerate={generatePodcast}
+        podcastGenerating={podcastGenerating}
+      />
 
-            {/* Strengths & Weaknesses */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-              <div className="bg-green-500/10 p-3 rounded-xl border border-green-500/20">
-                <h5 className="font-semibold text-green-400 mb-1 flex items-center gap-1">
-                  <Check size={13} /> Điểm mạnh:
-                </h5>
-                <ul className="text-gray-300 space-y-1 list-disc list-inside">
-                  {evalResult.strengths?.map((s, idx) => (
-                    <li key={idx}>{s}</li>
-                  ))}
-                </ul>
-              </div>
-
-              <div className="bg-yellow-500/10 p-3 rounded-xl border border-yellow-500/20">
-                <h5 className="font-semibold text-yellow-400 mb-1 flex items-center gap-1">
-                  <Sparkles size={13} /> Cần phát huy thêm:
-                </h5>
-                <ul className="text-gray-300 space-y-1 list-disc list-inside">
-                  {evalResult.weaknesses?.map((w, idx) => (
-                    <li key={idx}>{w}</li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-
-            <div className="pt-2 flex justify-end">
-              <button 
-                onClick={() => setShowEvalModal(false)}
-                className="bg-white text-black px-5 py-2 rounded-xl text-xs font-semibold hover:bg-gray-200 transition"
-              >
-                Đã hiểu
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL: CUSTOM STUDY GUIDE & QUIZLET CONFIG */}
-      {showGuideConfigModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in font-sans">
-          <div className="bg-[#181a20] border border-blue-500/40 w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden p-6 space-y-5">
-            <div className="flex justify-between items-center pb-3 border-b border-white/10">
-              <div className="flex items-center gap-2.5 text-blue-400 font-bold text-base">
-                <SlidersHorizontal size={20} />
-                <span>Tùy Chỉnh Bộ Học Tập & Quizlet</span>
-              </div>
-              <button 
-                onClick={() => setShowGuideConfigModal(false)}
-                className="text-gray-400 hover:text-white p-1 rounded-lg hover:bg-white/5 transition"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            {/* Config Fields */}
-            <div className="space-y-4 text-xs">
-              {/* Quiz Count */}
-              <div>
-                <div className="flex justify-between items-center mb-1.5">
-                  <label className="font-semibold text-gray-300 flex items-center gap-1.5">
-                    <Brain size={14} className="text-blue-400" /> Số câu hỏi Trắc nghiệm (Quiz):
-                  </label>
-                  <span className="font-bold text-blue-400 font-mono text-sm">{guideConfig.quiz_count} câu</span>
-                </div>
-                <div className="flex gap-2">
-                  {[3, 5, 10, 15, 20].map(cnt => (
-                    <button
-                      key={cnt}
-                      type="button"
-                      onClick={() => setGuideConfig({...guideConfig, quiz_count: cnt})}
-                      className={`flex-1 py-1.5 rounded-xl border text-xs font-semibold transition ${
-                        guideConfig.quiz_count === cnt 
-                          ? 'bg-blue-600 text-white border-blue-500 shadow-md' 
-                          : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10'
-                      }`}
-                    >
-                      {cnt}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Flashcards Count */}
-              <div>
-                <div className="flex justify-between items-center mb-1.5">
-                  <label className="font-semibold text-gray-300 flex items-center gap-1.5">
-                    <Layers size={14} className="text-purple-400" /> Số thẻ nhớ Quizlet (Flashcards):
-                  </label>
-                  <span className="font-bold text-purple-400 font-mono text-sm">{guideConfig.flashcards_count} thẻ</span>
-                </div>
-                <div className="flex gap-2">
-                  {[5, 10, 15, 20, 30].map(cnt => (
-                    <button
-                      key={cnt}
-                      type="button"
-                      onClick={() => setGuideConfig({...guideConfig, flashcards_count: cnt})}
-                      className={`flex-1 py-1.5 rounded-xl border text-xs font-semibold transition ${
-                        guideConfig.flashcards_count === cnt 
-                          ? 'bg-purple-600 text-white border-purple-500 shadow-md' 
-                          : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10'
-                      }`}
-                    >
-                      {cnt}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Difficulty */}
-              <div>
-                <label className="font-semibold text-gray-300 block mb-1.5">
-                  Mức độ khó của câu hỏi:
-                </label>
-                <div className="grid grid-cols-3 gap-2">
-                  {[
-                    { key: 'easy', label: 'Cơ bản', sub: 'Nhận biết, nhớ từ khóa' },
-                    { key: 'medium', label: 'Trung bình', sub: 'Hiểu & áp dụng' },
-                    { key: 'hard', label: 'Nâng cao', sub: 'Tình huống, bẫy logic' }
-                  ].map(lvl => (
-                    <button
-                      key={lvl.key}
-                      type="button"
-                      onClick={() => setGuideConfig({...guideConfig, difficulty: lvl.key})}
-                      className={`p-2 rounded-xl border text-left transition ${
-                        guideConfig.difficulty === lvl.key 
-                          ? 'bg-blue-500/20 border-blue-500 text-white shadow' 
-                          : 'bg-white/5 border-white/10 text-gray-400 hover:bg-white/10'
-                      }`}
-                    >
-                      <div className="font-semibold text-xs text-gray-200">{lvl.label}</div>
-                      <div className="text-[10px] text-gray-400 mt-0.5">{lvl.sub}</div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Focus Topic */}
-              <div>
-                <label className="font-semibold text-gray-300 block mb-1.5">
-                  Chủ đề / Yêu cầu trọng tâm (Tùy chọn):
-                </label>
-                <input
-                  type="text"
-                  value={guideConfig.focus_topic}
-                  onChange={e => setGuideConfig({...guideConfig, focus_topic: e.target.value})}
-                  placeholder="Ví dụ: Tập trung vào kiến thức Docker, các lệnh CLI, câu hỏi tình huống..."
-                  className="w-full bg-black/40 text-xs px-3.5 py-2.5 rounded-xl text-white border border-white/15 focus:border-blue-500 outline-none transition"
-                />
-                <span className="text-[10px] text-gray-500 mt-1 block">
-                  AI sẽ tự động lọc các đoạn tài liệu liên quan đến chủ đề này để thiết kế câu hỏi.
-                </span>
-              </div>
-            </div>
-
-            {/* Actions */}
-            <div className="pt-2 flex justify-end gap-2 border-t border-white/10">
-              <button
-                type="button"
-                onClick={() => setShowGuideConfigModal(false)}
-                className="px-4 py-2 rounded-xl text-xs font-semibold text-gray-400 hover:text-white hover:bg-white/5 transition"
-              >
-                Hủy
-              </button>
-              <button
-                type="button"
-                onClick={handleGenerateCustomGuide}
-                disabled={regeneratingGuide}
-                className="bg-gradient-to-r from-blue-600 to-purple-600 hover:opacity-90 text-white px-5 py-2 rounded-xl text-xs font-semibold shadow-lg transition flex items-center gap-1.5 disabled:opacity-50"
-              >
-                <Sparkles size={14} />
-                {regeneratingGuide ? "Đang xử lý..." : "Tạo Cẩm Nang & Quizlet Mới"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL: CUSTOM PODCAST CONFIG */}
-      {showPodcastModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in font-sans">
-          <div className="bg-[#181a20] border border-purple-500/40 w-full max-w-md rounded-3xl shadow-2xl overflow-hidden p-6 space-y-5">
-            <div className="flex justify-between items-center pb-3 border-b border-white/10">
-              <div className="flex items-center gap-2.5 text-purple-400 font-bold text-base">
-                <Headphones size={20} />
-                <span>Tùy Chỉnh Podcast Âm Thanh AI</span>
-              </div>
-              <button 
-                onClick={() => setShowPodcastModal(false)}
-                className="text-gray-400 hover:text-white p-1 rounded-lg hover:bg-white/5 transition"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="space-y-4 text-xs">
-              {/* Style selection */}
-              <div>
-                <label className="font-semibold text-gray-300 block mb-1.5">
-                  Phong cách trò chuyện:
-                </label>
-                <div className="space-y-2">
-                  {[
-                    { key: 'fun', label: 'Hài hước & Sôi nổi', desc: 'Sử dụng ngôn từ đời thường dí dỏm, tràn đầy năng lượng' },
-                    { key: 'academic', label: 'Học thuật & Chuyên sâu', desc: 'Tập trung phân tích kỹ thuật, bản chất vấn đề và tính logic' },
-                    { key: 'debate', label: 'Tranh luận & Phản biện', desc: 'Một người nêu giả thiết, một người phản biện và mở rộng' }
-                  ].map(s => (
-                    <button
-                      key={s.key}
-                      type="button"
-                      onClick={() => setPodcastConfig({...podcastConfig, style: s.key})}
-                      className={`w-full p-2.5 rounded-xl border text-left transition flex items-center justify-between ${
-                        podcastConfig.style === s.key 
-                          ? 'bg-purple-500/20 border-purple-500 text-white' 
-                          : 'bg-white/5 border-white/10 text-gray-400 hover:bg-white/10'
-                      }`}
-                    >
-                      <div>
-                        <div className="font-semibold text-xs text-gray-200">{s.label}</div>
-                        <div className="text-[10px] text-gray-400">{s.desc}</div>
-                      </div>
-                      {podcastConfig.style === s.key && <Check size={14} className="text-purple-400" />}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Voice selection */}
-              <div>
-                <label className="font-semibold text-gray-300 block mb-1.5">
-                  Giọng đọc Podcast:
-                </label>
-                <div className="grid grid-cols-2 gap-2">
-                  {[
-                    { key: 'duo', label: '👫 Song ca Nam & Nữ', desc: 'Minh & My đối thoại tự nhiên, có khoảng ngắt nghỉ' },
-                    { key: 'female', label: '👩 Giọng Nữ (Hoài My)', desc: 'Ngọt ngào, truyền cảm, chuẩn sách nói' },
-                    { key: 'male', label: '👨 Giọng Nam (Nam Minh)', desc: 'Trầm ấm, đĩnh đạc, bản tin phân tích' },
-                    { key: 'gtts', label: '🤖 Chị Google (gTTS)', desc: 'Giọng đọc quen thuộc, hài hước' }
-                  ].map(v => (
-                    <button
-                      key={v.key}
-                      type="button"
-                      onClick={() => setPodcastConfig({...podcastConfig, voice_mode: v.key})}
-                      className={`p-2.5 rounded-xl border text-left transition flex flex-col justify-between ${
-                        (podcastConfig.voice_mode || 'duo') === v.key 
-                          ? 'bg-purple-500/20 border-purple-500 text-white' 
-                          : 'bg-white/5 border-white/10 text-gray-400 hover:bg-white/10'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between w-full">
-                        <span className="font-semibold text-[11px] text-gray-200">{v.label}</span>
-                        {(podcastConfig.voice_mode || 'duo') === v.key && <Check size={12} className="text-purple-400" />}
-                      </div>
-                      <div className="text-[10px] text-gray-400 mt-1 leading-snug">{v.desc}</div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Focus Topic */}
-              <div>
-                <label className="font-semibold text-gray-300 block mb-1.5">
-                  Chủ đề trọng tâm (Tùy chọn):
-                </label>
-                <input
-                  type="text"
-                  value={podcastConfig.focus_topic}
-                  onChange={e => setPodcastConfig({...podcastConfig, focus_topic: e.target.value})}
-                  placeholder="Ví dụ: Tóm tắt 3 điểm cốt lõi để đi thi, giải thích thuật ngữ..."
-                  className="w-full bg-black/40 text-xs px-3.5 py-2.5 rounded-xl text-white border border-white/15 focus:border-purple-500 outline-none transition"
-                />
-              </div>
-            </div>
-
-            <div className="pt-2 flex justify-end gap-2 border-t border-white/10">
-              <button
-                type="button"
-                onClick={() => setShowPodcastModal(false)}
-                className="px-4 py-2 rounded-xl text-xs font-semibold text-gray-400 hover:text-white hover:bg-white/5 transition"
-              >
-                Hủy
-              </button>
-              <button
-                type="button"
-                onClick={generatePodcast}
-                disabled={podcastGenerating}
-                className="bg-gradient-to-r from-purple-600 to-blue-600 hover:opacity-90 text-white px-5 py-2 rounded-xl text-xs font-semibold shadow-lg transition flex items-center gap-1.5 disabled:opacity-50"
-              >
-                <Headphones size={14} />
-                {podcastGenerating ? "Đang tạo..." : "Bắt đầu tạo Podcast"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL: DOCUMENT PREVIEW */}
-      {previewDoc && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in font-sans">
-          <div className="bg-[#181a20] border border-white/15 w-full max-w-2xl max-h-[85vh] flex flex-col rounded-3xl shadow-2xl overflow-hidden">
-            <div className="p-4 border-b border-white/10 flex justify-between items-center bg-white/[0.02]">
-              <div className="flex items-center gap-2.5 min-w-0 pr-4">
-                <FileText className="text-blue-400 shrink-0" size={18} />
-                <h3 className="font-semibold text-sm truncate text-white" title={previewDoc.filename}>
-                  {previewDoc.filename}
-                </h3>
-              </div>
-              <button 
-                onClick={() => setPreviewDoc(null)}
-                className="text-gray-400 hover:text-white p-1 rounded-lg hover:bg-white/5 transition"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            {/* Quick stats */}
-            <div className="px-5 py-2.5 bg-black/30 border-b border-white/10 flex gap-6 text-xs text-gray-400">
-              <div>Đoạn phân rã (Chunks): <span className="font-mono text-blue-400 font-bold">{previewDoc.chunk_count || 0}</span></div>
-              <div>Ký tự trích xuất: <span className="font-mono text-green-400 font-bold">{previewDoc.character_count?.toLocaleString() || 0}</span></div>
-            </div>
-
-            {/* Highlighted Citation Snippet if opened from a Citation click */}
-            {highlightSnippet && (
-              <div className="mx-5 mt-4 p-3.5 rounded-2xl bg-blue-500/10 border border-blue-500/30 text-xs text-blue-200 space-y-1">
-                <div className="font-bold text-blue-400 uppercase tracking-wider text-[10px] flex items-center justify-between">
-                  <span>✨ Đoạn trích dẫn được AI sử dụng:</span>
-                  <button onClick={() => setHighlightSnippet(null)} className="text-gray-400 hover:text-white">✕</button>
-                </div>
-                <p className="leading-relaxed italic text-gray-200">"{highlightSnippet}..."</p>
-              </div>
-            )}
-
-            {/* Content body */}
-            <div className="p-5 overflow-y-auto flex-1 font-mono text-xs text-gray-300 leading-relaxed whitespace-pre-wrap select-text bg-[#121316] scrollbar-hide">
-              {loadingPreview ? (
-                <div className="flex items-center justify-center py-12 gap-2 text-gray-400 font-sans">
-                  <Loader size={18} className="animate-spin text-blue-400" />
-                  <span>Đang trích xuất dữ liệu từ bộ nhớ vector...</span>
-                </div>
-              ) : (
-                previewDoc.preview_text || "Không có nội dung hiển thị."
-              )}
-            </div>
-
-            <div className="p-3.5 border-t border-white/10 bg-black/20 flex justify-between items-center">
-              <button
-                type="button"
-                onClick={() => {
-                  deleteDocument(previewDoc.filename);
-                  setPreviewDoc(null);
-                }}
-                className="text-red-400 hover:text-red-300 hover:bg-red-500/10 px-3 py-1.5 rounded-xl text-xs font-semibold transition flex items-center gap-1.5"
-              >
-                <Trash2 size={13} /> Xóa tài liệu này
-              </button>
-              <button
-                type="button"
-                onClick={() => setPreviewDoc(null)}
-                className="bg-white/10 hover:bg-white/20 text-white px-5 py-1.5 rounded-xl text-xs font-semibold transition"
-              >
-                Đóng
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* MODAL: DOCUMENT PREVIEW (Modular Component) */}
+      <DocPreviewModal
+        isOpen={!!previewDoc}
+        onClose={() => setPreviewDoc(null)}
+        previewDoc={previewDoc}
+        loadingPreview={loadingPreview}
+        highlightSnippet={highlightSnippet}
+        setHighlightSnippet={setHighlightSnippet}
+        onDeleteDocument={deleteDocument}
+      />
 
       {/* Global Settings Modal */}
       <SettingsModal 
@@ -3699,321 +3282,72 @@ function Studio() {
         initialTab={modelManagerInitialTab}
       />
 
-      {/* MODAL: PASTE RAW TEXT */}
-      {showPasteTextModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in font-sans">
-          <div className="bg-[#181a20] border border-white/15 w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden p-6 space-y-4">
-            <div className="flex justify-between items-center pb-3 border-b border-white/10">
-              <h3 className="font-bold text-base text-white flex items-center gap-2">
-                <FileText size={18} className="text-blue-400" /> Dán văn bản / Ghi chú trực tiếp
-              </h3>
-              <button onClick={() => setShowPasteTextModal(false)} className="text-gray-400 hover:text-white">
-                <X size={18} />
-              </button>
-            </div>
-            <div className="space-y-3 text-xs">
-              <div>
-                <label className="block font-semibold text-gray-300 mb-1">Tiêu đề nguồn (Tùy chọn):</label>
-                <input
-                  type="text"
-                  value={pasteTitle}
-                  onChange={e => setPasteTitle(e.target.value)}
-                  placeholder="VD: Ghi chú họp, Bài báo khoa học..."
-                  className="w-full bg-black/40 border border-white/15 rounded-xl px-3.5 py-2 text-white outline-none focus:border-blue-500"
-                />
-              </div>
-              <div>
-                <label className="block font-semibold text-gray-300 mb-1">Nội dung văn bản:</label>
-                <textarea
-                  rows={8}
-                  value={pasteContent}
-                  onChange={e => setPasteContent(e.target.value)}
-                  placeholder="Dán nội dung văn bản hoặc Markdown vào đây..."
-                  className="w-full bg-black/40 border border-white/15 rounded-xl p-3.5 text-white outline-none focus:border-blue-500 resize-none"
-                />
-              </div>
-            </div>
-            <div className="flex justify-end gap-2 pt-2 border-t border-white/10">
-              <button
-                onClick={() => setShowPasteTextModal(false)}
-                className="px-4 py-2 rounded-xl text-xs font-semibold text-gray-400 hover:text-white"
-              >
-                Hủy
-              </button>
-              <button
-                onClick={handlePasteTextSubmit}
-                disabled={!pasteContent.trim()}
-                className="bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white px-5 py-2 rounded-xl text-xs font-semibold shadow-lg transition"
-              >
-                Nạp vào Sổ tay
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* MODAL: PASTE RAW TEXT (Modular Component) */}
+      <PasteTextModal
+        isOpen={showPasteTextModal}
+        onClose={() => setShowPasteTextModal(false)}
+        pasteTitle={pasteTitle}
+        setPasteTitle={setPasteTitle}
+        pasteContent={pasteContent}
+        setPasteContent={setPasteContent}
+        onSubmit={handlePasteTextSubmit}
+      />
 
-      {/* Modal Xem Chunks Gốc của Tài liệu (Source Inspector Modal) */}
-      {inspectDoc && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in font-sans">
-          <div className="bg-[#181a20] rounded-2xl max-w-3xl w-full max-h-[85vh] flex flex-col shadow-2xl border border-white/15 overflow-hidden">
-            <div className="p-4 bg-white/[0.03] border-b border-white/10 flex items-center justify-between">
-              <div className="flex items-center space-x-2.5 truncate">
-                <Eye className="w-5 h-5 text-emerald-400 shrink-0" />
-                <div className="truncate">
-                  <h3 className="font-bold text-sm text-white truncate">Chi tiết Phân mảnh (Chunks): {inspectDoc}</h3>
-                  <p className="text-[11px] text-gray-400">Tổng cộng {docChunks.length} đoạn dữ liệu đã lưu trong Vector & BM25</p>
-                </div>
-              </div>
-              <button onClick={() => setInspectDoc(null)} className="p-1.5 text-gray-400 hover:text-white rounded-lg">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
+      {/* Modal Xem Chunks Gốc của Tài liệu (Source Inspector Modular Component) */}
+      <SourceInspectorModal
+        isOpen={!!inspectDoc}
+        onClose={() => setInspectDoc(null)}
+        inspectDoc={inspectDoc}
+        docChunks={docChunks}
+        chunkSearch={chunkSearch}
+        setChunkSearch={setChunkSearch}
+        loadingChunks={loadingChunks}
+      />
 
-            <div className="p-3 border-b border-white/10 bg-white/[0.02]">
-              <input
-                type="text"
-                value={chunkSearch}
-                onChange={(e) => setChunkSearch(e.target.value)}
-                placeholder="Lọc nhanh nội dung chunk theo từ khóa..."
-                className="w-full px-3 py-1.5 text-xs bg-black/40 text-white border border-white/15 rounded-lg focus:outline-none focus:border-blue-500"
-              />
-            </div>
+      {/* Modal Phản biện AI & Kế hoạch hành động (Modular Component) */}
+      <CritiqueModal
+        isOpen={critiqueModal.isOpen}
+        onClose={() => setCritiqueModal(prev => ({ ...prev, isOpen: false }))}
+        critiqueModal={critiqueModal}
+        onPinNote={handlePinNote}
+        onShowToast={showToast}
+        isDark={isDark}
+      />
 
-            <div className="p-4 overflow-y-auto flex-1 space-y-3 scrollbar-hide">
-              {loadingChunks ? (
-                <div className="flex items-center justify-center py-12 text-gray-400 text-sm">
-                  <Loader className="w-5 h-5 animate-spin mr-2 text-blue-500" /> Đang tải các đoạn văn bản...
-                </div>
-              ) : docChunks.length === 0 ? (
-                <div className="text-center py-12 text-gray-500 text-xs">Không tìm thấy chunk nào cho tài liệu này.</div>
-              ) : (
-                docChunks
-                  .filter(c => !chunkSearch.trim() || (c.content && c.content.toLowerCase().includes(chunkSearch.toLowerCase())))
-                  .map((chunk, i) => (
-                    <div key={chunk.chunk_id || i} className="bg-white/[0.03] p-3.5 rounded-xl border border-white/10 shadow-sm">
-                      <div className="flex items-center justify-between text-[11px] text-gray-400 mb-1.5 pb-1.5 border-b border-white/5">
-                        <span className="font-semibold text-blue-400">Chunk #{i + 1} ({chunk.type || 'text'})</span>
-                        <div className="flex items-center gap-2">
-                          {chunk.breadcrumbs && (
-                            <span className="text-[10px] bg-white/5 px-2 py-0.5 rounded text-gray-300 max-w-[200px] truncate" title={chunk.breadcrumbs}>
-                              {chunk.breadcrumbs}
-                            </span>
-                          )}
-                          <span>Trang: {chunk.page || 1} • {(chunk.content || '').length} ký tự</span>
-                        </div>
-                      </div>
-                      <pre className="text-xs text-gray-300 whitespace-pre-wrap font-sans leading-relaxed">{chunk.content}</pre>
-                    </div>
-                  ))
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Modal Pinned Notes (Bảng Ghi chú Nghiên cứu Modular Component) */}
+      <NotesModal
+        isOpen={showNotesModal}
+        onClose={() => setShowNotesModal(false)}
+        pinnedNotes={pinnedNotes}
+        newNoteTitle={newNoteTitle}
+        setNewNoteTitle={setNewNoteTitle}
+        newNoteContent={newNoteContent}
+        setNewNoteContent={setNewNoteContent}
+        onAddNote={async () => {
+          if (!newNoteContent.trim()) return;
+          setSavingNote(true);
+          await handlePinNote(newNoteContent, newNoteTitle || 'Ghi chú tự tạo', 'manual');
+          setNewNoteContent('');
+          setNewNoteTitle('');
+          setSavingNote(false);
+        }}
+        savingNote={savingNote}
+        onDeleteNote={handleDeleteNote}
+        onSynthesizeNotes={handleSynthesizeNotes}
+        isSynthesizingNotes={isSynthesizingNotes}
+        onConvertNoteToSource={handleConvertNoteToSource}
+        convertingNoteId={convertingNoteId}
+        onShowToast={showToast}
+        isDark={isDark}
+      />
 
-      {/* Modal Phản biện AI & Kế hoạch hành động */}
-      {critiqueModal.isOpen && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in font-sans">
-          <div className="bg-[#181a20] rounded-2xl max-w-3xl w-full max-h-[85vh] flex flex-col shadow-2xl border border-white/15 overflow-hidden">
-            <div className={`p-4 border-b border-white/10 flex items-center justify-between ${
-              critiqueModal.type === 'critique' 
-                ? 'bg-rose-500/10' 
-                : critiqueModal.type === 'synthesis'
-                ? 'bg-purple-500/10'
-                : 'bg-lime-500/10'
-            }`}>
-              <div className="flex items-center space-x-2.5 truncate">
-                {critiqueModal.type === 'critique' ? (
-                  <ShieldAlert className="w-5 h-5 text-rose-400 shrink-0" />
-                ) : critiqueModal.type === 'synthesis' ? (
-                  <Sparkles className="w-5 h-5 text-purple-400 shrink-0" />
-                ) : (
-                  <ClipboardCheck className="w-5 h-5 text-lime-400 shrink-0" />
-                )}
-                <h3 className="font-bold text-sm text-white truncate">{critiqueModal.title}</h3>
-              </div>
-              <div className="flex items-center gap-2">
-                {critiqueModal.content && !critiqueModal.loading && (
-                  <>
-                    <button 
-                      type="button"
-                      onClick={() => handlePinNote(critiqueModal.content, critiqueModal.title, critiqueModal.type)}
-                      className="p-1.5 text-gray-400 hover:text-amber-300 rounded-lg hover:bg-white/10 transition flex items-center gap-1 text-xs cursor-pointer"
-                      title="Ghim vào Bảng Ghi chú"
-                    >
-                      <BookmarkPlus size={16} />
-                      <span className="hidden sm:inline">Ghim</span>
-                    </button>
-                    <button 
-                      type="button"
-                      onClick={() => {
-                        navigator.clipboard.writeText(critiqueModal.content);
-                        showToast("📋 Đã sao chép nội dung vào Clipboard!");
-                      }}
-                      className="p-1.5 text-gray-400 hover:text-white rounded-lg hover:bg-white/10 transition cursor-pointer"
-                      title="Sao chép nội dung"
-                    >
-                      <Copy size={16} />
-                    </button>
-                  </>
-                )}
-                <button type="button" onClick={() => setCritiqueModal(prev => ({ ...prev, isOpen: false }))} className="p-1.5 text-gray-400 hover:text-white rounded-lg cursor-pointer">
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
-
-            <div className="p-5 overflow-y-auto flex-1 scrollbar-hide text-sm text-gray-200">
-              {critiqueModal.loading ? (
-                <div className="flex flex-col items-center justify-center py-16 gap-3 text-gray-400">
-                  <Loader className="w-7 h-7 animate-spin text-purple-400" />
-                  <p className="text-xs">Đang đọc tài liệu và phân tích chuyên sâu...</p>
-                </div>
-              ) : (
-                <MarkdownRenderer content={critiqueModal.content} isDark={isDark} />
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal Pinned Notes (Bảng Ghi chú Nghiên cứu) */}
-      {showNotesModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in font-sans">
-          <div className={`rounded-2xl max-w-2xl w-full max-h-[85vh] flex flex-col shadow-2xl border overflow-hidden ${
-            isDark ? 'bg-[#181a20] border-white/15 text-white' : 'bg-white border-slate-200 text-slate-800'
-          }`}>
-            <div className={`p-4 border-b flex items-center justify-between ${
-              isDark ? 'border-white/10 bg-amber-500/10' : 'border-slate-200 bg-amber-50'
-            }`}>
-              <div className="flex items-center gap-2">
-                <Bookmark className="w-5 h-5 text-amber-500" />
-                <h3 className="font-bold text-base">Bảng Ghi chú Nghiên cứu ({pinnedNotes.length})</h3>
-              </div>
-              <div className="flex items-center gap-2">
-                {pinnedNotes.length >= 2 && (
-                  <button
-                    type="button"
-                    onClick={handleSynthesizeNotes}
-                    disabled={isSynthesizingNotes}
-                    className="px-3 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-semibold rounded-xl flex items-center gap-1.5 shadow transition disabled:opacity-50 cursor-pointer"
-                    title="Tổng hợp các ghi chú thành Báo cáo chuyên đề AI"
-                  >
-                    {isSynthesizingNotes ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-                    <span>{isSynthesizingNotes ? 'Đang tổng hợp...' : '✨ Tổng hợp Báo cáo AI'}</span>
-                  </button>
-                )}
-                <button 
-                  type="button"
-                  onClick={() => setShowNotesModal(false)} 
-                  className={`p-1.5 rounded-lg transition cursor-pointer ${isDark ? 'text-gray-400 hover:text-white' : 'text-slate-400 hover:text-slate-800'}`}
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
-
-            <div className={`p-4 border-b space-y-2.5 ${isDark ? 'border-white/10 bg-white/[0.01]' : 'border-slate-200 bg-slate-50/50'}`}>
-              <input 
-                type="text"
-                value={newNoteTitle}
-                onChange={e => setNewNoteTitle(e.target.value)}
-                placeholder="Tiêu đề ghi chú mới (tùy chọn)..."
-                className={`w-full px-3 py-2 text-xs rounded-xl border outline-none ${
-                  isDark ? 'bg-black/40 border-white/10 text-white placeholder-gray-500' : 'bg-white border-slate-300 text-slate-900 placeholder-slate-400'
-                }`}
-              />
-              <div className="flex gap-2">
-                <textarea
-                  value={newNoteContent}
-                  onChange={e => setNewNoteContent(e.target.value)}
-                  placeholder="Viết ghi chú cá nhân hoặc nhận định của bạn..."
-                  rows={2}
-                  className={`flex-1 px-3 py-2 text-xs rounded-xl border outline-none resize-none ${
-                    isDark ? 'bg-black/40 border-white/10 text-white placeholder-gray-500' : 'bg-white border-slate-300 text-slate-900 placeholder-slate-400'
-                  }`}
-                />
-                <button
-                  type="button"
-                  onClick={async () => {
-                    if (!newNoteContent.trim()) return;
-                    setSavingNote(true);
-                    await handlePinNote(newNoteContent, newNoteTitle || 'Ghi chú tự tạo', 'manual');
-                    setNewNoteContent('');
-                    setNewNoteTitle('');
-                    setSavingNote(false);
-                  }}
-                  disabled={savingNote || !newNoteContent.trim()}
-                  className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-semibold self-end transition disabled:opacity-50 cursor-pointer shadow"
-                >
-                  {savingNote ? 'Đang lưu...' : 'Thêm'}
-                </button>
-              </div>
-            </div>
-
-            <div className="p-4 overflow-y-auto flex-1 space-y-3 scrollbar-hide">
-              {pinnedNotes.length === 0 ? (
-                <div className="text-center py-12 text-gray-400 text-xs leading-relaxed">
-                  <Bookmark className="w-8 h-8 mx-auto mb-2 opacity-30 text-amber-400" />
-                  Chưa có ghi chú nào được ghim.<br />Hãy bấm biểu tượng ghim trên tin nhắn AI hoặc Studio tools để lưu lại!
-                </div>
-              ) : (
-                pinnedNotes.map((note) => (
-                  <div 
-                    key={note.id}
-                    className={`p-3.5 rounded-xl border transition ${
-                      isDark ? 'bg-white/[0.03] border-white/10 hover:border-white/20' : 'bg-slate-50 border-slate-200 hover:border-slate-300'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="font-semibold text-xs text-amber-500 truncate max-w-[200px]">{note.title || 'Ghi chú'}</span>
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[10px] text-gray-500">{note.created_at}</span>
-                        <button
-                          type="button"
-                          onClick={() => handleConvertNoteToSource(note)}
-                          disabled={convertingNoteId === note.id}
-                          className="px-2 py-0.5 rounded text-[11px] font-medium bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/30 flex items-center gap-1 transition cursor-pointer disabled:opacity-50"
-                          title="Chuyển ghi chú này thành tài liệu nguồn RAG"
-                        >
-                          {convertingNoteId === note.id ? (
-                            <Loader className="w-2.5 h-2.5 animate-spin" />
-                          ) : (
-                            <Plus size={11} />
-                          )}
-                          <span>Thành nguồn</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            navigator.clipboard.writeText(note.content);
-                            showToast("📋 Đã sao chép ghi chú!");
-                          }}
-                          className={`p-1 rounded cursor-pointer ${isDark ? 'text-gray-400 hover:text-white' : 'text-slate-500 hover:text-slate-900'}`}
-                          title="Sao chép"
-                        >
-                          <Copy size={13} />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteNote(note.id)}
-                          className={`p-1 rounded cursor-pointer ${isDark ? 'text-gray-400 hover:text-red-400' : 'text-slate-500 hover:text-red-600'}`}
-                          title="Xóa ghi chú"
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      </div>
-                    </div>
-                    <p className={`text-xs whitespace-pre-wrap leading-relaxed ${isDark ? 'text-gray-300' : 'text-slate-700'}`}>
-                      {note.content}
-                    </p>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      {/* System Health Diagnostics Modal */}
+      <SystemHealthModal
+        isOpen={showSystemHealth}
+        onClose={() => setShowSystemHealth(false)}
+        onOpenSettings={() => setShowSettings(true)}
+        onOpenModelManager={() => setShowModelManagerModal(true)}
+      />
 
       {/* Toast Notification */}
       {toastMsg && (

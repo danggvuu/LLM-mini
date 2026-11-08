@@ -2,12 +2,13 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   BookOpen, Plus, Search, Check, Settings, Trash2, Cpu, Cloud, Server, 
-  ExternalLink, Sun, Moon, Upload, FileJson, Mountain, Sparkles, RefreshCw 
+  ExternalLink, Sun, Moon, Upload, FileJson, Mountain, Sparkles, RefreshCw, Activity 
 } from 'lucide-react';
 import axios from 'axios';
 import { motion, AnimatePresence } from 'motion/react';
 import { spring, transition, blur } from '@animate-ui/react/utils/motion';
 import SettingsModal from '../components/SettingsModal';
+import SystemHealthModal from '../components/SystemHealthModal';
 
 function Dashboard() {
   const navigate = useNavigate();
@@ -15,6 +16,7 @@ function Dashboard() {
   const [searchQuery, setSearchQuery] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showSystemHealth, setShowSystemHealth] = useState(false);
 
   // Theme state
   const [theme, setTheme] = useState(() => localStorage.getItem('notebooklm_theme') || 'dark');
@@ -226,6 +228,20 @@ function Dashboard() {
           <span className="font-semibold text-lg tracking-tight">NotebookLM Mini</span>
         </div>
         <div className="flex items-center gap-3">
+          {/* System Health Diagnostics */}
+          <button 
+            onClick={() => setShowSystemHealth(true)}
+            className={`flex items-center gap-2 border px-3.5 py-1.5 rounded-xl text-sm font-medium transition cursor-pointer ${
+              isDark 
+                ? 'border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400' 
+                : 'border-emerald-300 bg-emerald-50 hover:bg-emerald-100 text-emerald-700'
+            }`}
+            title="Chẩn đoán sức khỏe hệ thống AI & Vector DB"
+          >
+            <Activity size={16} className="animate-pulse" />
+            <span>Trạng thái hệ thống</span>
+          </button>
+
           {/* Theme Switcher */}
           <button 
             onClick={toggleTheme}
@@ -642,6 +658,13 @@ function Dashboard() {
         onSettingsSaved={() => {
           fetchSettingsAndModels();
         }}
+      />
+
+      {/* System Health Diagnostics Modal */}
+      <SystemHealthModal 
+        isOpen={showSystemHealth}
+        onClose={() => setShowSystemHealth(false)}
+        onOpenSettings={() => setShowSettings(true)}
       />
 
     </div>
