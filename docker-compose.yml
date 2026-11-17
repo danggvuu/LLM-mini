@@ -10,10 +10,11 @@ services:
     volumes:
       - ./storage:/app/storage
       - ./data:/app/data
+      - ./uploads:/app/uploads
     environment:
-      - HF_DEVICE=cpu
-      - DEFAULT_PROVIDER=groq
+      - RAG_HF_DEVICE=cpu
+      - RAG_LLM_PROVIDER=${RAG_LLM_PROVIDER:-hf_local}
+      - RAG_ALLOW_MODEL_DOWNLOAD=${RAG_ALLOW_MODEL_DOWNLOAD:-false}
       - GROQ_API_KEY=${GROQ_API_KEY:-}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-

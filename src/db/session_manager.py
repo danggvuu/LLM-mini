@@ -4,14 +4,15 @@ import json
 import logging
 from datetime import datetime
 from typing import List, Dict, Optional, Any
+from src.utils.config import settings
 
 logger = logging.getLogger(__name__)
 
 class SessionManager:
     """Quản lý CSDL SQLite cho Notebooks, tin nhắn, Cài đặt hệ thống và Study Guides."""
     
-    def __init__(self, db_path: str = "storage/notebooks.db"):
-        self.db_path = db_path
+    def __init__(self, db_path: Optional[str] = None):
+        self.db_path = db_path or str(settings.database_path)
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         self._init_db()
         
@@ -316,6 +317,7 @@ class SessionManager:
     # --- API Quản lý Tài liệu ---
     def add_document(self, notebook_id: str, filename: str):
         with self._get_conn() as conn:
+            conn.execute("DELETE FROM documents WHERE notebook_id = ? AND filename = ?", (notebook_id, filename))
             conn.execute("INSERT INTO documents (notebook_id, filename) VALUES (?, ?)", (notebook_id, filename))
             conn.commit()
 

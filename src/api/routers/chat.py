@@ -39,6 +39,7 @@ async def chat_endpoint(request: ChatRequest, raw_request: Request):
     sm = get_session_manager()
     notebook = sm.get_notebook(request.notebook_id)
     if not notebook:
+        logger.warning("Chat request rejected: notebook_id=%r không tồn tại", request.notebook_id)
         raise HTTPException(status_code=404, detail="Notebook not found")
         
     provider, model_name, api_key, base_url, is_private = resolve_llm_config(

@@ -12,9 +12,28 @@ from src.api.deps import (
     SettingsPayload,
     TestConnectionRequest
 )
+from src.utils.config import settings as app_config
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["System & Settings"])
+
+
+@router.get("/api/system/ready")
+def system_readiness_check():
+    """Lightweight probe used by launchers before opening the browser."""
+    frontend_dist = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
+        "frontend", "dist", "index.html"
+    )
+    try:
+        sm = get_session_manager()
+        conn = sm._get_conn()
+        conn.close()
+    except Exception as exc:
+        return {"ready": False, "database": False, "frontend": os.path.exists(frontend_dist), "error": str(exc)}
+
+    frontend_ready = os.path.exists(frontend_dist)
+    return {"ready": frontend_ready, "database": True, "frontend": frontend_ready}
 
 @router.get("/api/system/health")
 def system_health_check():
@@ -48,14 +67,16 @@ def system_health_check():
             "message": f"Lỗi truy vấn Database: {str(e)}"
         }
 
-    # 2. Vector DB / Storage Check
+    # 2. Vector DB / Storage Check. Do not instantiate the embedder here:
+    # health checks are called frequently and must stay lightweight.
     try:
-        vs = get_vector_store()
-        storage_path = getattr(vs, "storage_path", "storage/qdrant_data")
+        storage_path = str(app_config.storage_dir)
+        storage_exists = app_config.storage_dir.exists()
         health["components"]["vector_store"] = {
-            "status": "healthy",
-            "message": "Vector store & Embedder sẵn sàng",
-            "storage_path": storage_path
+            "status": "healthy" if storage_exists else "warning",
+            "message": "Thư mục vector store sẵn sàng" if storage_exists else "Chưa có thư mục vector store; sẽ tạo khi nạp tài liệu",
+            "storage_path": storage_path,
+            "storage_exists": storage_exists
         }
     except Exception as e:
         health["status"] = "degraded"
@@ -78,10 +99,23 @@ def system_health_check():
             router9_url=r9_url
         )
         ollama_up = local_scan.get("ollama", {}).get("available", False)
+        lm_studio_up = local_scan.get("lm_studio", {}).get("available", False)
+        router9_up = local_scan.get("router9", {}).get("available", False)
         ollama_models = [m.get("name") for m in local_scan.get("ollama", {}).get("models", [])]
         has_gemini = bool(settings.get("gemini_api_key"))
+        configured_provider = (settings.get("default_provider") or "ollama").lower()
+        provider_available = {
+            "ollama": ollama_up,
+            "lm_studio": lm_studio_up,
+            "local_ai": lm_studio_up,
+            "9router": router9_up,
+            "gemini": has_gemini,
+            "openai": bool(settings.get("openai_api_key")),
+            "groq": bool(settings.get("groq_api_key")),
+            "openrouter": bool(settings.get("openrouter_api_key")),
+        }.get(configured_provider, False)
 
-        llm_status = "healthy" if (ollama_up or has_gemini) else "warning"
+        llm_status = "healthy" if provider_available else "warning"
         llm_msg = []
         if ollama_up:
             llm_msg.append(f"Ollama khả dụng ({len(ollama_models)} models: {', '.join(ollama_models[:3])})")
@@ -89,15 +123,35 @@ def system_health_check():
             llm_msg.append("Ollama chưa bật (Offline)")
         if has_gemini:
             llm_msg.append("Gemini Cloud đã cấu hình API Key")
+        if lm_studio_up:
+            llm_msg.append("LM Studio/vLLM khả dụng")
+        if router9_up:
+            llm_msg.append("9Router khả dụng")
+        if not provider_available:
+            llm_msg.append(f"Provider mặc định '{configured_provider}' chưa sẵn sàng")
 
         health["components"]["llm"] = {
             "status": llm_status,
             "message": " | ".join(llm_msg) if llm_msg else "Chưa phát hiện mô hình LLM nào",
             "ollama_available": ollama_up,
             "ollama_models": ollama_models,
+            "lm_studio_available": lm_studio_up,
+            "router9_available": router9_up,
             "gemini_configured": has_gemini,
-            "active_provider": settings.get("default_provider", "ollama")
+            "active_provider": configured_provider,
+            "active_provider_ready": provider_available,
+            "provider_status": {
+                "ollama": ollama_up,
+                "lm_studio": lm_studio_up,
+                "9router": router9_up,
+                "gemini": has_gemini,
+                "openai": bool(settings.get("openai_api_key")),
+                "groq": bool(settings.get("groq_api_key")),
+                "openrouter": bool(settings.get("openrouter_api_key")),
+            }
         }
+        if not provider_available:
+            health["status"] = "degraded"
     except Exception as e:
         health["components"]["llm"] = {
             "status": "warning",
@@ -127,6 +181,48 @@ def system_health_check():
 
     return health
 
+
+@router.get("/api/llm/status")
+def get_llm_status():
+    """Return a small, actionable status payload for the active provider."""
+    sm = get_session_manager()
+    app_settings = sm.get_app_settings()
+    provider = (app_settings.get("default_provider") or "ollama").lower()
+    scan = LLMEngine.get_available_local_models(
+        ollama_url=app_settings.get("ollama_base_url", "http://127.0.0.1:11434"),
+        lm_studio_url=app_settings.get("lm_studio_base_url", "http://localhost:1234/v1"),
+        router9_url=app_settings.get("router9_base_url", "http://localhost:20128/v1"),
+    )
+    configured = {
+        "ollama": bool(scan.get("ollama", {}).get("available")),
+        "lm_studio": bool(scan.get("lm_studio", {}).get("available")),
+        "local_ai": bool(scan.get("lm_studio", {}).get("available")),
+        "9router": bool(scan.get("router9", {}).get("available")),
+        "gemini": bool(app_settings.get("gemini_api_key")),
+        "openai": bool(app_settings.get("openai_api_key")),
+        "groq": bool(app_settings.get("groq_api_key")),
+        "openrouter": bool(app_settings.get("openrouter_api_key")),
+    }
+    ready = configured.get(provider, False)
+    suggestions = {
+        "ollama": "Mở Ollama và chạy: ollama run qwen2.5:3b",
+        "lm_studio": "Mở LM Studio, nạp model và bật Local Server ở cổng 1234",
+        "local_ai": "Mở server OpenAI-compatible local ở cổng 1234",
+        "9router": "Khởi động 9Router ở cổng 20128 hoặc chọn Ollama/Cloud trong Cài đặt",
+        "gemini": "Nhập GEMINI_API_KEY trong Cài đặt",
+        "openai": "Nhập OPENAI_API_KEY trong Cài đặt",
+        "groq": "Nhập GROQ_API_KEY trong Cài đặt",
+        "openrouter": "Nhập OPENROUTER_API_KEY trong Cài đặt",
+    }
+    return {
+        "provider": provider,
+        "ready": ready,
+        "message": "Provider sẵn sàng." if ready else f"Provider '{provider}' chưa sẵn sàng.",
+        "suggestion": "" if ready else suggestions.get(provider, "Chọn một provider đã cấu hình."),
+        "providers": configured,
+        "scan": scan,
+    }
+
 @router.get("/api/settings")
 def get_settings_endpoint():
     """Lấy cài đặt toàn cục."""
@@ -152,7 +248,8 @@ def get_local_models():
     return LLMEngine.get_available_local_models(
         ollama_url=ollama_url, 
         lm_studio_url=lm_studio_url,
-        router9_url=router9_url
+        router9_url=router9_url,
+        force_refresh=True,
     )
 
 @router.get("/api/llm/recommendations")

@@ -1,4 +1,6 @@
 from typing import List, Union
+import hashlib
+import re
 import numpy as np
 from src.utils.logger import logger
 from src.utils.config import settings
@@ -22,6 +24,11 @@ class LocalEmbedder:
             try:
                 self.model = SentenceTransformer(self.model_name, device=self.device, local_files_only=True)
             except Exception:
+                if not settings.allow_model_download:
+                    raise RuntimeError(
+                        f"Embedding model '{self.model_name}' chưa có trong cache. "
+                        "Đặt RAG_ALLOW_MODEL_DOWNLOAD=true để cho phép tải model."
+                    )
                 self.model = SentenceTransformer(self.model_name, device=self.device, local_files_only=False)
             logger.info("Tải Local Embedding Model thành công!")
         except Exception as e:
@@ -34,6 +41,10 @@ class LocalEmbedder:
                     try:
                         self.model = SentenceTransformer(fallback, device=self.device, local_files_only=True)
                     except Exception:
+                        if not settings.allow_model_download:
+                            raise RuntimeError(
+                                f"Embedding fallback '{fallback}' chưa có trong cache."
+                            )
                         self.model = SentenceTransformer(fallback, device=self.device, local_files_only=False)
                     return
                 except Exception as inner_e:
@@ -43,9 +54,9 @@ class LocalEmbedder:
 
     def embed_text(self, texts: Union[str, List[str]]) -> Union[List[float], List[List[float]]]:
         if not self.model:
-            logger.warning("LocalEmbedder chưa khởi tạo. Trả về vector 0.")
+            logger.warning("LocalEmbedder chưa khởi tạo. Dùng embedding băm ổn định offline.")
             is_single = isinstance(texts, str)
-            return [0.0] * 384 if is_single else [[0.0] * 384 for _ in texts]
+            return self._hash_embeddings(texts)
 
         is_single = isinstance(texts, str)
         input_texts = [texts] if is_single else texts
@@ -61,7 +72,7 @@ class LocalEmbedder:
             return result[0] if is_single else result
         except Exception as e:
             logger.error(f"Lỗi trong quá trình tạo Embedding: {e}")
-            return [0.0] * 384 if is_single else [[0.0] * 384 for _ in input_texts]
+            return self._hash_embeddings(texts)
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         """Nhúng danh sách các đoạn văn bản (Dùng cho Ingestion)."""
@@ -80,3 +91,29 @@ class LocalEmbedder:
         if isinstance(res, list) and len(res) > 0 and isinstance(res[0], list):
             return res[0]
         return [0.0] * 384
+
+    @staticmethod
+    def _hash_embeddings(texts: Union[str, List[str]], dimensions: int = 384):
+        """Create deterministic, non-zero vectors when no local model exists.
+
+        This is intentionally only a resilience fallback, not a replacement
+        for a semantic embedding model. It keeps indexing and keyword-like
+        vector search usable in an air-gapped installation instead of making
+        every document identical (the old all-zero fallback).
+        """
+        single = isinstance(texts, str)
+        values = [texts] if single else texts
+        vectors = []
+        for value in values:
+            vector = np.zeros(dimensions, dtype=np.float32)
+            tokens = re.findall(r"\w+", str(value).lower())
+            for token in tokens:
+                digest = hashlib.blake2b(token.encode("utf-8"), digest_size=8).digest()
+                index = int.from_bytes(digest[:4], "little") % dimensions
+                sign = 1.0 if digest[4] & 1 else -1.0
+                vector[index] += sign
+            norm = np.linalg.norm(vector)
+            if norm:
+                vector /= norm
+            vectors.append(vector.tolist())
+        return vectors[0] if single else vectors

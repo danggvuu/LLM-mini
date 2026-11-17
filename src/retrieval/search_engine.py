@@ -7,6 +7,24 @@ from ..utils.config import settings
 
 logger = logging.getLogger(__name__)
 
+
+def _document_matches(metadata: Dict[str, Any], selected_documents: List[str]) -> bool:
+    """Match selected source names across the metadata variants used by parsers."""
+    candidates = [
+        metadata.get("filename"), metadata.get("source_file"), metadata.get("title"),
+        metadata.get("source"), metadata.get("source_url")
+    ]
+    selected = {str(value) for value in selected_documents if value}
+    selected_basenames = {str(value).replace("\\", "/").rsplit("/", 1)[-1] for value in selected}
+    for candidate in candidates:
+        if not candidate:
+            continue
+        value = str(candidate)
+        basename = value.replace("\\", "/").rsplit("/", 1)[-1]
+        if value in selected or basename in selected_basenames:
+            return True
+    return False
+
 def is_overview_query(q: str) -> bool:
     q_clean = q.lower().strip()
     patterns = [
@@ -70,14 +88,7 @@ class SearchEngine:
 
         # Lọc theo danh sách tài liệu được chọn nếu người dùng chỉ định
         if selected_documents and len(selected_documents) > 0:
-            sel_set = set(selected_documents)
-            def _is_doc_selected(item):
-                meta = item.get("metadata", {})
-                fn = meta.get("filename") or meta.get("source_file") or meta.get("title") or meta.get("source_url")
-                if not fn:
-                    return False
-                return fn in sel_set or any(s in str(fn) for s in sel_set)
-            results = [r for r in results if _is_doc_selected(r)]
+            results = [r for r in results if _document_matches(r.get("metadata", {}), selected_documents)]
 
         if not results:
             if selected_documents:
@@ -166,10 +177,7 @@ class SearchEngine:
         if selected_documents:
             candidates = [
                 c for c in candidates
-                if c.get("metadata", {}).get("source_file") in selected_documents
-                or c.get("metadata", {}).get("filename") in selected_documents
-                or c.get("metadata", {}).get("title") in selected_documents
-                or c.get("metadata", {}).get("source") in selected_documents
+                if _document_matches(c.get("metadata", {}), selected_documents)
             ]
 
         if not candidates:
@@ -186,4 +194,3 @@ class SearchEngine:
         except Exception as e:
             logger.warning(f"Lỗi reranking: {e}")
             return candidates[:top_k]
-

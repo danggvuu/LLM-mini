@@ -21,15 +21,15 @@ echo.
 :: -----------------------------------------------------------------------------
 set "SYSTEM_PY="
 
-:: Kiểm tra lệnh python trong PATH
-python -c "import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)" >nul 2>&1
+:: Kiểm tra lệnh python trong PATH. Dự án dùng Python 3.11+.
+python -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>&1
 if not errorlevel 1 (
     set "SYSTEM_PY=python"
     goto :PYTHON_FOUND
 )
 
 :: Kiểm tra lệnh py launcher
-py -3 -c "import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)" >nul 2>&1
+py -3 -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>&1
 if not errorlevel 1 (
     set "SYSTEM_PY=py -3"
     goto :PYTHON_FOUND
@@ -60,10 +60,18 @@ if exist "C:\Python312\python.exe" (
     set "SYSTEM_PY=C:\Python312\python.exe"
     goto :PYTHON_FOUND
 )
+if exist "%LOCALAPPDATA%\Programs\Python\Python313\python.exe" (
+    set "SYSTEM_PY=%LOCALAPPDATA%\Programs\Python\Python313\python.exe"
+    goto :PYTHON_FOUND
+)
+if exist "%ProgramFiles%\Python313\python.exe" (
+    set "SYSTEM_PY=%ProgramFiles%\Python313\python.exe"
+    goto :PYTHON_FOUND
+)
 
 :PYTHON_NOT_FOUND
 echo.
-echo ❌ LỖI: Không tìm thấy Python 3.9+ trên máy tính!
+echo ❌ LỖI: Không tìm thấy Python 3.11+ trên máy tính!
 echo.
 echo 👉 Vui lòng tải và cài đặt Python từ trang chủ:
 echo    https://www.python.org/downloads/
@@ -84,8 +92,9 @@ if not exist ".venv\Scripts\python.exe" (
     echo [2/4] Chưa có môi trường ảo (.venv). Đang tự động khởi tạo...
     %SYSTEM_PY% -m venv .venv
     if errorlevel 1 (
-        echo [!] Không thể tạo .venv tự động. Sử dụng trực tiếp Python hệ thống...
-        set "RUN_PY=%SYSTEM_PY%"
+        echo ❌ Không thể tạo môi trường .venv. Dừng để tránh cài nhầm vào Python hệ thống.
+        pause
+        exit /b 1
     ) else (
         echo [2/4] Đã tạo thành công môi trường ảo .venv!
         set "RUN_PY=.venv\Scripts\python.exe"
@@ -95,11 +104,7 @@ if not exist ".venv\Scripts\python.exe" (
     set "RUN_PY=.venv\Scripts\python.exe"
 )
 
-:: Kích hoạt môi trường ảo nếu tồn tại
-if exist ".venv\Scripts\activate.bat" (
-    call .venv\Scripts\activate.bat
-    set "RUN_PY=python"
-)
+:: Dùng trực tiếp Python trong .venv để tránh phụ thuộc vào trạng thái activate.
 
 :: -----------------------------------------------------------------------------
 :: 3. KIỂM TRA VÀ TỰ ĐỘNG CÀI ĐẶT THƯ VIỆN (FASTAPI, UVICORN, QDRANT...)
@@ -115,11 +120,10 @@ if errorlevel 1 (
     echo ========================================================================
     echo.
     %RUN_PY% -m pip install --upgrade pip
+    if errorlevel 1 goto :INSTALL_FAILED
     %RUN_PY% -m pip install -r requirements.txt
     if errorlevel 1 (
-        echo.
-        echo [!] Cài đặt dự phòng các gói cốt lõi...
-        %RUN_PY% -m pip install fastapi uvicorn[standard] python-multipart pydantic pydantic-settings qdrant-client sentence-transformers rank-bm25 edge-tts pydub gtts jinja2 pypdf requests numpy
+        goto :INSTALL_FAILED
     )
     echo [3/4] Cài đặt thư viện hoàn tất!
 ) else (
@@ -129,7 +133,8 @@ if errorlevel 1 (
 :: Đảm bảo các gói âm thanh luôn sẵn sàng
 %RUN_PY% -c "import pydub, gtts" >nul 2>&1
 if errorlevel 1 (
-    %RUN_PY% -m pip install pydub gtts >nul 2>&1
+    %RUN_PY% -m pip install pydub gtts
+    if errorlevel 1 goto :INSTALL_FAILED
 )
 
 :: -----------------------------------------------------------------------------
@@ -142,30 +147,23 @@ if not exist "frontend\dist\index.html" (
         echo [4/4] Đang biên dịch giao diện React SPA...
         cd frontend
         call npm run build
+        if errorlevel 1 (
+            cd ..
+            goto :BUILD_FAILED
+        )
         cd ..
     ) else (
-        echo [!] Không tìm thấy npm để build giao diện. Sử dụng file có sẵn.
+        if not exist "frontend\dist\index.html" goto :NPM_MISSING
+        echo [!] Không tìm thấy npm; dùng frontend/dist có sẵn.
     )
 ) else (
     echo [4/4] Giao diện React SPA đã sẵn sàng.
 )
 
-echo.
-echo ========================================================================
-echo   🎉 KHỞI ĐỘNG HỆ THỐNG THÀNH CÔNG!
-echo   🌐 Địa chỉ ứng dụng: http://localhost:8000
-echo   💡 Trình duyệt sẽ tự động mở sau 2 giây...
-echo   🛑 Để dừng hệ thống, nhấn phím Ctrl + C trong cửa sổ này.
-echo ========================================================================
-echo.
-
-:: Mở trình duyệt web sau 2 giây
-start "" http://localhost:8000
-
-:: -----------------------------------------------------------------------------
-:: 5. KHỞI CHẠY MÁY CHỦ UVICORN FASTAPI
-:: -----------------------------------------------------------------------------
-%RUN_PY% -m uvicorn src.api.api:app --host 0.0.0.0 --port 8000
+echo [5/5] Đang khởi động Backend...
+echo [5/5] Đang chờ Backend sẵn sàng rồi mới mở trình duyệt...
+start "NotebookLM Ready Check" /b powershell -NoProfile -ExecutionPolicy Bypass -Command "$ok=$false; 1..60 | %% { try { $r=Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8000/api/system/ready -TimeoutSec 2; if($r.StatusCode -eq 200){$ok=$true; break} } catch {}; Start-Sleep -Milliseconds 500 }; if($ok){Start-Process http://localhost:8000}"
+%RUN_PY% -m uvicorn src.api.api:app --host 127.0.0.1 --port 8000
 
 if errorlevel 1 (
     echo.
@@ -174,3 +172,31 @@ if errorlevel 1 (
     echo.
     pause
 )
+exit /b 0
+
+:INSTALL_FAILED
+echo.
+echo ❌ Cài đặt dependency thất bại.
+echo Kiểm tra Internet, quyền ghi và Python 3.11+. Chạy lại manage.bat install để xem log.
+pause
+exit /b 1
+
+:BUILD_FAILED
+echo.
+echo ❌ Build frontend thất bại. Kiểm tra Node.js/npm và log phía trên.
+pause
+exit /b 1
+
+:NPM_MISSING
+echo.
+echo ❌ Chưa có frontend/dist và không tìm thấy npm.
+echo Cài Node.js LTS rồi chạy lại launcher.
+pause
+exit /b 1
+
+:SERVER_FAILED
+echo.
+echo ❌ Backend không sẵn sàng sau 30 giây.
+echo Có thể cổng 8000 đang bị chiếm hoặc dependency backend bị lỗi.
+pause
+exit /b 1

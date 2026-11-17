@@ -39,16 +39,20 @@ goto :EOF
 
 :CMD_HEALTH
 echo 🔍 Đang chẩn đoán tình trạng hệ thống...
-python -c "from src.api.routers.system import diagnose_system; from pprint import pprint; import json; res = diagnose_system(); print('\n=== KẾT QUẢ CHẨN ĐOÁN HỆ THỐNG ==='); print('Trạng thái tổng thể:', res.get('status', '').upper()); [print('✅' if v.get('status') == 'healthy' else '⚠️', f'[{k.upper()}]:', v.get('message')) for k, v in res.get('components', {}).items()]; print('==================================\n')"
+python -c "from src.api.routers.system import system_health_check; res = system_health_check(); print('\n=== KẾT QUẢ CHẨN ĐOÁN HỆ THỐNG ==='); print('Trạng thái tổng thể:', res.get('status', '').upper()); [print(('✅' if v.get('status') == 'healthy' else '⚠️'), '[' + k.upper() + ']:', v.get('message')) for k, v in res.get('components', {}).items()]; print('==================================\n')"
+if errorlevel 1 exit /b 1
 goto :EOF
 
 :CMD_INSTALL
 echo 📦 Đang cài đặt thư viện Backend từ requirements.txt...
 python -m pip install --upgrade pip
+if errorlevel 1 exit /b 1
 python -m pip install -r requirements.txt
+if errorlevel 1 exit /b 1
 echo 🎨 Đang cài đặt thư viện Frontend...
 cd frontend
 call npm install
+if errorlevel 1 exit /b 1
 cd ..
 echo ✅ Đã cài đặt hoàn tất toàn bộ dependencies!
 goto :EOF

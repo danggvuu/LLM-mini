@@ -1,6 +1,6 @@
-# 📓 NotebookLM-Mini (Local AI Edition)
+# NotebookLM Mini
 
-NotebookLM-Mini là một trợ lý học tập cá nhân dựa trên kiến trúc **Retrieval-Augmented Generation (RAG)**. Phiên bản này đã được thiết kế lại hoàn toàn để chạy **100% Offline (Không cần Internet)** sử dụng trí tuệ nhân tạo cục bộ (Local AI), đảm bảo bảo mật tuyệt đối dữ liệu cá nhân của bạn.
+NotebookLM Mini là trợ lý học tập cá nhân dựa trên kiến trúc **Retrieval-Augmented Generation (RAG)**. Ứng dụng hỗ trợ mô hình local (Ollama/LM Studio) và các provider cloud tùy cấu hình. Khi dùng provider cloud hoặc nạp URL/YouTube, dữ liệu được gửi qua mạng tới dịch vụ tương ứng.
 
 Dự án cho phép bạn tải lên tài liệu cá nhân (PDF, DOCX, PPTX, HTML...), tự động phân tích và tương tác qua:
 - 💬 **Hỏi đáp siêu tốc** với trích dẫn chính xác.
@@ -9,40 +9,64 @@ Dự án cho phép bạn tải lên tài liệu cá nhân (PDF, DOCX, PPTX, HTML
 
 ---
 
-## 🌟 Tính Năng Nổi Bật
+## Chạy bằng Docker
 
-1. **🚀 1-Click Run (Chạy 1 chạm):** Tự động hóa hoàn toàn quá trình tải Model và cấu hình hệ thống trên cả Windows và macOS. Không cần biết code vẫn chạy được!
-2. **🧠 Local AI Cực Mạnh:** Sử dụng mô hình `Qwen2.5-3B-Instruct` dạng nén GGUF qua Llama.cpp. Đủ thông minh để hiểu tiếng Việt xuất sắc, nhưng đủ nhẹ để chạy trên máy RAM 8GB.
-3. **⚡ Hardware Acceleration (Ép xung phần cứng):** Tự động nhận diện và tận dụng tối đa sức mạnh của **Apple Silicon (Metal)** trên Mac và **Card rời NVIDIA (CUDA 12.1)** trên Windows.
-4. **🔍 Hybrid Search & Reranking:** Kết hợp tìm kiếm ngữ nghĩa (GreenNode) và từ khóa (BM25), sau đó lọc lại bằng Cross-Encoder (BAAI Reranker) để đảm bảo không trượt phát nào.
+```bash
+docker compose up --build
+```
+
+Mở `http://localhost:8000`. Dữ liệu SQLite, Qdrant, BM25, tài liệu và uploads được lưu trong các thư mục đã mount từ máy chủ.
+
+## Chạy khi phát triển
+
+Backend:
+
+```bash
+python -m pip install -r requirements.txt
+uvicorn src.api.api:app --reload --port 8000
+```
+
+Frontend trong terminal khác:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Vite proxy các request `/api` tới `http://127.0.0.1:8000`.
+
+## Kiểm tra
+
+```bash
+pytest -q
+python -m compileall -q src tests
+cd frontend && npm run lint && npm run build
+```
+
+## Cấu hình
+
+Sao chép `.env.example` thành `.env` nếu cần tùy chỉnh. Mặc định model embedding chỉ được đọc từ cache local. Đặt `RAG_ALLOW_MODEL_DOWNLOAD=true` khi chủ động muốn cho phép Hugging Face tải model còn thiếu. File upload giới hạn mặc định 100 MB (`RAG_MAX_UPLOAD_SIZE_MB`); loại file được kiểm tra trước khi parse.
+
+## Tính năng
+
+- Chat với nguồn tài liệu và streaming trả lời kèm citations.
+- Hybrid retrieval gồm Qdrant semantic search và BM25; reranker tùy chọn.
+- Nạp PDF, Office, văn bản, bảng tính, ảnh, audio, URL và transcript YouTube (tùy parser/dependency).
+- Tạo study guide, summary, quiz, flashcard/SRS, mindmap, timeline, podcast, so sánh tài liệu và ghi chú.
+- Chọn mô hình local hoặc cloud trong cài đặt. Các model Hugging Face thiếu trong cache không tự tải trừ khi bật `RAG_ALLOW_MODEL_DOWNLOAD=true`.
 
 ---
 
 ## 📖 HƯỚNG DẪN SỬ DỤNG CHI TIẾT
 
-### 1. Yêu Cầu Cấu Hình Máy
-- **RAM:** Tối thiểu 8GB (Khuyến nghị 16GB để mượt mà nhất).
-- **Hệ điều hành:** Windows 10/11 hoặc macOS (Khuyên dùng dòng chip Apple M1, M2, M3...).
-- **Ổ cứng:** Trống ít nhất 5GB (để lưu trữ AI Model và dữ liệu vector).
-- **Mạng internet:** Chỉ cần mạng cho **lần chạy đầu tiên** để tải AI (Khoảng 2GB). Sau đó có thể tắt mạng chạy Offline hoàn toàn.
+### Yêu cầu cấu hình máy
 
-### 2. Cài Đặt & Khởi Động (Chỉ với 1 cú click)
-
-**Đối với người dùng Mac (macOS):**
-1. Giải nén/Tải thư mục dự án này về máy.
-2. Tìm file có tên `run_mac.command` và **nhấp đúp chuột**.
-3. Cửa sổ Terminal màu đen sẽ hiện lên. Nếu là lần đầu, hệ thống sẽ mất 1-2 phút để tải bộ não AI về máy.
-4. Giao diện Web (Streamlit) sẽ tự động mở ra ở trình duyệt khi hệ thống sẵn sàng.
-
-**Đối với người dùng Windows:**
-1. Cài đặt Python 3.10+ (Nhớ tick vào ô *"Add Python to PATH"* lúc cài).
-2. Giải nén/Tải thư mục dự án này về máy.
-3. Tìm file có tên `run_windows.bat` và **nhấp đúp chuột**. 
-4. Hệ thống sẽ tự cài cấu hình (nếu có Card NVIDIA sẽ tự kích hoạt nhân CUDA). Trình duyệt Web sẽ tự động mở lên.
+Tài nguyên cần thiết phụ thuộc vào model local được chọn. Model cloud cần kết nối mạng và API key. Có thể chạy ứng dụng local mà không tải model mới nếu embedding/LLM cần thiết đã có trong cache hoặc dịch vụ local đang chạy.
 
 ---
 
-### 3. Cách Thao Tác Trực Tiếp Trên Web
+### Cách thao tác trên web
 
 #### Bước 1: Tạo thẻ làm việc (Notebook)
 - Ngay khi vào màn hình chính, gõ tên cho Thẻ (Ví dụ: *Luật Kinh Tế* hoặc *Giáo trình AI*) và ấn **+ Tạo Thẻ Mới**.
@@ -71,34 +95,34 @@ Dự án cho phép bạn tải lên tài liệu cá nhân (PDF, DOCX, PPTX, HTML
 
 ---
 
-### 4. Xử Lý Lỗi Thường Gặp (Troubleshooting)
+### Xử lý lỗi thường gặp
 
 - **Lỗi Terminal báo "Connection refused" / "Lỗi từ Backend":** 
-  Do bạn lỡ tắt cửa sổ Terminal màu đen (cái cửa sổ đang gánh cái Backend của AI). Đừng bao giờ tắt nó khi đang xài web! Để sửa, hãy đóng web đi và nhấp đúp chạy lại file `run_mac.command` / `run_windows.bat`.
+  Kiểm tra backend ở cổng 8000 còn chạy không. Với Docker, xem log bằng `docker compose logs -f`.
   
-- **Trả lời có vẻ hơi chậm?**
-  Mô hình AI này là 3 Tỷ tham số, nên quá trình "tiêu hoá" hàng nghìn chữ trong tài liệu ở 3-5 giây đầu tiên sẽ khá nặng. Hãy kiên nhẫn đợi 1 chút, khi nó đã suy nghĩ xong thì tốc độ nhả chữ sẽ rất nhanh. Trên Windows, nếu có Card NVIDIA, tốc độ sẽ khủng khiếp hơn nhiều.
+- **Lần đầu khởi động chậm?**
+  Model embedding có thể cần được tải vào RAM/VRAM. Cần cài và khởi động model provider đã chọn (ví dụ Ollama) trước khi chat.
   
 - **Trình duyệt không tự mở?**
-  Bạn hãy mở Chrome/Safari và tự gõ đường dẫn: `http://localhost:8501`.
+  Mở `http://localhost:8000` khi chạy Docker hoặc địa chỉ Vite được in ra khi chạy frontend dev server.
 
 ---
 
-## 🏗️ Kiến Trúc Hệ Thống (Dành cho Developer)
+## Kiến trúc
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────┐
 │  Tầng Giao diện & Định tuyến API                                    │
 │  ┌──────────────────────┐  ┌──────────────────────────────────┐     │
-│  │  Streamlit Web UI    │◄─►│  FastAPI Backend (SSE Support)  │     │
+│  │  React/Vite UI       │◄─►│  FastAPI Backend (SSE Support)  │     │
 │  └──────────────────────┘  └──────────┬───────────────────────┘     │
 └───────────────────────────────────────┬─────────────────────────────┘
                                         ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │  Tầng Trí Tuệ Nhân Tạo (Local AI Engine)                            │
 │  ┌──────────────────────┐  ┌──────────────────────────────────┐     │
-│  │ Llama.cpp Engine     │  │ Qwen2.5-3B-Instruct (GGUF 4-bit) │     │
-│  │ (Metal / CUDA 12)    │  │ 100% Offline, Privacy First      │     │
+│  │ Local / Cloud LLM    │  │ Ollama, LM Studio, API providers │     │
+│  │ Provider configurable│  │ Cloud requires network/API key   │     │
 │  └──────────┬───────────┘  └──────────────────────────────────┘     │
 └─────────────┼───────────────────────────────────────────────────────┘
               ▼
@@ -116,4 +140,4 @@ Bạn có thể thay đổi cách hệ thống hoạt động thông qua file `.
 - `RAG_HYBRID_INITIAL_K` và `RAG_HYBRID_RERANK_K`: Số đoạn văn lấy ra, giảm xuống sẽ đẩy nhanh tốc độ đọc.
 
 ---
-*Dự án tối ưu hóa trải nghiệm Local AI 1-Click.*
+Ứng dụng có thêm giao diện Streamlit legacy trong `src/interfaces/ui.py`; giao diện React là SPA được phục vụ trong cấu hình Docker.

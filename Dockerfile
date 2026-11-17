@@ -17,7 +17,8 @@ FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-ENV HF_DEVICE=cpu
+ENV RAG_HF_DEVICE=cpu
+ENV PYTHONPATH=/app
 
 WORKDIR /app
 
@@ -41,7 +42,7 @@ COPY src/ ./src/
 COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
 
 # Tạo thư mục lưu trữ persistent
-RUN mkdir -p storage/qdrant storage/bm25 storage/notes data
+RUN mkdir -p storage/qdrant storage/bm25 storage/notes data uploads
 
 EXPOSE 8000
 

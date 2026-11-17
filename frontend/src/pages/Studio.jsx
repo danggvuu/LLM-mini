@@ -356,6 +356,15 @@ function Studio() {
     }
   };
 
+  const fetchDocuments = async () => {
+    const targetId = activeNotebook?.id || id;
+    if (!targetId) return;
+    const response = await fetch(`/api/notebooks/${targetId}/documents`);
+    if (!response.ok) throw new Error('Không thể tải danh sách tài liệu');
+    const docs = await response.json();
+    setDocuments(docs);
+  };
+
   // Chat Search match indices & jump handlers
   const matchedIndices = useMemo(() => {
     if (!chatSearchQuery.trim()) return [];
@@ -1438,6 +1447,20 @@ function Studio() {
         })
       });
 
+      if (!response.ok) {
+        let detail = `Backend trả về HTTP ${response.status}`;
+        try {
+          const errorData = await response.json();
+          detail = errorData.detail || detail;
+        } catch {
+          // Keep the HTTP status when the server did not return JSON.
+        }
+        throw new Error(detail);
+      }
+      if (!response.body) {
+        throw new Error('Backend không mở được luồng trả lời.');
+      }
+
       const reader = response.body.getReader();
       const decoder = new TextDecoder("utf-8");
       
@@ -1506,7 +1529,8 @@ function Studio() {
         const lastIndex = newMessages.length - 1;
         newMessages[lastIndex] = {
           ...newMessages[lastIndex],
-          content: 'Xin lỗi, có lỗi xảy ra khi kết nối tới LLM Engine.'
+          content: `Không thể gửi câu hỏi: ${err.message || 'Lỗi kết nối tới Backend.'}`,
+          status: null
         };
         return newMessages;
       });

@@ -1,4 +1,7 @@
 import os
+import re
+import uuid
+from pathlib import Path
 import logging
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, File, UploadFile, BackgroundTasks, Form, HTTPException, Request, Depends
@@ -20,9 +23,49 @@ from src.api.deps import (
     CompareDocsRequest,
     StudioFilterRequest
 )
+from src.utils.config import settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Documents & Ingestion"])
+
+ALLOWED_UPLOAD_EXTENSIONS = {
+    ".pdf", ".docx", ".pptx", ".xlsx", ".xls", ".csv", ".txt", ".md", ".html", ".htm",
+    ".mp3", ".wav", ".flac", ".ogg", ".m4a", ".png", ".jpg", ".jpeg", ".webp", ".bmp"
+}
+
+
+def _safe_filename(filename: str) -> str:
+    """Return a stable display filename without path traversal components."""
+    name = Path(filename or "document").name
+    name = re.sub(r"[^\w. ()-]", "_", name, flags=re.UNICODE).strip(" .")
+    return name or "document"
+
+
+async def _save_upload(file: UploadFile) -> tuple[str, str]:
+    display_name = _safe_filename(file.filename or "document")
+    suffix = Path(display_name).suffix.lower()
+    if suffix not in ALLOWED_UPLOAD_EXTENSIONS:
+        raise HTTPException(status_code=415, detail=f"Định dạng {suffix or '(không có phần mở rộng)'} chưa được hỗ trợ.")
+
+    settings.upload_dir.mkdir(parents=True, exist_ok=True)
+    file_path = settings.upload_dir / f"{uuid.uuid4().hex}_{display_name}"
+    max_bytes = settings.max_upload_size_mb * 1024 * 1024
+    total = 0
+    try:
+        with file_path.open("wb") as output:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > max_bytes:
+                    output.close()
+                    file_path.unlink(missing_ok=True)
+                    raise HTTPException(status_code=413, detail=f"Tệp vượt quá giới hạn {settings.max_upload_size_mb} MB.")
+                output.write(chunk)
+    finally:
+        await file.close()
+    return display_name, str(file_path)
 
 @router.get("/api/notebooks/{notebook_id}/documents")
 def get_documents(notebook_id: str):
@@ -86,6 +129,10 @@ def preview_document(notebook_id: str, filename: str):
 async def ingest_url(background_tasks: BackgroundTasks, notebook_id: str = Form(...), url: str = Form(...)):
     """Nạp dữ liệu từ URL hoặc Video YouTube."""
     sm = get_session_manager()
+    if not sm.get_notebook(notebook_id):
+        raise HTTPException(status_code=404, detail="Notebook not found")
+    if not url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="URL phải bắt đầu bằng http:// hoặc https://.")
     parser = WebParser()
     tree = parser.parse(url)
     tree.metadata["notebook_id"] = notebook_id
@@ -99,6 +146,7 @@ async def ingest_url(background_tasks: BackgroundTasks, notebook_id: str = Form(
         chunk["metadata"]["filename"] = filename
     
     store = get_vector_store()
+    store.delete_document_chunks(notebook_id, filename)
     store.index_chunks(chunks)
     sm.add_document(notebook_id, filename)
     
@@ -128,14 +176,11 @@ async def upload_file(
     file: UploadFile = File(...)
 ):
     sm = get_session_manager()
-    upload_dir = "uploads"
-    os.makedirs(upload_dir, exist_ok=True)
-    file_path = os.path.join(upload_dir, file.filename)
-    
-    with open(file_path, "wb") as f:
-        f.write(await file.read())
+    if not sm.get_notebook(notebook_id):
+        raise HTTPException(status_code=404, detail="Notebook not found")
+    display_filename, file_path = await _save_upload(file)
         
-    lower_name = file.filename.lower()
+    lower_name = display_filename.lower()
     if lower_name.endswith(('.mp3', '.wav', '.flac', '.ogg', '.m4a')):
         from src.ingestion.parsers.audio_parser import AudioParser
         parser = AudioParser()
@@ -155,11 +200,15 @@ async def upload_file(
     
     for chunk in chunks:
         chunk["metadata"]["notebook_id"] = notebook_id
-        chunk["metadata"]["filename"] = file.filename
+        chunk["metadata"]["filename"] = display_filename
     
+    # Re-uploading a document replaces its index instead of creating duplicate
+    # vectors and duplicate entries in the notebook.
     store = get_vector_store()
+    store.delete_document_chunks(notebook_id, display_filename)
+    sm.delete_document(notebook_id, display_filename)
     store.index_chunks(chunks)
-    sm.add_document(notebook_id, file.filename)
+    sm.add_document(notebook_id, display_filename)
     
     document_text = "\n\n".join([chunk["content"] for chunk in chunks])
     notebook = sm.get_notebook(notebook_id)
@@ -178,7 +227,7 @@ async def upload_file(
         base_url=base_url
     )
     
-    return {"status": "success", "chunks_indexed": len(chunks)}
+    return {"status": "success", "filename": display_filename, "chunks_indexed": len(chunks)}
 
 @router.post("/api/ingest/text")
 async def ingest_raw_text(background_tasks: BackgroundTasks, req: IngestTextRequest):
@@ -206,6 +255,7 @@ async def ingest_raw_text(background_tasks: BackgroundTasks, req: IngestTextRequ
         chunk["metadata"]["filename"] = doc_title
 
     store = get_vector_store()
+    store.delete_document_chunks(req.notebook_id, doc_title)
     store.index_chunks(chunks)
     sm.add_document(req.notebook_id, doc_title)
 

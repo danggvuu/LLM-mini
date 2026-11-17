@@ -3,9 +3,15 @@ import json
 import time
 import requests
 import logging
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import Generator, Optional, Dict, Any, List
 
 logger = logging.getLogger(__name__)
+
+_LOCAL_SCAN_CACHE: Dict[str, Any] = {"key": None, "at": 0.0, "data": None}
+_LOCAL_SCAN_LOCK = threading.Lock()
+_LOCAL_SCAN_TTL_SECONDS = 5.0
 
 class LLMEngine:
     """
@@ -69,9 +75,23 @@ class LLMEngine:
     def get_available_local_models(
         ollama_url: str = "http://localhost:11434", 
         lm_studio_url: str = "http://localhost:1234/v1",
-        router9_url: str = "http://localhost:20128/v1"
+        router9_url: str = "http://localhost:20128/v1",
+        force_refresh: bool = False,
     ) -> Dict[str, Any]:
         """Tự động quét các mô hình và Gateway đang chạy (9Router, Ollama, LM Studio)."""
+        import time
+
+        cache_key = (ollama_url, lm_studio_url, router9_url)
+        now = time.monotonic()
+        with _LOCAL_SCAN_LOCK:
+            if (
+                not force_refresh
+                and _LOCAL_SCAN_CACHE["key"] == cache_key
+                and _LOCAL_SCAN_CACHE["data"] is not None
+                and now - _LOCAL_SCAN_CACHE["at"] < _LOCAL_SCAN_TTL_SECONDS
+            ):
+                return _LOCAL_SCAN_CACHE["data"]
+
         result = {
             "router9": {
                 "available": False,
@@ -90,61 +110,61 @@ class LLMEngine:
             }
         }
 
-        # 1. Quét 9Router
-        try:
-            r9_base = router9_url.rstrip("/")
-            if not r9_base.endswith("/models"):
-                r9_endpoint = f"{r9_base}/models"
-            else:
-                r9_endpoint = r9_base
-            res = requests.get(r9_endpoint, timeout=1.2)
-            if res.status_code == 200:
-                data = res.json()
-                models = [m.get("id") for m in data.get("data", [])]
-                result["router9"]["available"] = True
-                result["router9"]["models"] = models
-        except Exception as e:
-            result["router9"]["error"] = str(e)
-
-        # 2. Quét Ollama (thử cả localhost và 127.0.0.1 để tránh lỗi phân giải trên macOS)
-        ollama_candidates = [ollama_url]
-        if "localhost" in ollama_url:
-            ollama_candidates.append("http://127.0.0.1:11434")
-        elif "127.0.0.1" in ollama_url:
-            ollama_candidates.append("http://localhost:11434")
-
-        for o_url in ollama_candidates:
+        def scan_router9():
             try:
-                res = requests.get(f"{o_url.rstrip('/')}/api/tags", timeout=1.5)
+                r9_base = router9_url.rstrip("/")
+                res = requests.get(f"{r9_base}/models", timeout=0.8)
                 if res.status_code == 200:
                     data = res.json()
-                    models = []
-                    for m in data.get("models", []):
-                        size_gb = round(m.get("size", 0) / (1024 ** 3), 2)
-                        models.append({
+                    return True, [m.get("id") for m in data.get("data", [])], None
+                return False, [], f"HTTP {res.status_code}"
+            except Exception as e:
+                return False, [], str(e)
+
+        def scan_ollama():
+            candidates = [ollama_url]
+            if "localhost" in ollama_url:
+                candidates.append("http://127.0.0.1:11434")
+            elif "127.0.0.1" in ollama_url:
+                candidates.append("http://localhost:11434")
+            last_error = None
+            for candidate in candidates:
+                try:
+                    res = requests.get(f"{candidate.rstrip('/')}/api/tags", timeout=0.8)
+                    if res.status_code == 200:
+                        data = res.json()
+                        models = [{
                             "name": m.get("name"),
                             "model": m.get("model"),
-                            "size_gb": size_gb,
+                            "size_gb": round(m.get("size", 0) / (1024 ** 3), 2),
                             "details": m.get("details", {})
-                        })
-                    result["ollama"]["available"] = True
-                    result["ollama"]["models"] = models
-                    result["ollama"]["active_url"] = o_url
-                    result["ollama"]["error"] = None
-                    break
-            except Exception as e:
-                result["ollama"]["error"] = str(e)
+                        } for m in data.get("models", [])]
+                        return True, models, candidate, None
+                    last_error = f"HTTP {res.status_code}"
+                except Exception as e:
+                    last_error = str(e)
+            return False, [], None, last_error
 
-        # 3. Quét LM Studio / OpenAI-compatible local
-        try:
-            res = requests.get(f"{lm_studio_url.rstrip('/')}/models", timeout=1.2)
-            if res.status_code == 200:
-                data = res.json()
-                models = [m.get("id") for m in data.get("data", [])]
-                result["lm_studio"]["available"] = True
-                result["lm_studio"]["models"] = models
-        except Exception as e:
-            result["lm_studio"]["error"] = str(e)
+        def scan_lm_studio():
+            try:
+                res = requests.get(f"{lm_studio_url.rstrip('/')}/models", timeout=0.8)
+                if res.status_code == 200:
+                    return True, [m.get("id") for m in res.json().get("data", [])], None
+                return False, [], f"HTTP {res.status_code}"
+            except Exception as e:
+                return False, [], str(e)
+
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            r9_future = executor.submit(scan_router9)
+            ollama_future = executor.submit(scan_ollama)
+            lm_future = executor.submit(scan_lm_studio)
+            r9 = r9_future.result()
+            ollama = ollama_future.result()
+            lm = lm_future.result()
+
+        result["router9"].update(available=r9[0], models=r9[1], error=r9[2])
+        result["ollama"].update(available=ollama[0], models=ollama[1], active_url=ollama[2], error=ollama[3])
+        result["lm_studio"].update(available=lm[0], models=lm[1], error=lm[2])
 
         # 4. Quét GGUF trong thư mục models/
         models_dir = os.path.join(os.getcwd(), "models")
@@ -156,6 +176,8 @@ class LLMEngine:
                     "models": ggufs
                 }
 
+        with _LOCAL_SCAN_LOCK:
+            _LOCAL_SCAN_CACHE.update(key=cache_key, at=time.monotonic(), data=result)
         return result
 
     @staticmethod

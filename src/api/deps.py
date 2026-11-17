@@ -16,6 +16,7 @@ from src.learning.mindmap_generator import MindmapGenerator
 from src.learning.timeline_generator import TimelineOutlineGenerator
 from src.learning.doc_comparator import DocComparator
 from src.learning.critique_generator import CritiqueAndActionGenerator
+from src.utils.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +31,7 @@ _NOTEBOOK_CACHE: Dict[str, Dict[str, Any]] = {}
 def get_session_manager():
     global session_manager
     if session_manager is None:
-        session_manager = SessionManager()
+        session_manager = SessionManager(str(settings.database_path))
     return session_manager
 
 def get_embedder():
@@ -223,7 +224,7 @@ def get_notebook_id(request: Request, notebook_id: Optional[str] = None) -> str:
         return header_val
     return "default"
 
-NOTES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "storage", "notes")
+NOTES_DIR = str(settings.project_root / "storage" / "notes")
 os.makedirs(NOTES_DIR, exist_ok=True)
 
 def _get_notes_path(notebook_id: str) -> str:

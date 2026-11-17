@@ -66,13 +66,25 @@ class BM25Index:
 
     def add_documents(self, documents: List[BM25Document]) -> None:
         """Add documents to the index and rebuild."""
-        self._documents.extend(documents)
+        if not documents:
+            return
+        existing_ids = {str(doc.chunk_id) for doc in self._documents}
+        self._documents.extend(doc for doc in documents if str(doc.chunk_id) not in existing_ids)
         self.build(self._documents)
 
     def remove_document(self, filename: str) -> None:
         """Remove a specific document from the index and rebuild."""
         original_count = len(self._documents)
-        self._documents = [doc for doc in self._documents if doc.metadata.get("filename") != filename]
+        target = str(filename)
+        def belongs_to_file(doc: BM25Document) -> bool:
+            meta = doc.metadata or {}
+            candidates = (
+                meta.get("filename"), meta.get("source_file"),
+                meta.get("source"), meta.get("title"), meta.get("source_url")
+            )
+            return any(value and (str(value) == target or Path(str(value)).name == Path(target).name) for value in candidates)
+
+        self._documents = [doc for doc in self._documents if not belongs_to_file(doc)]
         if len(self._documents) < original_count:
             self.build(self._documents)
             logger.info("Removed %d chunks for %s from BM25 index.", original_count - len(self._documents), filename)

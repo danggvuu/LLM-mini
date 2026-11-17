@@ -176,7 +176,7 @@ class VectorStoreManager:
         
         target_nb = notebook_id or getattr(self, "notebook_id", None)
         query_filter = None
-        if target_nb and target_nb != "default":
+        if target_nb:
             query_filter = Filter(
                 must=[
                     FieldCondition(
@@ -208,7 +208,7 @@ class VectorStoreManager:
         from qdrant_client.http.models import Filter, FieldCondition, MatchValue
         target_nb = notebook_id or getattr(self, "notebook_id", None)
         scroll_filter = None
-        if target_nb and target_nb != "default":
+        if target_nb:
             scroll_filter = Filter(
                 must=[
                     FieldCondition(key="notebook_id", match=MatchValue(value=target_nb))
@@ -234,27 +234,9 @@ class VectorStoreManager:
             logger.warning(f"Lỗi scroll all chunks từ Qdrant: {e}")
 
         # Fallback nếu scroll theo notebook_id không ra kết quả (ví dụ dữ liệu cũ chưa có trường notebook_id)
-        if not chunks and target_nb and target_nb != "default":
-            try:
-                records, _ = self.client.scroll(
-                    collection_name=self.collection_name,
-                    limit=limit,
-                    with_payload=True,
-                    with_vectors=False
-                )
-                for r in records:
-                    payload = r.payload or {}
-                    chunks.append({
-                        "chunk_id": payload.get("chunk_id", str(r.id)),
-                        "content": payload.get("content", ""),
-                        "metadata": {k: v for k, v in payload.items() if k != "content"}
-                    })
-            except Exception as e:
-                logger.warning(f"Lỗi scroll fallback Qdrant: {e}")
-
-        # Fallback từ BM25 index nếu Qdrant hoàn toàn rỗng
-        if not chunks and target_nb and target_nb != "default":
-            bm25_path = os.path.join("storage", "bm25", str(target_nb), "bm25_docs.json")
+        # Fallback từ BM25 index nếu Qdrant hoàn toàn rỗng, vẫn trong cùng notebook.
+        if not chunks and target_nb:
+            bm25_path = settings.bm25_dir / str(target_nb) / "bm25_docs.json"
             if os.path.exists(bm25_path):
                 try:
                     with open(bm25_path, "r", encoding="utf-8") as f:
@@ -303,7 +285,7 @@ class VectorStoreManager:
 
         # Fallback 1: Đọc từ BM25 index storage (storage/bm25/{notebook_id}/bm25_docs.json)
         if not chunks:
-            bm25_path = os.path.join("storage", "bm25", str(notebook_id), "bm25_docs.json")
+            bm25_path = settings.bm25_dir / str(notebook_id) / "bm25_docs.json"
             if os.path.exists(bm25_path):
                 try:
                     with open(bm25_path, "r", encoding="utf-8") as f:
@@ -311,7 +293,7 @@ class VectorStoreManager:
                     for item in b_docs:
                         meta = item.get("metadata", {})
                         src = meta.get("filename") or meta.get("source_file") or meta.get("source") or meta.get("title")
-                        if not src or src == filename or os.path.basename(str(src)) == os.path.basename(str(filename)):
+                        if src and (src == filename or os.path.basename(str(src)) == os.path.basename(str(filename))):
                             txt = item.get("text", "")
                             if txt and txt.strip():
                                 chunks.append(txt)
