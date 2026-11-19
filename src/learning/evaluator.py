@@ -37,14 +37,7 @@ class Evaluator:
 
         history = self.db.get_chat_history(notebook_id)
         if not history or len(history) < 2:
-            return {
-                "score": 7.0,
-                "faithfulness": 0.85,
-                "context_precision": 0.80,
-                "feedback": "Hệ thống chưa đủ dữ liệu hội thoại nhiều lượt. Hãy đặt thêm các câu hỏi phân tích sâu về tài liệu để nhận kết quả đánh giá chi tiết hơn.",
-                "strengths": ["Đã bước đầu tìm hiểu tài liệu"],
-                "weaknesses": ["Cần đặt thêm các câu hỏi liên quan đến nội dung chuyên sâu"]
-            }
+            raise ValueError("Cần ít nhất hai lượt hội thoại để đánh giá kiến thức.")
             
         guide = self.db.get_study_guide(notebook_id)
         summary = guide.get("summary", "") if guide else ""
@@ -91,10 +84,15 @@ class Evaluator:
 
         try:
             data = json.loads(cleaned)
-            # Đảm bảo các field số luôn tồn tại để frontend không bị crash
-            score = float(data.get("score", 8.0))
-            faithfulness = float(data.get("faithfulness", 0.90))
-            context_precision = float(data.get("context_precision", 0.85))
+            if not isinstance(data, dict):
+                raise ValueError("Kết quả đánh giá phải là một JSON object.")
+            score = float(data["score"])
+            faithfulness = float(data["faithfulness"])
+            context_precision = float(data["context_precision"])
+            if not 0 <= score <= 10:
+                raise ValueError("Điểm đánh giá nằm ngoài khoảng 0–10.")
+            if not 0 <= faithfulness <= 1 or not 0 <= context_precision <= 1:
+                raise ValueError("Các chỉ số faithfulness/precision phải nằm trong khoảng 0–1.")
             
             return {
                 "score": score,
@@ -105,12 +103,5 @@ class Evaluator:
                 "weaknesses": data.get("weaknesses", ["Nên đối chiếu thêm giữa các phần"])
             }
         except Exception as e:
-            logger.error(f"Lỗi parse JSON đánh giá ({e}): raw text: {raw_text[:200]}")
-            return {
-                "score": 8.0,
-                "faithfulness": 0.88,
-                "context_precision": 0.82,
-                "feedback": "Người học đặt câu hỏi bám sát nội dung tài liệu.",
-                "strengths": ["Nắm bắt tốt nội dung cơ bản"],
-                "weaknesses": ["Cần đào sâu thêm chi tiết nâng cao"]
-            }
+            logger.error("Lỗi parse/validate JSON đánh giá (%s).", e)
+            raise ValueError("LLM trả kết quả đánh giá không hợp lệ; chưa tạo được điểm đáng tin cậy.") from e

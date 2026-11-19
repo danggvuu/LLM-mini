@@ -17,6 +17,27 @@ from src.utils.config import settings as app_config
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["System & Settings"])
 
+_SECRET_SETTING_KEYS = (
+    "gemini_api_key", "openai_api_key", "groq_api_key", "openrouter_api_key",
+    "router9_api_key", "custom_api_key"
+)
+def public_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
+    """Return settings needed by the UI without disclosing stored credentials."""
+    result = dict(settings)
+    for key in _SECRET_SETTING_KEYS:
+        result[f"{key}_configured"] = bool(result.get(key))
+        result[key] = ""
+    return result
+
+
+def public_notebook(notebook: Dict[str, Any]) -> Dict[str, Any]:
+    """Remove credentials before notebook metadata crosses the API boundary."""
+    result = dict(notebook)
+    result["api_key_configured"] = bool(result.get("api_key") or result.get("gemini_api_key"))
+    result.pop("api_key", None)
+    result.pop("gemini_api_key", None)
+    return result
+
 
 @router.get("/api/system/ready")
 def system_readiness_check():
@@ -227,15 +248,26 @@ def get_llm_status():
 def get_settings_endpoint():
     """Lấy cài đặt toàn cục."""
     sm = get_session_manager()
-    return sm.get_app_settings()
+    return public_settings(sm.get_app_settings())
 
 @router.post("/api/settings")
 def save_settings_endpoint(payload: SettingsPayload):
     """Lưu cài đặt toàn cục."""
     sm = get_session_manager()
-    data = payload.dict(exclude_unset=True)
+    data = payload.model_dump(exclude_unset=True)
+    clear_keys = set(data.pop("clear_api_keys", None) or [])
+    unknown_keys = clear_keys.difference(_SECRET_SETTING_KEYS)
+    if unknown_keys:
+        raise HTTPException(status_code=400, detail="Danh sách API key cần xóa không hợp lệ.")
+    for key in _SECRET_SETTING_KEYS:
+        if key in clear_keys:
+            data[key] = ""
+        elif key in data and not data[key]:
+            # Empty inputs mean "leave the saved key unchanged". Clearing is
+            # explicit via clear_api_keys, so saving other fields is safe.
+            data.pop(key)
     sm.save_app_settings(data)
-    return {"status": "success", "settings": sm.get_app_settings()}
+    return {"status": "success", "settings": public_settings(sm.get_app_settings())}
 
 @router.get("/api/llm/local-models")
 def get_local_models():

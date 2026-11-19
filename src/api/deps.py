@@ -3,7 +3,7 @@ import json
 import logging
 from typing import Optional, List, Dict, Any
 from fastapi import Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from src.ingestion.embedding import LocalEmbedder
 from src.ingestion.indexing import VectorStoreManager
@@ -78,6 +78,7 @@ class SettingsPayload(BaseModel):
     custom_base_url: Optional[str] = None
     custom_api_key: Optional[str] = None
     custom_model: Optional[str] = None
+    clear_api_keys: Optional[List[str]] = None
 
 class TestConnectionRequest(BaseModel):
     provider: str
@@ -86,7 +87,7 @@ class TestConnectionRequest(BaseModel):
     base_url: Optional[str] = ""
 
 class NotebookCreate(BaseModel):
-    id: str
+    id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,128}$")
     title: str
     is_private: bool = True
     provider: Optional[str] = "ollama"
@@ -105,14 +106,14 @@ class NotebookUpdate(BaseModel):
 
 class ChatRequest(BaseModel):
     query: str
-    notebook_id: str
+    notebook_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,128}$")
     provider: Optional[str] = None
     model_name: Optional[str] = None
     selected_documents: Optional[List[str]] = None
     persona: Optional[str] = "strict"
 
 class IngestTextRequest(BaseModel):
-    notebook_id: str
+    notebook_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,128}$")
     title: str
     text: str
 

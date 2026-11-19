@@ -1,8 +1,43 @@
 import os
 from typing import Optional, List, Dict
 import warnings
+import threading
 
 from ..document_tree import DocumentNode, HeadingNode, ParagraphNode
+from src.utils.config import settings
+
+_WHISPER_MODELS = {}
+_WHISPER_LOCK = threading.Lock()
+
+
+def load_whisper_model(model_size: str = "base"):
+    """Load Whisper once per process instead of once per audio upload."""
+    with _WHISPER_LOCK:
+        model = _WHISPER_MODELS.get(model_size)
+        if model is not None:
+            return model
+        try:
+            import whisper
+        except ImportError as exc:
+            raise ImportError(
+                "Thiếu openai-whisper. Cài bằng: python -m pip install -r requirements-audio.txt"
+            ) from exc
+        model_url = getattr(whisper, "_MODELS", {}).get(model_size)
+        if not model_url:
+            raise ValueError(f"Whisper model không được hỗ trợ: {model_size}")
+        cache_dir = settings.project_root / "storage" / "whisper"
+        checkpoint = cache_dir / model_url.rsplit("/", 1)[-1]
+        if not checkpoint.is_file() and not settings.allow_model_download:
+            raise RuntimeError(
+                f"Whisper '{model_size}' chưa có trong cache. "
+                "Đặt RAG_ALLOW_MODEL_DOWNLOAD=true và chạy lại để tải model."
+            )
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            model = whisper.load_model(model_size, download_root=str(cache_dir))
+        _WHISPER_MODELS[model_size] = model
+        return model
 
 class AudioParser:
     """Parser xử lý file âm thanh (MP3, WAV) sử dụng mô hình Whisper (Local)."""
@@ -14,14 +49,12 @@ class AudioParser:
     def _load_model(self):
         if self.model is None:
             try:
-                import whisper
                 print(f"[AudioParser] Đang tải mô hình Whisper ({self.model_size})...")
-                # Suppress FP16 warning on CPU
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore")
-                    self.model = whisper.load_model(self.model_size)
+                self.model = load_whisper_model(self.model_size)
             except ImportError:
-                raise ImportError("Thư viện openai-whisper chưa được cài đặt. Chạy lệnh: pip install openai-whisper")
+                raise
+            except RuntimeError:
+                raise
             except Exception as e:
                 raise RuntimeError(f"Lỗi khởi tạo Whisper model: {e}\n(Bạn đã cài đặt ffmpeg trên máy chưa?)")
 

@@ -1,7 +1,9 @@
 import os
 import logging
+import re
 from typing import Dict, Any
 from fastapi import APIRouter, HTTPException
+from starlette.concurrency import run_in_threadpool
 
 from src.api.deps import (
     get_session_manager,
@@ -13,9 +15,15 @@ from src.api.deps import (
     NotebookCreate,
     NotebookUpdate,
 )
+from src.api.routers.system import public_notebook
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Notebooks"])
+
+
+def _validate_notebook_id(notebook_id: str) -> None:
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", notebook_id or ""):
+        raise HTTPException(status_code=400, detail="notebook_id không hợp lệ.")
 
 @router.post("/api/notebooks")
 def create_notebook(data: NotebookCreate):
@@ -46,6 +54,10 @@ def create_notebook(data: NotebookCreate):
             api_key = global_settings.get("groq_api_key")
         elif provider == "openrouter":
             api_key = global_settings.get("openrouter_api_key")
+        elif provider == "9router":
+            api_key = global_settings.get("router9_api_key")
+        elif provider == "custom":
+            api_key = global_settings.get("custom_api_key")
 
     base_url = data.base_url
     if not base_url:
@@ -64,7 +76,7 @@ def create_notebook(data: NotebookCreate):
         api_key=api_key,
         base_url=base_url
     )
-    return {"status": "success", "notebook": sm.get_notebook(data.id)}
+    return {"status": "success", "notebook": public_notebook(sm.get_notebook(data.id))}
 
 @router.post("/api/notebooks/seed/lao-cai")
 def seed_lao_cai_notebook_endpoint():
@@ -87,18 +99,20 @@ def seed_lao_cai_notebook_endpoint():
 @router.get("/api/notebooks")
 def list_notebooks():
     sm = get_session_manager()
-    return sm.list_notebooks()
+    return [public_notebook(notebook) for notebook in sm.list_notebooks()]
 
 @router.get("/api/notebooks/{notebook_id}")
 def get_notebook(notebook_id: str):
+    _validate_notebook_id(notebook_id)
     sm = get_session_manager()
     nb = sm.get_notebook(notebook_id)
     if not nb:
         raise HTTPException(status_code=404, detail="Notebook not found")
-    return nb
+    return public_notebook(nb)
 
 @router.put("/api/notebooks/{notebook_id}/settings")
 def update_notebook_settings(notebook_id: str, data: NotebookUpdate):
+    _validate_notebook_id(notebook_id)
     sm = get_session_manager()
     nb = sm.get_notebook(notebook_id)
     if not nb:
@@ -107,20 +121,24 @@ def update_notebook_settings(notebook_id: str, data: NotebookUpdate):
     new_base_url = data.base_url
     if data.provider and data.provider != nb.get('provider') and new_base_url is None:
         new_base_url = ""
+    new_api_key = data.api_key
+    if data.provider and data.provider != nb.get("provider") and new_api_key is None:
+        new_api_key = ""
 
     sm.update_notebook_settings(
         notebook_id=notebook_id,
         title=data.title,
         provider=data.provider,
         model_name=data.model_name,
-        api_key=data.api_key,
+        api_key=new_api_key,
         base_url=new_base_url,
         is_private=data.is_private
     )
-    return {"status": "success", "notebook": sm.get_notebook(notebook_id)}
+    return {"status": "success", "notebook": public_notebook(sm.get_notebook(notebook_id))}
 
 @router.delete("/api/notebooks/{notebook_id}")
 def delete_notebook(notebook_id: str):
+    _validate_notebook_id(notebook_id)
     sm = get_session_manager()
     sm.delete_notebook(notebook_id)
     store = get_vector_store()
@@ -135,11 +153,13 @@ def delete_notebook(notebook_id: str):
 
 @router.get("/api/notebooks/{notebook_id}/export")
 def export_notebook_endpoint(notebook_id: str):
+    _validate_notebook_id(notebook_id)
     """Xuất trọn vẹn dữ liệu sổ tay kèm các phân đoạn văn bản (chunks) thành file JSON."""
     sm = get_session_manager()
     data = sm.export_notebook_data(notebook_id)
     if not data:
         raise HTTPException(status_code=404, detail="Notebook không tồn tại.")
+    data["notebook"] = public_notebook(data["notebook"])
     
     vs = get_vector_store()
     chunks_export = []
@@ -160,7 +180,7 @@ def export_notebook_endpoint(notebook_id: str):
 async def import_notebook_endpoint(payload: Dict[str, Any]):
     """Nhập dữ liệu sổ tay từ file JSON và tự động tái lập chỉ mục Qdrant + BM25."""
     sm = get_session_manager()
-    new_id = sm.import_notebook_data(payload)
+    new_id = await run_in_threadpool(sm.import_notebook_data, payload)
     
     imported_chunks = payload.get("chunks", [])
     if imported_chunks and isinstance(imported_chunks, list):
@@ -172,8 +192,8 @@ async def import_notebook_endpoint(payload: Dict[str, Any]):
             if content:
                 formatted_chunks.append({"content": content, "metadata": meta})
         if formatted_chunks:
-            vs = get_vector_store()
-            vs.index_chunks(formatted_chunks)
+            vs = await run_in_threadpool(get_vector_store)
+            await run_in_threadpool(vs.index_chunks, formatted_chunks)
 
     imported_notes = payload.get("pinned_notes", [])
     if imported_notes and isinstance(imported_notes, list):

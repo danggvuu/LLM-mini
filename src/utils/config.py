@@ -32,7 +32,10 @@ class Settings(BaseSettings):
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
 
     # LLM Providers Configuration
-    llm_provider: Literal["hf_local", "gemini", "vllm"] = "hf_local"
+    llm_provider: Literal[
+        "hf_local", "ollama", "lm_studio", "local_ai", "9router", "gemini",
+        "openai", "groq", "openrouter", "custom", "vllm"
+    ] = "ollama"
     llm_temperature: float = Field(default=0.1, ge=0.0, le=2.0)
 
     # Local Hugging Face Model Parameters

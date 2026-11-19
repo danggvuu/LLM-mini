@@ -15,7 +15,7 @@ Dự án cho phép bạn tải lên tài liệu cá nhân (PDF, DOCX, PPTX, HTML
 docker compose up --build
 ```
 
-Mở `http://localhost:8000`. Dữ liệu SQLite, Qdrant, BM25, tài liệu và uploads được lưu trong các thư mục đã mount từ máy chủ.
+Mở `http://localhost:8000`. Compose chỉ publish cổng trên loopback của máy host; không đổi thành `0.0.0.0` nếu chưa cấu hình bảo vệ truy cập. Ollama phải chạy trên máy host để Docker kết nối qua `host.docker.internal:11434`. Nếu model embedding chưa có trong cache, mặc định ứng dụng không tải model âm thầm; bật `RAG_ALLOW_MODEL_DOWNLOAD=true` nếu muốn tải và lưu cache trong `model_cache/`.
 
 ## Chạy khi phát triển
 
@@ -46,7 +46,9 @@ cd frontend && npm run lint && npm run build
 
 ## Cấu hình
 
-Sao chép `.env.example` thành `.env` nếu cần tùy chỉnh. Mặc định model embedding chỉ được đọc từ cache local. Đặt `RAG_ALLOW_MODEL_DOWNLOAD=true` khi chủ động muốn cho phép Hugging Face tải model còn thiếu. File upload giới hạn mặc định 100 MB (`RAG_MAX_UPLOAD_SIZE_MB`); loại file được kiểm tra trước khi parse.
+Sao chép `.env.example` thành `.env` nếu cần tùy chỉnh. File upload giới hạn mặc định 100 MB (`RAG_MAX_UPLOAD_SIZE_MB`); loại file được kiểm tra trước khi parse. API bind vào loopback theo mặc định và CORS chỉ cho UI local. Muốn truy cập từ máy khác cần tự cấu hình reverse proxy/xác thực; không expose cổng API trực tiếp. Embedding model không tự tải khi thiếu trừ khi bật `RAG_ALLOW_MODEL_DOWNLOAD=true`. Whisper là tùy chọn vì cài đặt nó kéo theo PyTorch lớn: cài bằng `python -m pip install -r requirements-audio.txt` nếu cần phiên âm audio. OCR ảnh ngoài Docker cần Tesseract executable.
+
+API keys được giữ trong SQLite cục bộ để tương thích với các notebook hiện có; database chưa mã hóa at-rest. Không chia sẻ hoặc đưa `storage/notebooks.db` vào bản sao lưu không bảo vệ.
 
 ## Tính năng
 

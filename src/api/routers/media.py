@@ -1,9 +1,12 @@
 import os
+import re
 import time
 import logging
+from pathlib import Path
 from typing import Optional, Dict, Any
 from fastapi import APIRouter, File, UploadFile, BackgroundTasks, Form, HTTPException, Request
 from fastapi.responses import FileResponse
+from starlette.concurrency import run_in_threadpool
 
 from src.learning.podcast_generator import PodcastGenerator
 from src.api.deps import (
@@ -12,11 +15,18 @@ from src.api.deps import (
     get_llm_engine,
     resolve_llm_config
 )
+from src.utils.config import settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Media & Podcast"])
 
 _PODCAST_STATUS: Dict[str, Dict[str, Any]] = {}
+
+
+def _podcast_file(notebook_id: str, suffix: str) -> Path:
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", notebook_id or ""):
+        raise HTTPException(status_code=400, detail="notebook_id không hợp lệ.")
+    return settings.project_root / "storage" / "podcasts" / f"{notebook_id}{suffix}"
 
 def _run_podcast_generation_task(generator: PodcastGenerator, notebook_id: str, **kwargs):
     global _PODCAST_STATUS
@@ -75,15 +85,15 @@ async def generate_podcast(
         raise HTTPException(status_code=404, detail="Notebook not found")
 
     for ext in [".mp3", ".wav"]:
-        old_path = os.path.join("storage", "podcasts", f"{target_id}{ext}")
-        if os.path.exists(old_path):
+        old_path = _podcast_file(target_id, ext)
+        if old_path.exists():
             try:
-                os.remove(old_path)
+                old_path.unlink()
             except Exception:
                 pass
 
     custom_context = None
-    vs = get_vector_store()
+    vs = await run_in_threadpool(get_vector_store)
     docs = sm.get_documents(target_id)
     if selected_documents and len(selected_documents) > 0:
         docs = [d for d in docs if d["filename"] in selected_documents]
@@ -91,7 +101,7 @@ async def generate_podcast(
     if docs:
         collected = []
         for d in docs:
-            c = vs.get_chunks_by_document(target_id, d["filename"], limit=10)
+            c = await run_in_threadpool(vs.get_chunks_by_document, target_id, d["filename"], limit=10)
             if c:
                 collected.append(f"--- {d['filename']} ---\n" + "\n".join(c))
         if collected:
@@ -120,10 +130,10 @@ async def generate_podcast(
 @router.get("/api/podcast/status/{notebook_id}")
 def get_podcast_status(notebook_id: str):
     """Kiểm tra trạng thái tiến trình tạo Podcast."""
-    audio_path = os.path.join("storage", "podcasts", f"{notebook_id}.mp3")
-    wav_path = os.path.join("storage", "podcasts", f"{notebook_id}.wav")
-    has_audio = (os.path.exists(audio_path) and os.path.getsize(audio_path) > 100) or \
-                (os.path.exists(wav_path) and os.path.getsize(wav_path) > 100)
+    audio_path = _podcast_file(notebook_id, ".mp3")
+    wav_path = _podcast_file(notebook_id, ".wav")
+    has_audio = (audio_path.is_file() and audio_path.stat().st_size > 100) or \
+                (wav_path.is_file() and wav_path.stat().st_size > 100)
 
     task_info = _PODCAST_STATUS.get(notebook_id, {})
     status = task_info.get("status")
@@ -140,11 +150,11 @@ def get_podcast_status(notebook_id: str):
 @router.head("/api/podcast/audio/{notebook_id}")
 def get_podcast_audio(notebook_id: str):
     """Phục vụ file âm thanh Podcast đã tạo (Hỗ trợ cả GET và HEAD)."""
-    audio_path = os.path.join("storage", "podcasts", f"{notebook_id}.mp3")
-    if os.path.exists(audio_path) and os.path.getsize(audio_path) > 100:
+    audio_path = _podcast_file(notebook_id, ".mp3")
+    if audio_path.is_file() and audio_path.stat().st_size > 100:
         return FileResponse(audio_path, media_type="audio/mpeg")
-    wav_path = os.path.join("storage", "podcasts", f"{notebook_id}.wav")
-    if os.path.exists(wav_path) and os.path.getsize(wav_path) > 100:
+    wav_path = _podcast_file(notebook_id, ".wav")
+    if wav_path.is_file() and wav_path.stat().st_size > 100:
         return FileResponse(wav_path, media_type="audio/wav")
     raise HTTPException(status_code=404, detail="Chưa có file Podcast cho sổ tay này.")
 
@@ -152,29 +162,32 @@ def get_podcast_audio(notebook_id: str):
 async def transcribe_audio(file: UploadFile = File(...)):
     """Chuyển đổi âm thanh ghi âm giọng nói thành văn bản."""
     import tempfile
-    suffix = os.path.splitext(file.filename)[1] or ".webm"
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in {".webm", ".wav", ".mp3", ".m4a", ".ogg", ".mp4", ".mpeg"}:
+        raise HTTPException(status_code=415, detail="Định dạng audio chưa được hỗ trợ.")
+    max_bytes = settings.max_upload_size_mb * 1024 * 1024
+    content = await file.read(max_bytes + 1)
+    await file.close()
+    if len(content) > max_bytes:
+        raise HTTPException(status_code=413, detail=f"Audio vượt quá giới hạn {settings.max_upload_size_mb} MB.")
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        content = await file.read()
         tmp.write(content)
         tmp_path = tmp.name
 
     try:
-        import whisper
-        model = whisper.load_model("base")
-        result = model.transcribe(tmp_path, language="vi")
+        def _transcribe():
+            from src.ingestion.parsers.audio_parser import load_whisper_model
+            model = load_whisper_model("base")
+            return model.transcribe(tmp_path, language="vi")
+
+        result = await run_in_threadpool(_transcribe)
         text = result.get("text", "").strip()
         return {"status": "success", "text": text}
+    except (ImportError, RuntimeError) as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
     except Exception as e:
         logger.error(f"Lỗi Whisper transcribe: {e}")
-        try:
-            import speech_recognition as sr
-            r = sr.Recognizer()
-            with sr.AudioFile(tmp_path) as source:
-                audio_data = r.record(source)
-                text = r.recognize_google(audio_data, language="vi-VN")
-                return {"status": "success", "text": text}
-        except Exception as e2:
-            raise HTTPException(status_code=500, detail=f"Không thể phiên âm giọng nói: {str(e)} / {str(e2)}")
+        raise HTTPException(status_code=500, detail=f"Không thể phiên âm audio bằng Whisper local: {e}") from e
     finally:
         if os.path.exists(tmp_path):
             try:

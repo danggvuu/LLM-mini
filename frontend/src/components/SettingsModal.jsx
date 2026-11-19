@@ -15,24 +15,31 @@ export default function SettingsModal({ isOpen, onClose, onSettingsSaved }) {
     ollama_base_url: 'http://localhost:11434',
     lm_studio_base_url: 'http://localhost:1234/v1',
     gemini_api_key: '',
+    gemini_api_key_configured: false,
     gemini_model: 'gemini-2.5-flash',
     openai_api_key: '',
+    openai_api_key_configured: false,
     openai_model: 'gpt-4o-mini',
     groq_api_key: '',
+    groq_api_key_configured: false,
     groq_model: 'llama-3.3-70b-versatile',
     openrouter_api_key: '',
+    openrouter_api_key_configured: false,
     openrouter_model: 'deepseek/deepseek-r1',
     router9_base_url: 'http://localhost:20128/v1',
     router9_api_key: '',
+    router9_api_key_configured: false,
     router9_model: 'claude-3-5-sonnet',
     custom_base_url: '',
     custom_api_key: '',
+    custom_api_key_configured: false,
     custom_model: ''
   });
 
   const [testResult, setTestResult] = useState({});
   const [testingProvider, setTestingProvider] = useState(null);
   const [showKeys, setShowKeys] = useState({});
+  const [clearApiKeys, setClearApiKeys] = useState([]);
 
   useEffect(() => {
     if (isOpen) {
@@ -46,6 +53,7 @@ export default function SettingsModal({ isOpen, onClose, onSettingsSaved }) {
       const res = await axios.get('/api/settings');
       if (res.data) {
         setSettings(prev => ({ ...prev, ...res.data }));
+        setClearApiKeys([]);
       }
     } catch (e) {
       console.error("Lỗi tải cài đặt:", e);
@@ -95,8 +103,18 @@ export default function SettingsModal({ isOpen, onClose, onSettingsSaved }) {
   const handleSave = async () => {
     setLoading(true);
     try {
-      await axios.post('/api/settings', settings);
-      if (onSettingsSaved) onSettingsSaved(settings);
+      const settingsPayload = { ...settings };
+      Object.keys(settingsPayload)
+        .filter(key => key.endsWith('_api_key_configured'))
+        .forEach(key => delete settingsPayload[key]);
+      const payload = {
+        ...settingsPayload,
+        clear_api_keys: clearApiKeys
+      };
+      const response = await axios.post('/api/settings', payload);
+      const savedSettings = response.data?.settings || settings;
+      setSettings(prev => ({ ...prev, ...savedSettings }));
+      if (onSettingsSaved) onSettingsSaved(savedSettings);
       onClose();
     } catch (e) {
       alert("Lỗi lưu cài đặt: " + (e.response?.data?.detail || e.message));
@@ -107,6 +125,17 @@ export default function SettingsModal({ isOpen, onClose, onSettingsSaved }) {
 
   const toggleShowKey = (field) => {
     setShowKeys(prev => ({ ...prev, [field]: !prev[field] }));
+  };
+
+  const changeApiKey = (field, value) => {
+    setSettings(prev => ({ ...prev, [field]: value }));
+    setClearApiKeys(prev => prev.filter(key => key !== field));
+  };
+
+  const clearSavedApiKey = (field) => {
+    if (!window.confirm('Xóa API key đã lưu trên máy này?')) return;
+    setSettings(prev => ({ ...prev, [field]: '' }));
+    setClearApiKeys(prev => prev.includes(field) ? prev : [...prev, field]);
   };
 
   if (!isOpen) return null;
@@ -351,8 +380,8 @@ export default function SettingsModal({ isOpen, onClose, onSettingsSaved }) {
                       <input 
                         type={showKeys.router9 ? "text" : "password"}
                         value={settings.router9_api_key || ''}
-                        onChange={e => setSettings({ ...settings, router9_api_key: e.target.value })}
-                        placeholder="Lấy từ Dashboard localhost:20128"
+                        onChange={e => changeApiKey('router9_api_key', e.target.value)}
+                        placeholder={settings.router9_api_key_configured ? 'Đã lưu; để trống để giữ nguyên' : 'Lấy từ Dashboard localhost:20128'}
                         className="w-full bg-black/40 border border-white/15 rounded-xl px-3.5 py-2.5 pr-10 text-xs text-white focus:outline-none focus:border-purple-500 font-mono"
                       />
                       <button 
@@ -362,6 +391,11 @@ export default function SettingsModal({ isOpen, onClose, onSettingsSaved }) {
                       >
                         {showKeys.router9 ? <EyeOff size={14} /> : <Eye size={14} />}
                       </button>
+                      {settings.router9_api_key_configured && (
+                        <button type="button" onClick={() => clearSavedApiKey('router9_api_key')} className="mt-2 text-[11px] text-rose-400 hover:text-rose-300">
+                          Xóa key đã lưu
+                        </button>
+                      )}
                     </div>
 
                     <div>
@@ -416,8 +450,8 @@ export default function SettingsModal({ isOpen, onClose, onSettingsSaved }) {
                     <input 
                       type={showKeys.gemini ? "text" : "password"}
                       value={settings.gemini_api_key || ''}
-                      onChange={e => setSettings({ ...settings, gemini_api_key: e.target.value })}
-                      placeholder="AIzaSy..."
+                      onChange={e => changeApiKey('gemini_api_key', e.target.value)}
+                      placeholder={settings.gemini_api_key_configured ? 'Đã lưu; để trống để giữ nguyên' : 'AIzaSy...'}
                       className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 pr-10 text-xs text-white focus:outline-none focus:border-blue-500 font-mono"
                     />
                     <button 
@@ -442,9 +476,13 @@ export default function SettingsModal({ isOpen, onClose, onSettingsSaved }) {
                   </div>
                 </div>
 
+                {settings.gemini_api_key_configured && (
+                  <button type="button" onClick={() => clearSavedApiKey('gemini_api_key')} className="text-[11px] text-rose-400 hover:text-rose-300">Xóa Gemini key đã lưu</button>
+                )}
+
                 <button
                   onClick={() => handleTestConnection('gemini', settings.gemini_model, settings.gemini_api_key, '')}
-                  disabled={testingProvider === 'gemini' || !settings.gemini_api_key}
+                  disabled={testingProvider === 'gemini' || (!settings.gemini_api_key && !settings.gemini_api_key_configured)}
                   className="px-4 py-1.5 text-xs font-semibold rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/30 hover:bg-blue-500/20 disabled:opacity-40 transition flex items-center gap-1.5"
                 >
                   {testingProvider === 'gemini' ? <RefreshCw size={12} className="animate-spin" /> : null}
@@ -472,8 +510,8 @@ export default function SettingsModal({ isOpen, onClose, onSettingsSaved }) {
                     <input 
                       type={showKeys.openai ? "text" : "password"}
                       value={settings.openai_api_key || ''}
-                      onChange={e => setSettings({ ...settings, openai_api_key: e.target.value })}
-                      placeholder="sk-proj-..."
+                      onChange={e => changeApiKey('openai_api_key', e.target.value)}
+                      placeholder={settings.openai_api_key_configured ? 'Đã lưu; để trống để giữ nguyên' : 'sk-proj-...'}
                       className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 pr-10 text-xs text-white focus:outline-none focus:border-blue-500 font-mono"
                     />
                     <button 
@@ -497,9 +535,13 @@ export default function SettingsModal({ isOpen, onClose, onSettingsSaved }) {
                   </div>
                 </div>
 
+                {settings.openai_api_key_configured && (
+                  <button type="button" onClick={() => clearSavedApiKey('openai_api_key')} className="text-[11px] text-rose-400 hover:text-rose-300">Xóa OpenAI key đã lưu</button>
+                )}
+
                 <button
                   onClick={() => handleTestConnection('openai', settings.openai_model, settings.openai_api_key, '')}
-                  disabled={testingProvider === 'openai' || !settings.openai_api_key}
+                  disabled={testingProvider === 'openai' || (!settings.openai_api_key && !settings.openai_api_key_configured)}
                   className="px-4 py-1.5 text-xs font-semibold rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/30 hover:bg-blue-500/20 disabled:opacity-40 transition flex items-center gap-1.5"
                 >
                   {testingProvider === 'openai' ? <RefreshCw size={12} className="animate-spin" /> : null}
@@ -530,8 +572,8 @@ export default function SettingsModal({ isOpen, onClose, onSettingsSaved }) {
                     <input 
                       type={showKeys.groq ? "text" : "password"}
                       value={settings.groq_api_key || ''}
-                      onChange={e => setSettings({ ...settings, groq_api_key: e.target.value })}
-                      placeholder="gsk_..."
+                      onChange={e => changeApiKey('groq_api_key', e.target.value)}
+                      placeholder={settings.groq_api_key_configured ? 'Đã lưu; để trống để giữ nguyên' : 'gsk_...'}
                       className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 pr-10 text-xs text-white focus:outline-none focus:border-purple-500 font-mono"
                     />
                     <button 
@@ -555,9 +597,13 @@ export default function SettingsModal({ isOpen, onClose, onSettingsSaved }) {
                   </div>
                 </div>
 
+                {settings.groq_api_key_configured && (
+                  <button type="button" onClick={() => clearSavedApiKey('groq_api_key')} className="text-[11px] text-rose-400 hover:text-rose-300">Xóa Groq key đã lưu</button>
+                )}
+
                 <button
                   onClick={() => handleTestConnection('groq', settings.groq_model, settings.groq_api_key, '')}
-                  disabled={testingProvider === 'groq' || !settings.groq_api_key}
+                  disabled={testingProvider === 'groq' || (!settings.groq_api_key && !settings.groq_api_key_configured)}
                   className="px-4 py-1.5 text-xs font-semibold rounded-lg bg-purple-500/10 text-purple-400 border border-purple-500/30 hover:bg-purple-500/20 disabled:opacity-40 transition flex items-center gap-1.5"
                 >
                   {testingProvider === 'groq' ? <RefreshCw size={12} className="animate-spin" /> : null}
@@ -578,7 +624,7 @@ export default function SettingsModal({ isOpen, onClose, onSettingsSaved }) {
 
         {/* Footer */}
         <div className="p-4 border-t border-white/10 bg-white/[0.02] flex items-center justify-between">
-          <p className="text-xs text-gray-500">Cài đặt được lưu trữ an toàn trong máy tính của bạn.</p>
+          <p className="text-xs text-gray-500">Cài đặt lưu cục bộ trong storage/notebooks.db; hãy bảo vệ file này và bản sao lưu.</p>
           <div className="flex gap-2">
             <button
               onClick={onClose}

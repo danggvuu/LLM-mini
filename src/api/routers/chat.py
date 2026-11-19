@@ -1,7 +1,10 @@
 import json
 import logging
+import re
+import re
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from starlette.concurrency import run_in_threadpool
 
 from src.api.deps import (
     get_session_manager,
@@ -14,14 +17,25 @@ from src.api.deps import (
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Chat & Retrieval"])
 
+
+def _validate_notebook_id(notebook_id: str) -> None:
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", notebook_id or ""):
+        raise HTTPException(status_code=400, detail="notebook_id không hợp lệ.")
+
 @router.get("/api/notebooks/{notebook_id}/messages")
 def get_messages(notebook_id: str):
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", notebook_id or ""):
+        raise HTTPException(status_code=400, detail="notebook_id không hợp lệ.")
+    _validate_notebook_id(notebook_id)
     sm = get_session_manager()
     return sm.get_chat_history(notebook_id)
 
 @router.delete("/api/notebooks/{notebook_id}/messages/{message_id}")
 def delete_single_message(notebook_id: str, message_id: int):
     """Xóa một tin nhắn cụ thể trong lịch sử chat."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", notebook_id or ""):
+        raise HTTPException(status_code=400, detail="notebook_id không hợp lệ.")
+    _validate_notebook_id(notebook_id)
     sm = get_session_manager()
     sm.delete_message(notebook_id, message_id)
     return {"status": "success", "message_id": message_id}
@@ -29,6 +43,9 @@ def delete_single_message(notebook_id: str, message_id: int):
 @router.delete("/api/notebooks/{notebook_id}/messages")
 def clear_all_messages(notebook_id: str):
     """Xóa toàn bộ lịch sử trò chuyện của sổ tay."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", notebook_id or ""):
+        raise HTTPException(status_code=400, detail="notebook_id không hợp lệ.")
+    _validate_notebook_id(notebook_id)
     sm = get_session_manager()
     sm.clear_chat_history(notebook_id)
     return {"status": "success", "notebook_id": notebook_id}
@@ -58,11 +75,12 @@ async def chat_endpoint(request: ChatRequest, raw_request: Request):
         try:
             yield f"data: {json.dumps({'type': 'status', 'message': 'Đang tìm kiếm thông tin bằng Hybrid Search...'})}\n\n"
             
-            engine = get_search_engine()
-            context_str, results = engine.retrieve(
-                request.query, 
+            engine = await run_in_threadpool(get_search_engine)
+            context_str, results = await run_in_threadpool(
+                engine.retrieve,
+                request.query,
                 notebook_id=request.notebook_id,
-                selected_documents=request.selected_documents
+                selected_documents=request.selected_documents,
             )
             
             yield f"data: {json.dumps({'type': 'status', 'message': 'Đang đọc và phân tích ngữ cảnh...'})}\n\n"
@@ -115,7 +133,7 @@ async def chat_endpoint(request: ChatRequest, raw_request: Request):
             display_model = model_name or ""
             yield f"data: {json.dumps({'type': 'status', 'message': f'{provider.upper()} ({display_model}) đang suy nghĩ...'})}\n\n"
 
-            for chunk in llm.generate(
+            generated_chunks = iter(llm.generate(
                 prompt=rag_prompt, 
                 system_prompt=system_prompt, 
                 is_private=is_private, 
@@ -123,7 +141,12 @@ async def chat_endpoint(request: ChatRequest, raw_request: Request):
                 model_name=model_name,
                 api_key=api_key,
                 base_url=base_url
-            ):
+            ))
+            end_of_stream = object()
+            while True:
+                chunk = await run_in_threadpool(next, generated_chunks, end_of_stream)
+                if chunk is end_of_stream:
+                    break
                 if await raw_request.is_disconnected():
                     logger.info("Client ngắt kết nối (Stop response). Dừng sinh văn bản.")
                     break

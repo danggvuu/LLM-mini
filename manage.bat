@@ -33,8 +33,8 @@ echo ❌ Lệnh không hợp lệ: %COMMAND%
 goto :CMD_HELP
 
 :CMD_DEV
-echo 🚀 Khởi chạy NotebookLM Mini ở chế độ Development (Reload)...
-python -m uvicorn src.api.api:app --host 0.0.0.0 --port 8000 --reload
+echo 🚀 Khởi chạy NotebookLM Mini ở chế độ Development (Reload, chỉ local)...
+python -m uvicorn src.api.api:app --host 127.0.0.1 --port 8000 --reload
 goto :EOF
 
 :CMD_HEALTH

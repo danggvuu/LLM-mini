@@ -130,14 +130,10 @@ function Dashboard() {
     if (!newTitle.trim()) return;
 
     let finalKey = customKey.trim();
-    if (!finalKey) {
-      if (provider === 'gemini') finalKey = globalSettings.gemini_api_key || '';
-      else if (provider === 'openai') finalKey = globalSettings.openai_api_key || '';
-      else if (provider === 'groq') finalKey = globalSettings.groq_api_key || '';
-      else if (provider === '9router') finalKey = globalSettings.router9_api_key || '9router-local';
-    }
+    const keyName = provider === '9router' ? 'router9' : provider;
+    const keyConfigured = Boolean(globalSettings[`${keyName}_api_key_configured`]);
 
-    if (['gemini', 'openai', 'groq'].includes(provider) && !finalKey) {
+    if (['gemini', 'openai', 'groq', 'openrouter'].includes(provider) && !finalKey && !keyConfigured) {
       alert(`Vui lòng nhập API Key cho ${provider.toUpperCase()} hoặc cài đặt trong phần Cài đặt!`);
       return;
     }
@@ -609,7 +605,7 @@ function Dashboard() {
                     <label className="text-xs text-gray-300 font-medium">
                       {provider.toUpperCase()} API Key:
                     </label>
-                    {globalSettings[`${provider}_api_key`] && !customKey && (
+                    {globalSettings[`${provider}_api_key_configured`] && !customKey && (
                       <span className="text-[11px] text-green-400 flex items-center gap-1">
                         <Check size={12} /> Đã có Key trong Cài đặt
                       </span>
@@ -619,7 +615,7 @@ function Dashboard() {
                     type="password" 
                     value={customKey}
                     onChange={e => setCustomKey(e.target.value)}
-                    placeholder={globalSettings[`${provider}_api_key`] ? "Dùng key đã lưu (hoặc dán key khác vào đây)" : "Dán API Key vào đây..."}
+                    placeholder={globalSettings[`${provider}_api_key_configured`] ? "Đang dùng key đã lưu (hoặc dán key mới)" : "Dán API Key vào đây..."}
                     className="w-full bg-black/50 border border-white/15 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500 font-mono"
                   />
                 </div>

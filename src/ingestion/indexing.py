@@ -1,4 +1,5 @@
 import os
+import json
 import uuid
 import logging
 from typing import List, Dict, Any, Optional
@@ -236,7 +237,8 @@ class VectorStoreManager:
         # Fallback nếu scroll theo notebook_id không ra kết quả (ví dụ dữ liệu cũ chưa có trường notebook_id)
         # Fallback từ BM25 index nếu Qdrant hoàn toàn rỗng, vẫn trong cùng notebook.
         if not chunks and target_nb:
-            bm25_path = settings.bm25_dir / str(target_nb) / "bm25_docs.json"
+            from ..retrieval.bm25_index import _notebook_index_dir
+            bm25_path = _notebook_index_dir(str(target_nb)) / "bm25_docs.json"
             if os.path.exists(bm25_path):
                 try:
                     with open(bm25_path, "r", encoding="utf-8") as f:
@@ -285,7 +287,8 @@ class VectorStoreManager:
 
         # Fallback 1: Đọc từ BM25 index storage (storage/bm25/{notebook_id}/bm25_docs.json)
         if not chunks:
-            bm25_path = settings.bm25_dir / str(notebook_id) / "bm25_docs.json"
+            from ..retrieval.bm25_index import _notebook_index_dir
+            bm25_path = _notebook_index_dir(str(notebook_id)) / "bm25_docs.json"
             if os.path.exists(bm25_path):
                 try:
                     with open(bm25_path, "r", encoding="utf-8") as f:
@@ -304,8 +307,19 @@ class VectorStoreManager:
 
         # Fallback 2: nếu vẫn chưa có thì đọc trực tiếp file từ uploads/
         if not chunks:
-            upload_path = os.path.join("uploads", filename)
-            if os.path.exists(upload_path):
+            # `filename` is request-derived at the document-chunks endpoint.
+            # Keep the legacy fallback constrained to a single basename under
+            # the uploads root; never allow ../ traversal into project files.
+            requested_name = str(filename)
+            upload_root = settings.upload_dir.resolve()
+            if os.path.basename(requested_name.replace("\\", "/")) != requested_name.replace("\\", "/"):
+                return []
+            upload_path = (upload_root / requested_name).resolve()
+            try:
+                upload_path.relative_to(upload_root)
+            except ValueError:
+                return []
+            if upload_path.is_file():
                 try:
                     ext = os.path.splitext(filename)[1].lower()
                     if ext in ['.txt', '.md', '.json', '.csv', '.html']:
@@ -315,7 +329,7 @@ class VectorStoreManager:
                     else:
                         from src.ingestion.parsers.markitdown_parser import MarkItDownParser
                         parser = MarkItDownParser()
-                        tree = parser.parse(upload_path)
+                        tree = parser.parse(str(upload_path))
                         if tree and tree.content:
                             text = tree.content
                             chunks = [text[i:i+800] for i in range(0, min(len(text), 20000), 800) if text[i:i+800].strip()]
@@ -323,3 +337,57 @@ class VectorStoreManager:
                     logger.warning(f"Lỗi đọc fallback file uploads/{filename}: {e}")
 
         return chunks
+
+    def get_document_chunk_records(self, notebook_id: str, filename: str, limit: int = 1000) -> List[Dict[str, Any]]:
+        """Return full chunk records for safe replacement/rollback of a document."""
+        from qdrant_client.http.models import Filter, FieldCondition, MatchValue
+
+        source_conditions = [
+            FieldCondition(key=key, match=MatchValue(value=filename))
+            for key in ("filename", "source_file", "title", "source_url", "source")
+        ]
+        records: List[Dict[str, Any]] = []
+        try:
+            points, _ = self.client.scroll(
+                collection_name=self.collection_name,
+                scroll_filter=Filter(
+                    must=[FieldCondition(key="notebook_id", match=MatchValue(value=notebook_id))],
+                    should=source_conditions,
+                ),
+                limit=limit,
+                with_payload=True,
+                with_vectors=False,
+            )
+            for point in points:
+                payload = point.payload or {}
+                records.append({
+                    "chunk_id": payload.get("chunk_id", str(point.id)),
+                    "content": payload.get("content", ""),
+                    "metadata": {key: value for key, value in payload.items() if key != "content"},
+                })
+        except Exception as exc:
+            logger.warning("Không thể sao lưu chunks trước khi thay tài liệu %s: %s", filename, exc)
+
+        if records:
+            return records
+
+        from ..retrieval.bm25_index import get_bm25_index
+        bm25 = get_bm25_index(notebook_id)
+        for doc in bm25._documents:
+            meta = doc.metadata or {}
+            candidates = [meta.get(key) for key in ("filename", "source_file", "title", "source", "source_url")]
+            if any(
+                value and (
+                    str(value) == filename
+                    or os.path.basename(str(value).replace("\\", "/")) == os.path.basename(filename)
+                )
+                for value in candidates
+            ):
+                records.append({
+                    "chunk_id": doc.chunk_id,
+                    "content": doc.text,
+                    "metadata": dict(meta),
+                })
+                if len(records) >= limit:
+                    break
+        return records

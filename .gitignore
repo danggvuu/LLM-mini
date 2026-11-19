@@ -26,6 +26,7 @@ qdrant/*
 !qdrant/.gitkeep
 uploads/*
 !uploads/.gitkeep
+model_cache/
 
 # Executables and Heavy Binaries
 bin/

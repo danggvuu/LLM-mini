@@ -2,6 +2,7 @@ import sqlite3
 import os
 import json
 import logging
+from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Optional, Any
 from src.utils.config import settings
@@ -44,6 +45,7 @@ class SessionManager:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     notebook_id TEXT,
                     filename TEXT NOT NULL,
+                    file_path TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (notebook_id) REFERENCES notebooks (id)
                 )
@@ -111,6 +113,7 @@ class SessionManager:
                 ("notebooks", "model_name", "TEXT DEFAULT ''"),
                 ("notebooks", "api_key", "TEXT DEFAULT ''"),
                 ("notebooks", "base_url", "TEXT DEFAULT ''"),
+                ("documents", "file_path", "TEXT"),
             ]
             
             for table, col, col_type in migrations:
@@ -125,9 +128,9 @@ class SessionManager:
     def get_app_settings(self) -> Dict[str, Any]:
         """Lấy toàn bộ cài đặt hệ thống."""
         default_settings = {
-            "default_provider": "ollama",
+            "default_provider": os.getenv("RAG_LLM_PROVIDER", "ollama"),
             "default_model": "qwen2.5:3b",
-            "ollama_base_url": "http://localhost:11434",
+            "ollama_base_url": os.getenv("RAG_OLLAMA_BASE_URL", "http://localhost:11434"),
             "lm_studio_base_url": "http://localhost:1234/v1",
             "gemini_api_key": "",
             "gemini_model": "gemini-2.5-flash",
@@ -146,11 +149,15 @@ class SessionManager:
         }
         with self._get_conn() as conn:
             cursor = conn.execute("SELECT key, value FROM app_settings")
-            for key, val in cursor.fetchall():
-                default_settings[key] = val
+            stored_settings = dict(cursor.fetchall())
+            default_settings.update(stored_settings)
 
         # Đọc bổ sung từ biến môi trường (Environment Variables / .env)
         env_mappings = {
+            "default_provider": "RAG_LLM_PROVIDER",
+            "default_model": "RAG_DEFAULT_MODEL",
+            "ollama_base_url": "RAG_OLLAMA_BASE_URL",
+            "lm_studio_base_url": "RAG_LM_STUDIO_BASE_URL",
             "router9_api_key": "ROUTER9_API_KEY",
             "router9_base_url": "ROUTER9_BASE_URL",
             "router9_model": "ROUTER9_MODEL",
@@ -160,7 +167,7 @@ class SessionManager:
             "openrouter_api_key": "OPENROUTER_API_KEY"
         }
         for s_key, env_var in env_mappings.items():
-            if not default_settings.get(s_key) and os.getenv(env_var):
+            if not stored_settings.get(s_key) and os.getenv(env_var):
                 default_settings[s_key] = os.getenv(env_var)
 
         return default_settings
@@ -273,12 +280,21 @@ class SessionManager:
 
     def delete_notebook(self, notebook_id: str):
         with self._get_conn() as conn:
+            file_paths = [
+                row[0] for row in conn.execute(
+                    "SELECT file_path FROM documents WHERE notebook_id = ? AND file_path IS NOT NULL",
+                    (notebook_id,),
+                ).fetchall()
+            ]
             conn.execute("DELETE FROM flashcard_progress WHERE notebook_id = ?", (notebook_id,))
             conn.execute("DELETE FROM study_guides WHERE notebook_id = ?", (notebook_id,))
             conn.execute("DELETE FROM messages WHERE notebook_id = ?", (notebook_id,))
             conn.execute("DELETE FROM documents WHERE notebook_id = ?", (notebook_id,))
             conn.execute("DELETE FROM notebooks WHERE id = ?", (notebook_id,))
             conn.commit()
+
+        for file_path in file_paths:
+            self._delete_managed_upload(file_path)
             
         # Dọn dẹp chỉ mục BM25
         try:
@@ -315,16 +331,49 @@ class SessionManager:
             return None
 
     # --- API Quản lý Tài liệu ---
-    def add_document(self, notebook_id: str, filename: str):
+    def add_document(self, notebook_id: str, filename: str, file_path: Optional[str] = None):
         with self._get_conn() as conn:
             conn.execute("DELETE FROM documents WHERE notebook_id = ? AND filename = ?", (notebook_id, filename))
-            conn.execute("INSERT INTO documents (notebook_id, filename) VALUES (?, ?)", (notebook_id, filename))
+            conn.execute(
+                "INSERT INTO documents (notebook_id, filename, file_path) VALUES (?, ?, ?)",
+                (notebook_id, filename, file_path),
+            )
             conn.commit()
+
+    @staticmethod
+    def _delete_managed_upload(file_path: str) -> None:
+        """Delete only files whose resolved path remains inside uploads/."""
+        try:
+            from src.utils.config import settings
+            upload_root = settings.upload_dir.resolve()
+            candidate = Path(file_path).resolve()
+            candidate.relative_to(upload_root)
+            if candidate.is_file():
+                candidate.unlink()
+        except (OSError, ValueError) as exc:
+            logger.warning("Bỏ qua xóa upload ngoài thư mục quản lý: %s", exc)
+
+    def get_document_storage_path(self, notebook_id: str, filename: str) -> Optional[str]:
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT file_path FROM documents WHERE notebook_id = ? AND filename = ? ORDER BY id DESC LIMIT 1",
+                (notebook_id, filename),
+            ).fetchone()
+            return row[0] if row and row[0] else None
 
     def delete_document(self, notebook_id: str, filename: str):
         with self._get_conn() as conn:
+            file_paths = [
+                row[0] for row in conn.execute(
+                    "SELECT file_path FROM documents WHERE notebook_id = ? AND filename = ? AND file_path IS NOT NULL",
+                    (notebook_id, filename),
+                ).fetchall()
+            ]
             conn.execute("DELETE FROM documents WHERE notebook_id = ? AND filename = ?", (notebook_id, filename))
             conn.commit()
+
+        for file_path in file_paths:
+            self._delete_managed_upload(file_path)
             
         # Cập nhật lại BM25 index
         try:

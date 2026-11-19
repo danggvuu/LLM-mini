@@ -3,12 +3,14 @@ from bs4 import BeautifulSoup
 from typing import Optional
 import re
 import textwrap
+from urllib.parse import urljoin
 from youtube_transcript_api import YouTubeTranscriptApi
 
 from src.ingestion.schema import (
     DocumentNode, HeadingNode, ParagraphNode, CodeBlockNode, NodeType, Node
 )
 from src.utils.logger import logger
+from src.utils.url_security import validate_public_http_url
 
 
 class WebParser:
@@ -18,6 +20,28 @@ class WebParser:
         self.headers = headers or {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
         }
+
+    def _safe_get(self, url: str, timeout: float = 15):
+        """Fetch a public URL while validating every redirect destination."""
+        current_url = url
+        for _ in range(6):
+            validate_public_http_url(current_url)
+            response = requests.get(
+                current_url,
+                headers=self.headers,
+                timeout=timeout,
+                allow_redirects=False,
+            )
+            if response.is_redirect or response.is_permanent_redirect:
+                location = response.headers.get("Location")
+                response.close()
+                if not location:
+                    raise requests.exceptions.HTTPError("Redirect không có Location header.")
+                current_url = urljoin(current_url, location)
+                continue
+            response.raise_for_status()
+            return response
+        raise requests.exceptions.TooManyRedirects("URL vượt quá 5 lần chuyển hướng.")
 
     def _fetch_youtube_transcript_text(self, video_id: str) -> str:
         """Hỗ trợ cả youtube-transcript-api < 1.0.0 và >= 1.0.0."""
@@ -35,9 +59,7 @@ class WebParser:
 
     def _parse_website(self, url: str) -> DocumentNode:
         logger.info(f"Đang cào dữ liệu từ Website: {url}")
-        headers = self.headers
-        response = requests.get(url, headers=headers, timeout=15)
-        response.raise_for_status()
+        response = self._safe_get(url, timeout=15)
         response.encoding = response.apparent_encoding
 
         soup = BeautifulSoup(response.text, "html.parser")
@@ -102,6 +124,7 @@ class WebParser:
         return doc_root
 
     def parse(self, url: str, source_metadata: Optional[dict] = None) -> DocumentNode:
+        validate_public_http_url(url)
         meta = source_metadata or {}
         meta["source_url"] = url
         meta["parser"] = "WebParser"
@@ -122,7 +145,7 @@ class WebParser:
                 return root
             except Exception:
                 try:
-                    res = requests.get(url, headers=self.headers, timeout=10)
+                    res = self._safe_get(url, timeout=10)
                     soup = BeautifulSoup(res.text, 'html.parser')
                     title = soup.find("meta", property="og:title")
                     title_text = title.get("content", f"YouTube Video: {video_id}") if title else f"YouTube Video: {video_id}"

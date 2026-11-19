@@ -1,6 +1,7 @@
 import os
 import sys
 import logging
+from contextlib import asynccontextmanager
 
 if sys.stdout.encoding != 'utf-8':
     sys.stdout.reconfigure(encoding='utf-8')
@@ -9,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 # Shared dependencies and singletons
@@ -43,25 +44,47 @@ from src.api.deps import (
 # Modular Routers
 from src.api.routers import system, notebooks, documents, chat, learning, media
 
+@asynccontextmanager
+async def lifespan(_app):
+    print("[System] Khởi động SessionManager và Hệ thống Cơ sở dữ liệu...")
+    get_session_manager()
+    yield
+
+
 app = FastAPI(
     title="NotebookLM Mini API",
     version="2.0.0",
-    description="Hệ thống Trợ lý Học tập & Khảo thí Đa phương thức Thông minh"
+    description="Hệ thống Trợ lý Học tập & Khảo thí Đa phương thức Thông minh",
+    lifespan=lifespan,
 )
 
-# Setup CORS
+# Local desktop app: only the served SPA and local Vite dev origins are trusted.
+ALLOWED_ORIGINS = [
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:5174",
+    "http://127.0.0.1:5174",
+    "http://localhost:4173",
+    "http://127.0.0.1:4173",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=False,
+    allow_methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
-@app.on_event("startup")
-def startup_event():
-    print("[System] Khởi động SessionManager và Hệ thống Cơ sở dữ liệu...")
-    get_session_manager()
+
+@app.middleware("http")
+async def reject_cross_origin_writes(request, call_next):
+    origin = request.headers.get("origin")
+    if origin and origin not in ALLOWED_ORIGINS and request.method not in {"GET", "HEAD", "OPTIONS"}:
+        return JSONResponse(status_code=403, content={"detail": "Cross-origin write requests are not allowed."})
+    return await call_next(request)
 
 # Mount Modular Routers
 app.include_router(system.router)

@@ -5,6 +5,7 @@ In-memory BM25 keyword search with disk persistence.
 import json
 import logging
 import pickle
+import re
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 from cachetools import LRUCache
@@ -181,12 +182,24 @@ class BM25Index:
 # Module-level singletons per notebook
 _indexes: LRUCache = LRUCache(maxsize=10)
 
+
+def _notebook_index_dir(notebook_id: str) -> Path:
+    """Resolve an index directory for a single safe notebook identifier."""
+    value = str(notebook_id or "")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", value):
+        raise ValueError("notebook_id must contain only letters, digits, '_' or '-'.")
+    from src.utils.config import settings
+    root = settings.bm25_dir.resolve()
+    target = (root / value).resolve()
+    if target.parent != root:
+        raise ValueError("Invalid notebook index path.")
+    return target
+
 def get_bm25_index(notebook_id: str) -> BM25Index:
     """Get or create the BM25 index instance for a specific notebook."""
     global _indexes
     if notebook_id not in _indexes:
-        from src.utils.config import settings
-        notebook_dir = settings.bm25_dir / notebook_id
+        notebook_dir = _notebook_index_dir(notebook_id)
         index = BM25Index(persist_dir=notebook_dir)
         # Attempt to load persisted index
         index.load()
@@ -196,13 +209,16 @@ def get_bm25_index(notebook_id: str) -> BM25Index:
 def delete_bm25_folder(notebook_id: str):
     """Delete the BM25 index directory and remove from memory."""
     import shutil
-    from src.utils.config import settings
     global _indexes
     
     if notebook_id in _indexes:
         del _indexes[notebook_id]
         
-    notebook_dir = settings.bm25_dir / notebook_id
+    try:
+        notebook_dir = _notebook_index_dir(notebook_id)
+    except ValueError as exc:
+        logger.error("Refusing unsafe BM25 folder deletion: %s", exc)
+        return
     if notebook_dir.exists():
         try:
             shutil.rmtree(notebook_dir)

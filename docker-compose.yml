@@ -1,20 +1,28 @@
-version: '3.8'
-
 services:
   notebooklm:
     build: .
     container_name: notebooklm_mini
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "127.0.0.1:${PORT:-8000}:8000"
     volumes:
       - ./storage:/app/storage
       - ./data:/app/data
       - ./uploads:/app/uploads
+      - ./model_cache:/app/model_cache
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       - RAG_HF_DEVICE=cpu
-      - RAG_LLM_PROVIDER=${RAG_LLM_PROVIDER:-hf_local}
+      - RAG_LLM_PROVIDER=${RAG_LLM_PROVIDER:-ollama}
+      - RAG_DEFAULT_MODEL=${RAG_DEFAULT_MODEL:-qwen2.5:3b}
+      - RAG_OLLAMA_BASE_URL=${RAG_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - RAG_LM_STUDIO_BASE_URL=${RAG_LM_STUDIO_BASE_URL:-http://host.docker.internal:1234/v1}
       - RAG_ALLOW_MODEL_DOWNLOAD=${RAG_ALLOW_MODEL_DOWNLOAD:-false}
+      - HF_HOME=/app/model_cache
       - GROQ_API_KEY=${GROQ_API_KEY:-}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - ROUTER9_API_KEY=${ROUTER9_API_KEY:-}
+      - ROUTER9_BASE_URL=${ROUTER9_BASE_URL:-http://host.docker.internal:20128/v1}

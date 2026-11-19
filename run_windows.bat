@@ -37,35 +37,35 @@ if not errorlevel 1 (
 
 :: Quét các đường dẫn cài đặt Python thông dụng trên Windows
 if exist "%LOCALAPPDATA%\Programs\Python\Python311\python.exe" (
-    set "SYSTEM_PY=%LOCALAPPDATA%\Programs\Python\Python311\python.exe"
+    set SYSTEM_PY="%LOCALAPPDATA%\Programs\Python\Python311\python.exe"
     goto :PYTHON_FOUND
 )
 if exist "%LOCALAPPDATA%\Programs\Python\Python312\python.exe" (
-    set "SYSTEM_PY=%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
+    set SYSTEM_PY="%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
     goto :PYTHON_FOUND
 )
 if exist "%ProgramFiles%\Python311\python.exe" (
-    set "SYSTEM_PY=%ProgramFiles%\Python311\python.exe"
+    set SYSTEM_PY="%ProgramFiles%\Python311\python.exe"
     goto :PYTHON_FOUND
 )
 if exist "%ProgramFiles%\Python312\python.exe" (
-    set "SYSTEM_PY=%ProgramFiles%\Python312\python.exe"
+    set SYSTEM_PY="%ProgramFiles%\Python312\python.exe"
     goto :PYTHON_FOUND
 )
 if exist "C:\Python311\python.exe" (
-    set "SYSTEM_PY=C:\Python311\python.exe"
+    set SYSTEM_PY="C:\Python311\python.exe"
     goto :PYTHON_FOUND
 )
 if exist "C:\Python312\python.exe" (
-    set "SYSTEM_PY=C:\Python312\python.exe"
+    set SYSTEM_PY="C:\Python312\python.exe"
     goto :PYTHON_FOUND
 )
 if exist "%LOCALAPPDATA%\Programs\Python\Python313\python.exe" (
-    set "SYSTEM_PY=%LOCALAPPDATA%\Programs\Python\Python313\python.exe"
+    set SYSTEM_PY="%LOCALAPPDATA%\Programs\Python\Python313\python.exe"
     goto :PYTHON_FOUND
 )
 if exist "%ProgramFiles%\Python313\python.exe" (
-    set "SYSTEM_PY=%ProgramFiles%\Python313\python.exe"
+    set SYSTEM_PY="%ProgramFiles%\Python313\python.exe"
     goto :PYTHON_FOUND
 )
 
@@ -105,12 +105,14 @@ if not exist ".venv\Scripts\python.exe" (
 )
 
 :: Dùng trực tiếp Python trong .venv để tránh phụ thuộc vào trạng thái activate.
+%RUN_PY% -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>&1
+if errorlevel 1 goto :VENV_PYTHON_OLD
 
 :: -----------------------------------------------------------------------------
 :: 3. KIỂM TRA VÀ TỰ ĐỘNG CÀI ĐẶT THƯ VIỆN (FASTAPI, UVICORN, QDRANT...)
 :: -----------------------------------------------------------------------------
 echo [3/4] Đang kiểm tra các gói thư viện dự án...
-%RUN_PY% -c "import fastapi, uvicorn, qdrant_client, sentence_transformers, edge_tts" >nul 2>&1
+%RUN_PY% -c "import fastapi, uvicorn, qdrant_client, sentence_transformers, edge_tts, markitdown, pytesseract" >nul 2>&1
 if errorlevel 1 (
     echo.
     echo ========================================================================
@@ -161,8 +163,10 @@ if not exist "frontend\dist\index.html" (
 )
 
 echo [5/5] Đang khởi động Backend...
+ powershell -NoProfile -ExecutionPolicy Bypass -Command "$c=New-Object Net.Sockets.TcpClient; try{$c.Connect('127.0.0.1',8000); exit 0}catch{exit 1}finally{$c.Dispose()}" >nul 2>&1
+if not errorlevel 1 goto :PORT_IN_USE
 echo [5/5] Đang chờ Backend sẵn sàng rồi mới mở trình duyệt...
-start "NotebookLM Ready Check" /b powershell -NoProfile -ExecutionPolicy Bypass -Command "$ok=$false; 1..60 | %% { try { $r=Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8000/api/system/ready -TimeoutSec 2; if($r.StatusCode -eq 200){$ok=$true; break} } catch {}; Start-Sleep -Milliseconds 500 }; if($ok){Start-Process http://localhost:8000}"
+start "NotebookLM Ready Check" /b powershell -NoProfile -ExecutionPolicy Bypass -Command "$ok=$false; 1..60 | %% { try { $r=Invoke-RestMethod http://127.0.0.1:8000/api/system/ready -TimeoutSec 2; if($r.ready){$ok=$true; break} } catch {}; Start-Sleep -Milliseconds 500 }; if($ok){Start-Process http://localhost:8000}"
 %RUN_PY% -m uvicorn src.api.api:app --host 127.0.0.1 --port 8000
 
 if errorlevel 1 (
@@ -178,6 +182,13 @@ exit /b 0
 echo.
 echo ❌ Cài đặt dependency thất bại.
 echo Kiểm tra Internet, quyền ghi và Python 3.11+. Chạy lại manage.bat install để xem log.
+pause
+exit /b 1
+
+:VENV_PYTHON_OLD
+echo.
+echo ❌ Môi trường .venv hiện có dùng Python cũ hơn 3.11.
+echo Hãy đổi tên hoặc xóa .venv rồi chạy lại launcher để tạo môi trường mới.
 pause
 exit /b 1
 
@@ -198,5 +209,11 @@ exit /b 1
 echo.
 echo ❌ Backend không sẵn sàng sau 30 giây.
 echo Có thể cổng 8000 đang bị chiếm hoặc dependency backend bị lỗi.
+pause
+exit /b 1
+
+:PORT_IN_USE
+echo.
+echo ❌ Cổng 8000 đã có dịch vụ khác đang chạy. Hãy dừng dịch vụ đó rồi mở lại.
 pause
 exit /b 1
