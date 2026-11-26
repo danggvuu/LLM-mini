@@ -62,6 +62,8 @@ class SearchEngine:
         Tìm kiếm các đoạn văn bản liên quan qua Hybrid Search và định dạng Context cho LLM.
         Nếu selected_documents được truyền vào, chỉ lấy các đoạn thuộc về những tài liệu đó.
         """
+        if selected_documents == []:
+            return "Chưa chọn nguồn tài liệu làm ngữ cảnh.", []
         # Nếu là câu hỏi tổng quan (Overview Query), mở rộng từ khóa tìm kiếm
         search_query = query
         if is_overview_query(query):
@@ -87,7 +89,7 @@ class SearchEngine:
                 results = []
 
         # Lọc theo danh sách tài liệu được chọn nếu người dùng chỉ định
-        if selected_documents and len(selected_documents) > 0:
+        if selected_documents is not None:
             results = [r for r in results if _document_matches(r.get("metadata", {}), selected_documents)]
 
         if not results:
@@ -156,6 +158,8 @@ class SearchEngine:
         selected_documents: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
         """Tìm kiếm các đoạn văn bản liên quan nhất qua Hybrid Search + Reranker."""
+        if selected_documents == []:
+            return []
         target_nb = notebook_id or getattr(self.vector_store, "notebook_id", "default")
         
         # 1. Tìm kiếm thô qua HybridSearcher
@@ -174,7 +178,7 @@ class SearchEngine:
             )
 
         # Lọc theo selected_documents nếu có
-        if selected_documents:
+        if selected_documents is not None:
             candidates = [
                 c for c in candidates
                 if _document_matches(c.get("metadata", {}), selected_documents)

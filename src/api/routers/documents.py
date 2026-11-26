@@ -22,7 +22,9 @@ from src.api.deps import (
     get_notebook_id,
     IngestTextRequest,
     CompareDocsRequest,
-    StudioFilterRequest
+    StudioFilterRequest,
+    select_notebook_documents,
+    queue_study_guide,
 )
 from src.utils.config import settings
 
@@ -94,6 +96,8 @@ async def _index_uploaded_file(notebook_id: str, display_filename: str, file_pat
         embedder = await run_in_threadpool(get_embedder)
         chunker = AdaptiveChunker(embedder=embedder)
         chunks = await run_in_threadpool(chunker.process_document, tree)
+        if not chunks:
+            raise HTTPException(status_code=400, detail="Không trích xuất được nội dung từ tài liệu. Vui lòng kiểm tra tệp rồi thử lại.")
         for chunk in chunks:
             chunk["metadata"]["notebook_id"] = notebook_id
             chunk["metadata"]["filename"] = display_filename
@@ -219,22 +223,7 @@ async def ingest_url(background_tasks: BackgroundTasks, notebook_id: str = Form(
     await run_in_threadpool(store.index_chunks, chunks)
     sm.add_document(notebook_id, filename)
     
-    document_text = "\n\n".join([chunk["content"] for chunk in chunks])
-    notebook = sm.get_notebook(notebook_id)
-
-    provider, model_name, api_key, base_url, is_private = resolve_llm_config(notebook)
-    llm = get_llm_engine()
-    guide_gen = GuideGenerator(llm, sm)
-    background_tasks.add_task(
-        guide_gen.generate, 
-        notebook_id=notebook_id, 
-        document_text=document_text, 
-        is_private=is_private,
-        provider=provider,
-        model_name=model_name,
-        api_key=api_key,
-        base_url=base_url
-    )
+    queue_study_guide(background_tasks, sm, notebook_id)
     
     return {"status": "success", "chunks_indexed": len(chunks)}
 
@@ -251,22 +240,7 @@ async def upload_file(
     display_filename, file_path = await _save_upload(file)
     chunks = await _index_uploaded_file(notebook_id, display_filename, file_path, sm)
     
-    document_text = "\n\n".join([chunk["content"] for chunk in chunks])
-    notebook = sm.get_notebook(notebook_id)
-
-    provider, model_name, api_key, base_url, is_private = resolve_llm_config(notebook)
-    llm = get_llm_engine()
-    guide_gen = GuideGenerator(llm, sm)
-    background_tasks.add_task(
-        guide_gen.generate, 
-        notebook_id=notebook_id, 
-        document_text=document_text, 
-        is_private=is_private,
-        provider=provider,
-        model_name=model_name,
-        api_key=api_key,
-        base_url=base_url
-    )
+    queue_study_guide(background_tasks, sm, notebook_id)
     
     return {"status": "success", "filename": display_filename, "chunks_indexed": len(chunks)}
 
@@ -301,20 +275,7 @@ async def ingest_raw_text(background_tasks: BackgroundTasks, req: IngestTextRequ
     await run_in_threadpool(store.index_chunks, chunks)
     sm.add_document(req.notebook_id, doc_title)
 
-    document_text = "\n\n".join([chunk["content"] for chunk in chunks])
-    provider, model_name, api_key, base_url, is_private = resolve_llm_config(notebook)
-    llm = get_llm_engine()
-    guide_gen = GuideGenerator(llm, sm)
-    background_tasks.add_task(
-        guide_gen.generate,
-        notebook_id=req.notebook_id,
-        document_text=document_text,
-        is_private=is_private,
-        provider=provider,
-        model_name=model_name,
-        api_key=api_key,
-        base_url=base_url
-    )
+    queue_study_guide(background_tasks, sm, req.notebook_id)
 
     return {"status": "success", "filename": doc_title, "chunks_indexed": len(chunks)}
 

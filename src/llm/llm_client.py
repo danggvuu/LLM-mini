@@ -13,6 +13,14 @@ _LOCAL_SCAN_CACHE: Dict[str, Any] = {"key": None, "at": 0.0, "data": None}
 _LOCAL_SCAN_LOCK = threading.Lock()
 _LOCAL_SCAN_TTL_SECONDS = 5.0
 
+
+def validate_generated_text(text: str) -> str:
+    text = text.strip()
+    if not text or text.startswith(("\u26a0", "Lỗi hệ thống:")):
+        raise RuntimeError(text or "Dịch vụ AI không trả về nội dung. Vui lòng thử lại hoặc kiểm tra cấu hình mô hình.")
+    return text
+
+
 class LLMEngine:
     """
     Universal Multi-Provider LLM Engine.

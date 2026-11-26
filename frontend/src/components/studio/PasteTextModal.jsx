@@ -1,5 +1,7 @@
-import React from 'react';
+import { useRef, useState } from 'react';
 import { FileText, X } from 'lucide-react';
+import useDialog from '../../hooks/useDialog';
+import { getErrorMessage } from '../../lib/api';
 
 export default function PasteTextModal({
   isOpen,
@@ -10,41 +12,65 @@ export default function PasteTextModal({
   setPasteContent,
   onSubmit
 }) {
+  const dialogRef = useRef(null);
+  const submittingRef = useRef(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+  useDialog(dialogRef, onClose, isOpen);
+  const handleSubmit = async () => {
+    if (submittingRef.current || !pasteContent?.trim()) return;
+    submittingRef.current = true;
+    setSubmitting(true);
+    setError('');
+    try {
+      if (await onSubmit() === false) setError('Chưa nạp được văn bản. Nội dung vẫn được giữ để thử lại.');
+    } catch (err) {
+      setError(getErrorMessage(err, 'Không nạp được văn bản. Vui lòng thử lại.'));
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
+    }
+  };
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in font-sans">
-      <div className="bg-[#181a20] border border-white/15 w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden p-6 space-y-4">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Thêm nguồn từ văn bản" tabIndex={-1} className="bg-[#181a20] border border-white/15 w-full max-w-lg max-h-[calc(100dvh-2rem)] rounded-3xl shadow-2xl overflow-y-auto p-4 sm:p-6 space-y-4">
         <div className="flex justify-between items-center pb-3 border-b border-white/10">
           <h3 className="font-bold text-base text-white flex items-center gap-2">
             <FileText size={18} className="text-blue-400" /> Dán văn bản / Ghi chú trực tiếp
           </h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-white">
+          <button type="button" aria-label="Đóng cửa sổ thêm văn bản" onClick={onClose} className="text-gray-400 hover:text-white p-2 shrink-0">
             <X size={18} />
           </button>
         </div>
         <div className="space-y-3 text-xs">
           <div>
-            <label className="block font-semibold text-gray-300 mb-1">Tiêu đề nguồn (Tùy chọn):</label>
+            <label htmlFor="paste-source-title" className="block font-semibold text-gray-300 mb-1">Tiêu đề nguồn (Tùy chọn):</label>
             <input
               type="text"
-              value={pasteTitle}
+              id="paste-source-title"
+              disabled={submitting}
+              value={pasteTitle ?? ''}
               onChange={e => setPasteTitle(e.target.value)}
               placeholder="VD: Ghi chú họp, Bài báo khoa học..."
               className="w-full bg-black/40 border border-white/15 rounded-xl px-3.5 py-2 text-white outline-none focus:border-blue-500"
             />
           </div>
           <div>
-            <label className="block font-semibold text-gray-300 mb-1">Nội dung văn bản:</label>
+            <label htmlFor="paste-source-content" className="block font-semibold text-gray-300 mb-1">Nội dung văn bản:</label>
             <textarea
               rows={8}
-              value={pasteContent}
+              id="paste-source-content"
+              disabled={submitting}
+              value={pasteContent ?? ''}
               onChange={e => setPasteContent(e.target.value)}
               placeholder="Dán nội dung văn bản hoặc Markdown vào đây..."
               className="w-full bg-black/40 border border-white/15 rounded-xl p-3.5 text-white outline-none focus:border-blue-500 resize-none"
             />
           </div>
         </div>
+        {error && <p role="alert" className="text-xs text-red-400">{error}</p>}
         <div className="flex justify-end gap-2 pt-2 border-t border-white/10">
           <button
             onClick={onClose}
@@ -53,11 +79,11 @@ export default function PasteTextModal({
             Hủy
           </button>
           <button
-            onClick={onSubmit}
-            disabled={!pasteContent.trim()}
+            onClick={handleSubmit}
+            disabled={submitting || !pasteContent?.trim()}
             className="bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white px-5 py-2 rounded-xl text-xs font-semibold shadow-lg transition"
           >
-            Nạp vào Sổ tay
+            {submitting ? 'Đang nạp...' : 'Nạp vào Sổ tay'}
           </button>
         </div>
       </div>

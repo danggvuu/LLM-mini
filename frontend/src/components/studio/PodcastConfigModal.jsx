@@ -1,5 +1,7 @@
-import React from 'react';
+import { useRef, useState } from 'react';
 import { Headphones, Check, X } from 'lucide-react';
+import useDialog from '../../hooks/useDialog';
+import { getErrorMessage } from '../../lib/api';
 
 export default function PodcastConfigModal({
   isOpen,
@@ -9,25 +11,46 @@ export default function PodcastConfigModal({
   onGenerate,
   podcastGenerating
 }) {
+  const dialogRef = useRef(null);
+  const submittingRef = useRef(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+  useDialog(dialogRef, onClose, isOpen);
+  const busy = podcastGenerating || submitting;
+  const handleGenerate = async () => {
+    if (busy || submittingRef.current) return;
+    submittingRef.current = true;
+    setSubmitting(true);
+    setError('');
+    try {
+      if (await onGenerate() === false) setError('Chưa tạo được podcast. Vui lòng thử lại.');
+    } catch (err) {
+      setError(getErrorMessage(err, 'Không tạo được podcast.'));
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
+    }
+  };
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in font-sans">
-      <div className="bg-[#181a20] border border-purple-500/40 w-full max-w-md rounded-3xl shadow-2xl overflow-hidden p-6 space-y-5">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Tùy chỉnh podcast" tabIndex={-1} className="bg-[#181a20] border border-purple-500/40 w-full max-w-md max-h-[calc(100dvh-2rem)] rounded-3xl shadow-2xl overflow-y-auto p-4 sm:p-6 space-y-5">
         <div className="flex justify-between items-center pb-3 border-b border-white/10">
           <div className="flex items-center gap-2.5 text-purple-400 font-bold text-base">
             <Headphones size={20} />
             <span>Tùy Chỉnh Podcast Âm Thanh AI</span>
           </div>
           <button 
-            onClick={onClose}
+             onClick={onClose}
+             aria-label="Đóng tùy chỉnh podcast"
             className="text-gray-400 hover:text-white p-1 rounded-lg hover:bg-white/5 transition"
           >
             <X size={18} />
           </button>
         </div>
 
-        <div className="space-y-4 text-xs">
+        <fieldset disabled={busy} className="space-y-4 text-xs">
           {/* Style selection */}
           <div>
             <label className="font-semibold text-gray-300 block mb-1.5">
@@ -41,7 +64,8 @@ export default function PodcastConfigModal({
               ].map(s => (
                 <button
                   key={s.key}
-                  type="button"
+                   type="button"
+                   aria-pressed={podcastConfig.style === s.key}
                   onClick={() => setPodcastConfig({...podcastConfig, style: s.key})}
                   className={`w-full p-2.5 rounded-xl border text-left transition flex items-center justify-between ${
                     podcastConfig.style === s.key 
@@ -66,14 +90,15 @@ export default function PodcastConfigModal({
             </label>
             <div className="grid grid-cols-2 gap-2">
               {[
-                { key: 'duo', label: '👫 Song ca Nam & Nữ', desc: 'Minh & My đối thoại tự nhiên, có khoảng ngắt nghỉ' },
-                { key: 'female', label: '👩 Giọng Nữ (Hoài My)', desc: 'Ngọt ngào, truyền cảm, chuẩn sách nói' },
-                { key: 'male', label: '👨 Giọng Nam (Nam Minh)', desc: 'Trầm ấm, đĩnh đạc, bản tin phân tích' },
-                { key: 'gtts', label: '🤖 Chị Google (gTTS)', desc: 'Giọng đọc quen thuộc, hài hước' }
+                { key: 'duo', label: 'Nam và nữ', desc: 'Minh và My đối thoại, có khoảng ngắt nghỉ' },
+                { key: 'female', label: 'Giọng nữ (Hoài My)', desc: 'Giọng đọc nhẹ nhàng, truyền cảm' },
+                { key: 'male', label: 'Giọng nam (Nam Minh)', desc: 'Giọng đọc trầm, rõ ràng' },
+                { key: 'gtts', label: 'Giọng Google (gTTS)', desc: 'Giọng đọc tiếng Việt của Google' }
               ].map(v => (
                 <button
                   key={v.key}
-                  type="button"
+                   type="button"
+                   aria-pressed={(podcastConfig.voice_mode || 'duo') === v.key}
                   onClick={() => setPodcastConfig({...podcastConfig, voice_mode: v.key})}
                   className={`p-2.5 rounded-xl border text-left transition flex flex-col justify-between ${
                     (podcastConfig.voice_mode || 'duo') === v.key 
@@ -96,15 +121,17 @@ export default function PodcastConfigModal({
             <label className="font-semibold text-gray-300 block mb-1.5">
               Chủ đề trọng tâm (Tùy chọn):
             </label>
-            <input
-              type="text"
-              value={podcastConfig.focus_topic}
+             <input
+               aria-label="Chủ đề trọng tâm của podcast"
+               type="text"
+               value={podcastConfig.focus_topic ?? ''}
               onChange={e => setPodcastConfig({...podcastConfig, focus_topic: e.target.value})}
               placeholder="Ví dụ: Tóm tắt 3 điểm cốt lõi để ôn tập, giải thích thuật ngữ..."
               className="w-full bg-black/40 text-xs px-3.5 py-2.5 rounded-xl text-white border border-white/15 focus:border-purple-500 outline-none transition"
             />
           </div>
-        </div>
+        </fieldset>
+        {error && <p role="alert" className="text-xs text-red-400">{error}</p>}
 
         <div className="pt-2 flex justify-end gap-2 border-t border-white/10">
           <button
@@ -116,12 +143,12 @@ export default function PodcastConfigModal({
           </button>
           <button
             type="button"
-            onClick={onGenerate}
-            disabled={podcastGenerating}
+            onClick={handleGenerate}
+            disabled={busy}
             className="bg-gradient-to-r from-purple-600 to-blue-600 hover:opacity-90 text-white px-5 py-2 rounded-xl text-xs font-semibold shadow-lg transition flex items-center gap-1.5 disabled:opacity-50"
           >
             <Headphones size={14} />
-            {podcastGenerating ? "Đang tạo..." : "Bắt đầu tạo Podcast"}
+            {busy ? "Đang tạo..." : "Bắt đầu tạo Podcast"}
           </button>
         </div>
       </div>

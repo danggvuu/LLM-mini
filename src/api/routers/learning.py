@@ -2,9 +2,9 @@ import time
 import logging
 import re
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Literal
 from fastapi import APIRouter, BackgroundTasks, Form, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from src.learning.guide_generator import GuideGenerator
@@ -19,7 +19,12 @@ from src.api.deps import (
     resolve_llm_config,
     _load_notes,
     _save_notes,
-    SrsReviewRequest
+    SrsReviewRequest,
+    MindmapRequest,
+    TimelineRequest,
+    select_notebook_documents,
+    collect_document_context,
+    queue_study_guide,
 )
 
 logger = logging.getLogger(__name__)
@@ -35,10 +40,29 @@ class NoteItemRequest(BaseModel):
     title: Optional[str] = "Ghi chú"
     source: Optional[str] = "manual"
 
+
+class StudyGuideRequest(BaseModel):
+    quiz_count: int = Field(default=5, ge=1, le=30)
+    flashcards_count: int = Field(default=5, ge=1, le=50)
+    difficulty: Literal["easy", "medium", "hard"] = "medium"
+    focus_topic: Optional[str] = None
+    selected_documents: Optional[List[str]] = None
+
+
+@router.get("/api/notebooks/{notebook_id}/study-guide/status")
+def get_study_guide_status(notebook_id: str):
+    _validate_notebook_id(notebook_id)
+    sm = get_session_manager()
+    if not sm.get_notebook(notebook_id):
+        raise HTTPException(status_code=404, detail="Notebook not found")
+    return sm.get_study_guide_status(notebook_id)
+
 @router.get("/api/notebooks/{notebook_id}/study-guide")
 def get_study_guide(notebook_id: str):
     _validate_notebook_id(notebook_id)
     sm = get_session_manager()
+    if not sm.get_notebook(notebook_id):
+        raise HTTPException(status_code=404, detail="Notebook not found")
     guide = sm.get_study_guide(notebook_id)
     if not guide:
         raise HTTPException(status_code=404, detail="Study guide not found")
@@ -48,7 +72,7 @@ def get_study_guide(notebook_id: str):
 async def regenerate_study_guide(
     notebook_id: str, 
     background_tasks: BackgroundTasks,
-    request: Request
+    payload: StudyGuideRequest = StudyGuideRequest()
 ):
     """Tạo lại Study Guide theo yêu cầu có tùy biến số câu hỏi, flashcards, mức độ khó và chủ đề."""
     sm = get_session_manager()
@@ -57,62 +81,14 @@ async def regenerate_study_guide(
     if not notebook:
         raise HTTPException(status_code=404, detail="Notebook not found")
 
-    docs = sm.get_documents(notebook_id)
-    if not docs:
-        raise HTTPException(status_code=400, detail="Không có tài liệu nào trong sổ tay.")
-
-    quiz_count = 5
-    flashcards_count = 5
-    difficulty = "medium"
-    focus_topic = None
-    selected_documents = None
-
-    try:
-        body = await request.json()
-        if body and isinstance(body, dict):
-            quiz_count = int(body.get("quiz_count") or 5)
-            flashcards_count = int(body.get("flashcards_count") or 5)
-            difficulty = body.get("difficulty") or "medium"
-            raw_focus = body.get("focus_topic")
-            if raw_focus and isinstance(raw_focus, str):
-                focus_topic = raw_focus.strip()
-            selected_documents = body.get("selected_documents")
-    except Exception:
-        pass
-
-    store = await run_in_threadpool(get_vector_store)
-    if selected_documents and len(selected_documents) > 0:
-        chunks = []
-        for fn in selected_documents:
-            c = await run_in_threadpool(store.get_chunks_by_document, notebook_id, fn, limit=15)
-            chunks.extend(c)
-        document_text = "\n\n".join(chunks) if chunks else "Tài liệu học tập"
-    else:
-        search_query = focus_topic if focus_topic else "tổng quan tài liệu kiến thức cốt lõi"
-        chunk_limit = max(25, (quiz_count + flashcards_count) * 2)
-        results = await run_in_threadpool(store.search, query=search_query, limit=chunk_limit, notebook_id=notebook_id)
-        document_text = "\n\n".join([r["content"] for r in results]) if results else "Tài liệu học tập"
-
-    provider, model_name, api_key, base_url, is_private = resolve_llm_config(notebook)
-    llm = get_llm_engine()
-    guide_gen = GuideGenerator(llm, sm)
-    background_tasks.add_task(
-        guide_gen.generate,
-        notebook_id=notebook_id,
-        document_text=document_text,
-        is_private=is_private,
-        provider=provider,
-        model_name=model_name,
-        api_key=api_key,
-        base_url=base_url,
-        quiz_count=quiz_count,
-        flashcards_count=flashcards_count,
-        difficulty=difficulty,
-        focus_topic=focus_topic
-    )
+    select_notebook_documents(sm, notebook_id, payload.selected_documents)
+    if sm.get_study_guide_status(notebook_id)["status"] == "generating":
+        raise HTTPException(status_code=409, detail="Cẩm nang đang được tạo. Vui lòng chờ hoàn tất trước khi tạo lại.")
+    generation_id = queue_study_guide(background_tasks, sm, notebook_id, **payload.model_dump())
     return {
-        "status": "processing", 
-        "message": f"Đang tạo cẩm nang học tập ({quiz_count} câu hỏi, {flashcards_count} thẻ, mức {difficulty}) trong nền..."
+        "status": "processing",
+        "generation_id": generation_id,
+        "message": f"Đang tạo cẩm nang học tập ({payload.quiz_count} câu hỏi, {payload.flashcards_count} thẻ, mức {payload.difficulty}) trong nền..."
     }
 
 @router.post("/api/evaluate")
@@ -162,6 +138,8 @@ def get_srs_status(notebook_id: str):
     """Lấy dữ liệu tiến độ ghi nhớ lặp lại ngắt quãng của flashcards."""
     _validate_notebook_id(notebook_id)
     sm = get_session_manager()
+    if not sm.get_notebook(notebook_id):
+        raise HTTPException(status_code=404, detail="Notebook not found")
     return sm.get_srs_progress(notebook_id)
 
 @router.post("/api/notebooks/{notebook_id}/srs/review")
@@ -171,6 +149,12 @@ def review_srs_card(notebook_id: str, payload: SrsReviewRequest):
     if payload.card_index < 0 or payload.rating not in {1, 2, 3, 4}:
         raise HTTPException(status_code=422, detail="card_index phải không âm và rating phải từ 1 đến 4.")
     sm = get_session_manager()
+    if not sm.get_notebook(notebook_id):
+        raise HTTPException(status_code=404, detail="Notebook not found")
+    guide = sm.get_study_guide(notebook_id) or {}
+    cards = guide.get("flashcards")
+    if not isinstance(cards, list) or payload.card_index >= len(cards):
+        raise HTTPException(status_code=404, detail="Thẻ nhớ không còn tồn tại. Vui lòng tải lại bộ thẻ.")
     res = sm.update_srs_progress(notebook_id, payload.card_index, payload.rating)
     return {"status": "success", "card": res}
 
@@ -183,7 +167,7 @@ def get_mindmap_endpoint(notebook_id: str):
     return {"mindmap": sg.get("mindmap") if sg else None}
 
 @router.post("/api/notebooks/{notebook_id}/mindmap/generate")
-async def generate_mindmap_endpoint(notebook_id: str, request: Request):
+async def generate_mindmap_endpoint(notebook_id: str, payload: MindmapRequest = MindmapRequest()):
     """Tạo mới sơ đồ tư duy từ tài liệu bằng LLM."""
     sm = get_session_manager()
     _validate_notebook_id(notebook_id)
@@ -191,34 +175,12 @@ async def generate_mindmap_endpoint(notebook_id: str, request: Request):
     if not notebook:
         raise HTTPException(status_code=404, detail="Notebook not found")
         
-    focus_topic = ""
-    selected_documents = None
-    try:
-        body = await request.json()
-        if body and isinstance(body, dict):
-            focus_topic = body.get("focus_topic", "")
-            selected_documents = body.get("selected_documents")
-    except Exception:
-        pass
+    docs = select_notebook_documents(sm, notebook_id, payload.selected_documents)
+    source_revision = sm.get_source_revision(notebook_id)
 
     try:
-        docs = sm.get_documents(notebook_id)
-        if selected_documents and len(selected_documents) > 0:
-            docs = [d for d in docs if d["filename"] in selected_documents]
-
         vs = await run_in_threadpool(get_vector_store)
-        all_text = ""
-        for d in docs:
-            chunks = await run_in_threadpool(vs.get_chunks_by_document, notebook_id, d["filename"])
-            all_text += f"\n--- {d['filename']} ---\n" + "\n".join(chunks[:12])
-            
-        if not all_text.strip():
-            sg = sm.get_study_guide(notebook_id)
-            if sg:
-                all_text = f"Tóm tắt: {sg.get('summary', '')}\nThuật ngữ: {sg.get('glossary', '')}"
-
-        if not all_text.strip():
-            all_text = "Tài liệu học tập tổng quan."
+        all_text = await run_in_threadpool(collect_document_context, vs, notebook_id, docs, limit=12)
 
         provider, model_name, api_key, base_url, is_private = resolve_llm_config(notebook)
         llm = get_llm_engine()
@@ -227,7 +189,8 @@ async def generate_mindmap_endpoint(notebook_id: str, request: Request):
             generator.generate,
             notebook_id=notebook_id,
             context_text=all_text,
-            focus_topic=focus_topic,
+            focus_topic=payload.focus_topic,
+            source_revision=source_revision,
             is_private=is_private,
             provider=provider,
             model_name=model_name,
@@ -248,7 +211,7 @@ def get_timeline_outline_endpoint(notebook_id: str):
     return {"timeline_outline": sg.get("timeline_outline") if sg else None}
 
 @router.post("/api/notebooks/{notebook_id}/timeline-outline/generate")
-async def generate_timeline_outline_endpoint(notebook_id: str, request: Request):
+async def generate_timeline_outline_endpoint(notebook_id: str, payload: TimelineRequest = TimelineRequest()):
     """Trích xuất niên biểu Timeline & Dàn ý phân cấp bằng LLM."""
     sm = get_session_manager()
     _validate_notebook_id(notebook_id)
@@ -256,34 +219,12 @@ async def generate_timeline_outline_endpoint(notebook_id: str, request: Request)
     if not notebook:
         raise HTTPException(status_code=404, detail="Notebook not found")
 
-    focus_topic = ""
-    selected_documents = None
-    try:
-        body = await request.json()
-        if body and isinstance(body, dict):
-            focus_topic = body.get("focus_topic", "")
-            selected_documents = body.get("selected_documents")
-    except Exception:
-        pass
+    docs = select_notebook_documents(sm, notebook_id, payload.selected_documents)
+    source_revision = sm.get_source_revision(notebook_id)
 
     try:
-        docs = sm.get_documents(notebook_id)
-        if selected_documents and len(selected_documents) > 0:
-            docs = [d for d in docs if d["filename"] in selected_documents]
-
         vs = await run_in_threadpool(get_vector_store)
-        all_text = ""
-        for d in docs:
-            chunks = await run_in_threadpool(vs.get_chunks_by_document, notebook_id, d["filename"])
-            all_text += f"\n--- {d['filename']} ---\n" + "\n".join(chunks[:12])
-            
-        if not all_text.strip():
-            sg = sm.get_study_guide(notebook_id)
-            if sg:
-                all_text = f"Tóm tắt: {sg.get('summary', '')}\nFAQ: {sg.get('faq', '')}"
-
-        if not all_text.strip():
-            all_text = "Tài liệu học tập tổng quan."
+        all_text = await run_in_threadpool(collect_document_context, vs, notebook_id, docs, limit=12)
 
         provider, model_name, api_key, base_url, is_private = resolve_llm_config(notebook)
         llm = get_llm_engine()
@@ -292,7 +233,8 @@ async def generate_timeline_outline_endpoint(notebook_id: str, request: Request)
             generator.generate,
             notebook_id=notebook_id,
             context_text=all_text,
-            focus_topic=focus_topic,
+            focus_topic=payload.focus_topic,
+            source_revision=source_revision,
             is_private=is_private,
             provider=provider,
             model_name=model_name,

@@ -1,7 +1,6 @@
 import json
 import logging
 import re
-import re
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
@@ -75,13 +74,16 @@ async def chat_endpoint(request: ChatRequest, raw_request: Request):
         try:
             yield f"data: {json.dumps({'type': 'status', 'message': 'Đang tìm kiếm thông tin bằng Hybrid Search...'})}\n\n"
             
-            engine = await run_in_threadpool(get_search_engine)
-            context_str, results = await run_in_threadpool(
-                engine.retrieve,
-                request.query,
-                notebook_id=request.notebook_id,
-                selected_documents=request.selected_documents,
-            )
+            if request.selected_documents == []:
+                context_str, results = "Chưa chọn nguồn tài liệu làm ngữ cảnh.", []
+            else:
+                engine = await run_in_threadpool(get_search_engine)
+                context_str, results = await run_in_threadpool(
+                    engine.retrieve,
+                    request.query,
+                    notebook_id=request.notebook_id,
+                    selected_documents=request.selected_documents,
+                )
             
             yield f"data: {json.dumps({'type': 'status', 'message': 'Đang đọc và phân tích ngữ cảnh...'})}\n\n"
             
@@ -101,7 +103,7 @@ async def chat_endpoint(request: ChatRequest, raw_request: Request):
             llm = get_llm_engine()
             doc_list = sm.get_documents(request.notebook_id)
             active_doc_names = [d["filename"] for d in doc_list]
-            if request.selected_documents and len(request.selected_documents) > 0:
+            if request.selected_documents is not None:
                 active_doc_names = [name for name in active_doc_names if name in request.selected_documents]
 
             rag_prompt = llm.build_rag_prompt(

@@ -2,12 +2,14 @@ import sqlite3
 import os
 import json
 import logging
+import uuid
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Optional, Any
 from src.utils.config import settings
 
 logger = logging.getLogger(__name__)
+_GENERATION_OWNER = uuid.uuid4().hex
 
 class SessionManager:
     """Quản lý CSDL SQLite cho Notebooks, tin nhắn, Cài đặt hệ thống và Study Guides."""
@@ -100,6 +102,16 @@ class SessionManager:
                     FOREIGN KEY (notebook_id) REFERENCES notebooks (id)
                 )
             ''')
+
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS study_guide_jobs (
+                    notebook_id TEXT PRIMARY KEY,
+                    generation_id TEXT,
+                    status TEXT NOT NULL,
+                    error TEXT,
+                    updated_at TEXT NOT NULL
+                )
+            ''')
             
             # Schema Migration tự động nếu các cột chưa tồn tại
             migrations = [
@@ -114,6 +126,7 @@ class SessionManager:
                 ("notebooks", "api_key", "TEXT DEFAULT ''"),
                 ("notebooks", "base_url", "TEXT DEFAULT ''"),
                 ("documents", "file_path", "TEXT"),
+                ("notebooks", "source_revision", "INTEGER NOT NULL DEFAULT 0"),
             ]
             
             for table, col, col_type in migrations:
@@ -288,6 +301,7 @@ class SessionManager:
             ]
             conn.execute("DELETE FROM flashcard_progress WHERE notebook_id = ?", (notebook_id,))
             conn.execute("DELETE FROM study_guides WHERE notebook_id = ?", (notebook_id,))
+            conn.execute("DELETE FROM study_guide_jobs WHERE notebook_id = ?", (notebook_id,))
             conn.execute("DELETE FROM messages WHERE notebook_id = ?", (notebook_id,))
             conn.execute("DELETE FROM documents WHERE notebook_id = ?", (notebook_id,))
             conn.execute("DELETE FROM notebooks WHERE id = ?", (notebook_id,))
@@ -295,6 +309,7 @@ class SessionManager:
 
         for file_path in file_paths:
             self._delete_managed_upload(file_path)
+        self._delete_generated_audio(notebook_id)
             
         # Dọn dẹp chỉ mục BM25
         try:
@@ -338,7 +353,73 @@ class SessionManager:
                 "INSERT INTO documents (notebook_id, filename, file_path) VALUES (?, ?, ?)",
                 (notebook_id, filename, file_path),
             )
+            self._invalidate_generated_artifacts(conn, notebook_id)
             conn.commit()
+        self._delete_generated_audio(notebook_id)
+
+    def get_source_revision(self, notebook_id: str) -> Optional[int]:
+        with self._get_conn() as conn:
+            row = conn.execute("SELECT source_revision FROM notebooks WHERE id = ?", (notebook_id,)).fetchone()
+            return row[0] if row else None
+
+    @staticmethod
+    def _delete_generated_audio(notebook_id: str) -> None:
+        if not notebook_id or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-" for c in notebook_id):
+            return
+        for suffix in (".mp3", ".wav"):
+            path = settings.project_root / "storage" / "podcasts" / f"{notebook_id}{suffix}"
+            try:
+                path.unlink(missing_ok=True)
+            except OSError as exc:
+                logger.warning("Không thể xóa podcast cũ %s: %s", path, exc)
+
+    @staticmethod
+    def _invalidate_generated_artifacts(conn, notebook_id: str) -> None:
+        conn.execute("UPDATE notebooks SET source_revision = source_revision + 1 WHERE id = ?", (notebook_id,))
+        conn.execute("DELETE FROM study_guides WHERE notebook_id = ?", (notebook_id,))
+        conn.execute("DELETE FROM flashcard_progress WHERE notebook_id = ?", (notebook_id,))
+        conn.execute(
+            "INSERT OR REPLACE INTO study_guide_jobs VALUES (?, ?, 'not_found', NULL, ?)",
+            (notebook_id, uuid.uuid4().hex, datetime.now().isoformat()),
+        )
+
+    def start_study_guide_generation(self, notebook_id: str) -> str:
+        generation_id = f"{_GENERATION_OWNER}:{uuid.uuid4().hex}"
+        with self._get_conn() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO study_guide_jobs VALUES (?, ?, 'generating', NULL, ?)",
+                (notebook_id, generation_id, datetime.now().isoformat()),
+            )
+        return generation_id
+
+    def fail_study_guide_generation(self, notebook_id: str, generation_id: str, error: str) -> None:
+        with self._get_conn() as conn:
+            conn.execute(
+                "UPDATE study_guide_jobs SET status = 'error', error = ?, updated_at = ? "
+                "WHERE notebook_id = ? AND generation_id = ? AND status = 'generating'",
+                (error, datetime.now().isoformat(), notebook_id, generation_id),
+            )
+
+    def get_study_guide_status(self, notebook_id: str) -> Dict[str, Any]:
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT generation_id, status, error, updated_at FROM study_guide_jobs WHERE notebook_id = ?",
+                (notebook_id,),
+            ).fetchone()
+            has_guide = bool(conn.execute(
+                "SELECT 1 FROM study_guides WHERE notebook_id = ? AND COALESCE(summary, '') != ''", (notebook_id,),
+            ).fetchone())
+            if row and row[1] == "generating" and not row[0].startswith(f"{_GENERATION_OWNER}:"):
+                error = "Tiến trình tạo cẩm nang đã bị gián đoạn. Vui lòng tạo lại."
+                self.fail_study_guide_generation(notebook_id, row[0], error)
+                row = (row[0], "error", error, row[3])
+        return {
+            "status": row[1] if row else ("completed" if has_guide else "not_found"),
+            "has_guide": has_guide,
+            "error": row[2] if row else None,
+            "generation_id": row[0] if row else None,
+            "updated_at": row[3] if row else None,
+        }
 
     @staticmethod
     def _delete_managed_upload(file_path: str) -> None:
@@ -369,11 +450,15 @@ class SessionManager:
                     (notebook_id, filename),
                 ).fetchall()
             ]
-            conn.execute("DELETE FROM documents WHERE notebook_id = ? AND filename = ?", (notebook_id, filename))
+            deleted = conn.execute("DELETE FROM documents WHERE notebook_id = ? AND filename = ?", (notebook_id, filename))
+            if deleted.rowcount:
+                self._invalidate_generated_artifacts(conn, notebook_id)
             conn.commit()
 
         for file_path in file_paths:
             self._delete_managed_upload(file_path)
+        if deleted.rowcount:
+            self._delete_generated_audio(notebook_id)
             
         # Cập nhật lại BM25 index
         try:
@@ -440,7 +525,8 @@ class SessionManager:
         quiz: Any = None, 
         flashcards: Any = None,
         mindmap: Any = None,
-        timeline_outline: Any = None
+        timeline_outline: Any = None,
+        generation_id: Optional[str] = None
     ):
         # Giữ lại mindmap và timeline_outline cũ nếu không được truyền mới
         existing = self.get_study_guide(notebook_id)
@@ -457,13 +543,29 @@ class SessionManager:
         timeline_str = json.dumps(timeline_outline, ensure_ascii=False) if isinstance(timeline_outline, (list, dict)) else timeline_outline
         
         with self._get_conn() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            if not conn.execute("SELECT 1 FROM notebooks WHERE id = ?", (notebook_id,)).fetchone():
+                return False
+            if generation_id and not conn.execute(
+                "SELECT 1 FROM study_guide_jobs WHERE notebook_id = ? AND generation_id = ? AND status = 'generating'",
+                (notebook_id, generation_id),
+            ).fetchone():
+                return False
+            old_cards = conn.execute("SELECT flashcards FROM study_guides WHERE notebook_id = ?", (notebook_id,)).fetchone()
+            if not old_cards or old_cards[0] != flashcards_str:
+                conn.execute("DELETE FROM flashcard_progress WHERE notebook_id = ?", (notebook_id,))
             conn.execute(
                 """INSERT OR REPLACE INTO study_guides 
                    (notebook_id, summary, faq, glossary, quiz, flashcards, mindmap, timeline_outline) 
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 (notebook_id, summary, faq, glossary, quiz_str, flashcards_str, mindmap_str, timeline_str)
             )
+            conn.execute(
+                "INSERT OR REPLACE INTO study_guide_jobs VALUES (?, ?, 'completed', NULL, ?)",
+                (notebook_id, generation_id, datetime.now().isoformat()),
+            )
             conn.commit()
+            return True
 
     def get_study_guide(self, notebook_id: str) -> Optional[Dict]:
         with self._get_conn() as conn:
@@ -510,18 +612,26 @@ class SessionManager:
                 }
             return None
 
-    def save_mindmap(self, notebook_id: str, mindmap_data: Any):
+    def save_mindmap(self, notebook_id: str, mindmap_data: Any, source_revision: Optional[int] = None):
         mindmap_str = json.dumps(mindmap_data, ensure_ascii=False) if isinstance(mindmap_data, (list, dict)) else str(mindmap_data)
         with self._get_conn() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            current = conn.execute("SELECT source_revision FROM notebooks WHERE id = ?", (notebook_id,)).fetchone()
+            if not current or (source_revision is not None and current[0] != source_revision):
+                raise ValueError("Nguồn tài liệu đã thay đổi. Vui lòng tạo lại sơ đồ tư duy.")
             conn.execute(
                 "INSERT INTO study_guides (notebook_id, mindmap) VALUES (?, ?) ON CONFLICT(notebook_id) DO UPDATE SET mindmap = ?",
                 (notebook_id, mindmap_str, mindmap_str)
             )
             conn.commit()
 
-    def save_timeline_outline(self, notebook_id: str, timeline_data: Any):
+    def save_timeline_outline(self, notebook_id: str, timeline_data: Any, source_revision: Optional[int] = None):
         timeline_str = json.dumps(timeline_data, ensure_ascii=False) if isinstance(timeline_data, (list, dict)) else str(timeline_data)
         with self._get_conn() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            current = conn.execute("SELECT source_revision FROM notebooks WHERE id = ?", (notebook_id,)).fetchone()
+            if not current or (source_revision is not None and current[0] != source_revision):
+                raise ValueError("Nguồn tài liệu đã thay đổi. Vui lòng tạo lại dòng thời gian.")
             conn.execute(
                 "INSERT INTO study_guides (notebook_id, timeline_outline) VALUES (?, ?) ON CONFLICT(notebook_id) DO UPDATE SET timeline_outline = ?",
                 (notebook_id, timeline_str, timeline_str)
@@ -637,9 +747,8 @@ class SessionManager:
         }
 
     def import_notebook_data(self, data: Dict[str, Any]) -> str:
-        import uuid
         nb_info = data.get("notebook", {})
-        new_id = str(int(datetime.now().timestamp() * 1000))
+        new_id = uuid.uuid4().hex
         title = nb_info.get("title", "Notebook đã nhập") + " (Bản sao)"
         
         self.create_notebook(

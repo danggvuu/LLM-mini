@@ -2,7 +2,7 @@ import os
 import json
 import logging
 from typing import Optional, List, Dict, Any
-from fastapi import Request
+from fastapi import Request, HTTPException
 from pydantic import BaseModel, Field
 
 from src.ingestion.embedding import LocalEmbedder
@@ -57,6 +57,55 @@ def get_llm_engine():
     if llm_engine is None:
         llm_engine = LLMEngine()
     return llm_engine
+
+
+def select_notebook_documents(sm, notebook_id: str, selected_documents=None) -> List[Dict[str, Any]]:
+    docs = sm.get_documents(notebook_id)
+    if selected_documents is not None:
+        if not isinstance(selected_documents, list) or any(not isinstance(name, str) for name in selected_documents):
+            raise HTTPException(status_code=422, detail="selected_documents phải là danh sách tên tài liệu.")
+        known_names = {doc["filename"] for doc in docs}
+        if any(name not in known_names for name in selected_documents):
+            raise HTTPException(status_code=400, detail="Nguồn đã chọn không còn tồn tại. Vui lòng tải lại danh sách nguồn.")
+        docs = [doc for doc in docs if doc["filename"] in selected_documents]
+    if not docs:
+        raise HTTPException(status_code=400, detail="Chọn ít nhất một nguồn có nội dung để sử dụng tính năng này.")
+    return docs
+
+
+def collect_document_context(store, notebook_id: str, docs: List[Dict[str, Any]], limit: int = 15) -> str:
+    blocks = []
+    for doc in docs:
+        chunks = store.get_chunks_by_document(notebook_id, doc["filename"], limit=limit)
+        text = "\n".join(chunk for chunk in chunks if isinstance(chunk, str) and chunk.strip())
+        if text.strip():
+            blocks.append(f"--- {doc['filename']} ---\n{text}")
+    if not blocks:
+        raise ValueError("Không tìm thấy nội dung trong nguồn đã chọn. Vui lòng nạp lại tài liệu.")
+    return "\n\n".join(blocks)
+
+
+def _generate_notebook_guide(sm, notebook_id: str, generation_id: str, selected_documents=None, **options):
+    try:
+        notebook = sm.get_notebook(notebook_id)
+        if not notebook:
+            return
+        docs = select_notebook_documents(sm, notebook_id, selected_documents)
+        context = collect_document_context(get_vector_store(), notebook_id, docs)
+        provider, model_name, api_key, base_url, is_private = resolve_llm_config(notebook)
+        GuideGenerator(get_llm_engine(), sm).generate(
+            notebook_id, context, generation_id=generation_id, provider=provider,
+            model_name=model_name, api_key=api_key, base_url=base_url, is_private=is_private, **options,
+        )
+    except Exception as exc:
+        logger.exception("Không thể tạo cẩm nang cho %s", notebook_id)
+        sm.fail_study_guide_generation(notebook_id, generation_id, getattr(exc, "detail", str(exc)))
+
+
+def queue_study_guide(background_tasks, sm, notebook_id: str, selected_documents=None, **options) -> str:
+    generation_id = sm.start_study_guide_generation(notebook_id)
+    background_tasks.add_task(_generate_notebook_guide, sm, notebook_id, generation_id, selected_documents, **options)
+    return generation_id
 
 # --- Pydantic Models ---
 class SettingsPayload(BaseModel):

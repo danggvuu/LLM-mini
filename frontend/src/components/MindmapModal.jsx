@@ -1,8 +1,10 @@
-import React, { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { 
   X, ZoomIn, ZoomOut, RotateCcw, Copy, Check, Sparkles, Network, 
-  RefreshCw, ChevronRight, Layers, FileCode, Eye, Info, CheckCircle2 
+  RefreshCw, ChevronRight, Layers, FileCode, Info, CheckCircle2
 } from 'lucide-react';
+import useDialog from '../hooks/useDialog';
+import { getErrorMessage } from '../lib/api';
 
 export default function MindmapModal({ isOpen, onClose, mindmapData, onRegenerate, loading, isDark = true }) {
   const [zoom, setZoom] = useState(1);
@@ -10,6 +12,19 @@ export default function MindmapModal({ isOpen, onClose, mindmapData, onRegenerat
   const [copiedMermaid, setCopiedMermaid] = useState(false);
   const [customTopic, setCustomTopic] = useState('');
   const [viewMode, setViewMode] = useState('tree'); // 'tree' | 'cards' | 'mermaid'
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+  const dialogRef = useRef(null);
+  const pendingRef = useRef(false);
+  const copiedTimerRef = useRef(null);
+  useDialog(dialogRef, () => selectedNode ? setSelectedNode(null) : onClose(), isOpen);
+  useEffect(() => {
+    setSelectedNode(null);
+    setCopiedMermaid(false);
+    setError('');
+    return () => clearTimeout(copiedTimerRef.current);
+  }, [isOpen, mindmapData]);
+  const busy = loading || submitting;
 
   if (!isOpen) return null;
 
@@ -21,27 +36,52 @@ export default function MindmapModal({ isOpen, onClose, mindmapData, onRegenerat
   const generateMermaid = (node) => {
     if (!node) return '';
     let res = 'graph TD\n';
-    const sanitize = (str) => (str || '').replace(/["()[\]{}]/g, '');
+    let index = 0;
+    const label = (value) => String(value ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\\/g, '&#92;').replace(/[\r\n]+/g, ' ');
     const traverse = (parent) => {
-      if (!parent.children) return;
-      parent.children.forEach(child => {
-        res += `  ${sanitize(parent.id)}["${sanitize(parent.name)}"] --> ${sanitize(child.id)}["${sanitize(child.name)}"]\n`;
-        traverse(child);
+      const id = `n${index++}`;
+      res += `  ${id}["${label(parent.name)}"]\n`;
+      if (Array.isArray(parent.children)) parent.children.filter(Boolean).forEach(child => {
+        const childId = traverse(child);
+        res += `  ${id} --> ${childId}\n`;
       });
+      return id;
     };
     traverse(node);
     return res;
   };
 
-  const handleCopyMermaid = () => {
+  const handleCopyMermaid = async () => {
     if (!mindmapData) return;
     const mermaid = generateMermaid(mindmapData);
-    navigator.clipboard.writeText(mermaid);
-    setCopiedMermaid(true);
-    setTimeout(() => setCopiedMermaid(false), 2000);
+    setCopiedMermaid(false);
+    setError('');
+    try {
+      await navigator.clipboard.writeText(mermaid);
+      setCopiedMermaid(true);
+      clearTimeout(copiedTimerRef.current);
+      copiedTimerRef.current = setTimeout(() => setCopiedMermaid(false), 2000);
+    } catch {
+      setError('Không sao chép được. Chọn chế độ Mermaid để chép mã trực tiếp.');
+    }
   };
 
-  const branches = mindmapData?.children || [];
+  const regenerate = async () => {
+    if (busy || pendingRef.current) return;
+    pendingRef.current = true;
+    setSubmitting(true);
+    setError('');
+    try {
+      if (await onRegenerate(customTopic.trim()) === false) setError('Chưa tạo được sơ đồ. Vui lòng thử lại.');
+    } catch (err) {
+      setError(getErrorMessage(err, 'Không tạo được sơ đồ tư duy.'));
+    } finally {
+      pendingRef.current = false;
+      setSubmitting(false);
+    }
+  };
+
+  const branches = Array.isArray(mindmapData?.children) ? mindmapData.children.filter(Boolean) : [];
 
   const branchColors = [
     {
@@ -96,11 +136,11 @@ export default function MindmapModal({ isOpen, onClose, mindmapData, onRegenerat
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-3 sm:p-6 animate-fade-in font-sans">
-      <div className={`w-full max-w-6xl h-[92vh] flex flex-col rounded-3xl shadow-2xl border overflow-hidden transition-colors ${
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Sơ đồ tư duy" tabIndex={-1} className={`w-full max-w-6xl h-[92dvh] max-h-[calc(100dvh-1.5rem)] flex flex-col rounded-3xl shadow-2xl border overflow-hidden transition-colors ${
         isDark ? 'bg-[#121316] border-white/15 text-white' : 'bg-white border-gray-200 text-gray-900'
       }`}>
         {/* Header */}
-        <div className={`p-4 border-b flex items-center justify-between gap-3 shrink-0 ${
+        <div className={`p-4 border-b flex flex-wrap items-center justify-between gap-3 shrink-0 ${
           isDark ? 'bg-white/[0.02] border-white/10' : 'bg-gray-50 border-gray-200'
         }`}>
           <div className="flex items-center gap-3 min-w-0">
@@ -126,7 +166,8 @@ export default function MindmapModal({ isOpen, onClose, mindmapData, onRegenerat
               isDark ? 'bg-black/40 border-white/10' : 'bg-gray-100 border-gray-200'
             }`}>
               <button
-                onClick={() => setViewMode('tree')}
+                 onClick={() => setViewMode('tree')}
+                 aria-pressed={viewMode === 'tree'}
                 className={`px-2.5 py-1 rounded-lg flex items-center gap-1.5 transition ${
                   viewMode === 'tree'
                     ? 'bg-purple-600 text-white shadow-sm font-semibold'
@@ -138,7 +179,8 @@ export default function MindmapModal({ isOpen, onClose, mindmapData, onRegenerat
                 <span className="hidden md:inline">Cây sơ đồ</span>
               </button>
               <button
-                onClick={() => setViewMode('cards')}
+                 onClick={() => setViewMode('cards')}
+                 aria-pressed={viewMode === 'cards'}
                 className={`px-2.5 py-1 rounded-lg flex items-center gap-1.5 transition ${
                   viewMode === 'cards'
                     ? 'bg-purple-600 text-white shadow-sm font-semibold'
@@ -150,7 +192,8 @@ export default function MindmapModal({ isOpen, onClose, mindmapData, onRegenerat
                 <span className="hidden md:inline">Lưới thẻ</span>
               </button>
               <button
-                onClick={() => setViewMode('mermaid')}
+                 onClick={() => setViewMode('mermaid')}
+                 aria-pressed={viewMode === 'mermaid'}
                 className={`px-2.5 py-1 rounded-lg flex items-center gap-1.5 transition ${
                   viewMode === 'mermaid'
                     ? 'bg-purple-600 text-white shadow-sm font-semibold'
@@ -198,6 +241,7 @@ export default function MindmapModal({ isOpen, onClose, mindmapData, onRegenerat
             {/* Copy Mermaid */}
             <button
               onClick={handleCopyMermaid}
+              disabled={!mindmapData || busy}
               className={`px-3 py-1.5 rounded-xl border text-xs font-semibold flex items-center gap-1.5 transition ${
                 isDark ? 'border-white/15 bg-white/5 hover:bg-white/10 text-gray-200' : 'border-gray-200 bg-gray-100 hover:bg-gray-200 text-gray-700'
               }`}
@@ -209,6 +253,7 @@ export default function MindmapModal({ isOpen, onClose, mindmapData, onRegenerat
 
             <button
               onClick={onClose}
+              aria-label="Đóng sơ đồ tư duy"
               className={`p-2 rounded-xl transition ${isDark ? 'hover:bg-white/10 text-gray-400 hover:text-white' : 'hover:bg-gray-100 text-gray-500 hover:text-black'}`}
             >
               <X size={18} />
@@ -217,13 +262,15 @@ export default function MindmapModal({ isOpen, onClose, mindmapData, onRegenerat
         </div>
 
         {/* Action Bar for Regenerating */}
-        <div className={`px-5 py-2.5 border-b flex items-center justify-between gap-3 text-xs shrink-0 ${
+        <div className={`px-4 py-2.5 border-b flex flex-wrap items-center justify-between gap-3 text-xs shrink-0 ${
           isDark ? 'bg-black/30 border-white/10' : 'bg-gray-50 border-gray-200'
         }`}>
           <div className="flex-1 flex items-center gap-2 max-w-xl">
             <Sparkles size={14} className="text-purple-400 shrink-0" />
             <input
               type="text"
+              aria-label="Chủ đề trọng tâm của sơ đồ"
+              disabled={busy}
               value={customTopic}
               onChange={e => setCustomTopic(e.target.value)}
               placeholder="Nhập chủ đề trọng tâm để tái tạo sơ đồ chuyên sâu (tùy chọn)..."
@@ -233,18 +280,19 @@ export default function MindmapModal({ isOpen, onClose, mindmapData, onRegenerat
             />
           </div>
           <button
-            onClick={() => onRegenerate(customTopic)}
-            disabled={loading}
+            onClick={regenerate}
+            disabled={busy}
             className="bg-gradient-to-r from-purple-600 to-blue-600 hover:opacity-90 disabled:opacity-50 text-white px-4 py-1.5 rounded-xl text-xs font-semibold shadow transition flex items-center gap-1.5 shrink-0 cursor-pointer"
           >
-            <RefreshCw size={13} className={loading ? "animate-spin" : ""} />
-            <span>{loading ? "Đang tạo sơ đồ..." : "Tái tạo Sơ đồ"}</span>
+            <RefreshCw size={13} className={busy ? "animate-spin" : ""} />
+            <span>{busy ? "Đang tạo sơ đồ..." : "Tái tạo Sơ đồ"}</span>
           </button>
         </div>
 
         {/* Canvas Area */}
-        <div className="flex-1 relative overflow-auto p-4 sm:p-8 flex items-start justify-center">
-          {loading ? (
+        {error && <p role="alert" className="px-4 pt-2 text-xs text-red-400 shrink-0">{error}</p>}
+        <div className="flex-1 min-h-0 relative overflow-auto p-4 sm:p-8 flex items-start justify-start">
+          {busy ? (
             <div className="flex flex-col items-center justify-center h-full gap-3 text-gray-400 my-auto">
               <RefreshCw size={32} className="animate-spin text-purple-400" />
               <p className="text-sm font-medium">AI đang phân tích tài liệu và dựng cây sơ đồ tri thức...</p>
@@ -254,7 +302,7 @@ export default function MindmapModal({ isOpen, onClose, mindmapData, onRegenerat
               <Network size={44} className="text-gray-500" />
               <p className="text-sm font-medium">Chưa có dữ liệu sơ đồ tư duy cho sổ tay này.</p>
               <button
-                onClick={() => onRegenerate()}
+                onClick={regenerate}
                 className="bg-purple-600 hover:bg-purple-700 text-white px-5 py-2 rounded-xl text-xs font-semibold shadow transition"
               >
                 Tạo sơ đồ tư duy ngay
@@ -280,11 +328,11 @@ export default function MindmapModal({ isOpen, onClose, mindmapData, onRegenerat
           ) : viewMode === 'tree' ? (
             /* Visual Tree Mind Map */
             <div 
-              style={{ transform: `scale(${zoom})`, transformOrigin: 'top center', transition: 'transform 0.15s ease-out' }}
+               style={{ zoom, transformOrigin: 'top left' }}
               className="w-full max-w-5xl flex flex-col items-center select-none pb-12"
             >
               {/* Central Root Node */}
-              <div 
+              <button type="button"
                 onClick={() => setSelectedNode(mindmapData)}
                 className="cursor-pointer group relative px-6 py-4 rounded-2xl bg-gradient-to-r from-purple-600 via-indigo-600 to-blue-600 text-white shadow-xl shadow-purple-500/25 max-w-lg text-center hover:scale-[1.02] transition transform border border-white/25 z-10"
               >
@@ -299,7 +347,7 @@ export default function MindmapModal({ isOpen, onClose, mindmapData, onRegenerat
                     {mindmapData.desc}
                   </p>
                 )}
-              </div>
+              </button>
 
               {/* Central Trunk Line */}
               <div className="w-0.5 h-7 bg-gradient-to-b from-indigo-500 to-purple-400"></div>
@@ -342,7 +390,7 @@ export default function MindmapModal({ isOpen, onClose, mindmapData, onRegenerat
                               {branch.name}
                             </h4>
                           </div>
-                          <button 
+                          <button type="button" onClick={(event) => { event.stopPropagation(); setSelectedNode(branch); }}
                             className="p-1 rounded-lg text-gray-400 group-hover:text-white group-hover:bg-white/10 transition shrink-0"
                             title="Xem chi tiết nhánh"
                           >
@@ -358,14 +406,14 @@ export default function MindmapModal({ isOpen, onClose, mindmapData, onRegenerat
                       </div>
 
                       {/* Sub-concepts List */}
-                      {branch.children && branch.children.length > 0 && (
+                      {Array.isArray(branch.children) && branch.children.length > 0 && (
                         <div className="pt-2.5 border-t border-white/10 space-y-1.5 mt-auto">
                           <div className="text-[10px] uppercase font-bold text-gray-400 tracking-wider flex items-center justify-between">
                             <span>Khái niệm chi tiết ({branch.children.length}):</span>
                           </div>
                           <div className="flex flex-col gap-1.5">
                             {branch.children.map((sub, sIdx) => (
-                              <div
+                              <button type="button"
                                 key={sub.id || sIdx}
                                 onClick={() => setSelectedNode(sub)}
                                 className="px-3 py-2 rounded-xl text-xs bg-black/40 hover:bg-black/70 border border-white/10 hover:border-white/20 text-gray-200 transition cursor-pointer flex items-start gap-2 shadow-sm"
@@ -377,7 +425,7 @@ export default function MindmapModal({ isOpen, onClose, mindmapData, onRegenerat
                                     <div className="text-[11px] text-gray-400 line-clamp-1 mt-0.5">{sub.desc}</div>
                                   )}
                                 </div>
-                              </div>
+                              </button>
                             ))}
                           </div>
                         </div>
@@ -390,11 +438,11 @@ export default function MindmapModal({ isOpen, onClose, mindmapData, onRegenerat
           ) : (
             /* Cards View (Dạng Lưới Thẻ) */
             <div 
-              style={{ transform: `scale(${zoom})`, transformOrigin: 'top center', transition: 'transform 0.15s ease-out' }}
+              style={{ zoom, transformOrigin: 'top left' }}
               className="w-full max-w-5xl flex flex-col gap-6 select-none pb-12"
             >
               {/* Summary Card */}
-              <div 
+              <button type="button"
                 onClick={() => setSelectedNode(mindmapData)}
                 className="p-5 rounded-2xl bg-gradient-to-r from-purple-900/40 via-indigo-900/30 to-blue-900/40 border border-purple-500/30 flex items-center justify-between gap-4 cursor-pointer hover:border-purple-500/60 transition"
               >
@@ -408,7 +456,7 @@ export default function MindmapModal({ isOpen, onClose, mindmapData, onRegenerat
                     {branches.length} Nhánh chính
                   </span>
                 </div>
-              </div>
+              </button>
 
               {/* Grid Cards */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -428,21 +476,21 @@ export default function MindmapModal({ isOpen, onClose, mindmapData, onRegenerat
                             {branch.children?.length || 0} mục
                           </span>
                         </div>
-                        <h4 
+                        <button type="button"
                           onClick={() => setSelectedNode(branch)}
                           className="text-sm font-bold text-white hover:text-purple-300 cursor-pointer transition"
                         >
                           {branch.name}
-                        </h4>
+                        </button>
                         {branch.desc && (
                           <p className="text-xs text-gray-300 mt-1.5 leading-relaxed">{branch.desc}</p>
                         )}
                       </div>
 
-                      {branch.children && branch.children.length > 0 && (
+                      {Array.isArray(branch.children) && branch.children.length > 0 && (
                         <div className="mt-4 pt-3 border-t border-white/10 space-y-1.5">
                           {branch.children.map((sub, sIdx) => (
-                            <div 
+                            <button type="button"
                               key={sub.id || sIdx}
                               onClick={() => setSelectedNode(sub)}
                               className="p-2 rounded-xl bg-black/30 hover:bg-black/50 border border-white/5 hover:border-white/15 transition cursor-pointer flex items-center justify-between gap-2 text-xs"
@@ -452,7 +500,7 @@ export default function MindmapModal({ isOpen, onClose, mindmapData, onRegenerat
                                 <span className="font-medium text-gray-200 truncate">{sub.name}</span>
                               </div>
                               <ChevronRight size={13} className="text-gray-500 shrink-0" />
-                            </div>
+                            </button>
                           ))}
                         </div>
                       )}
@@ -465,7 +513,7 @@ export default function MindmapModal({ isOpen, onClose, mindmapData, onRegenerat
 
           {/* Node Detail Popup Drawer */}
           {selectedNode && (
-            <div className={`fixed bottom-6 right-6 max-w-sm w-[90vw] p-5 rounded-2xl border shadow-2xl backdrop-blur-xl animate-fade-in z-30 ${
+            <aside aria-label="Chi tiết khái niệm" className={`fixed bottom-4 right-4 max-w-sm w-[calc(100vw-2rem)] max-h-[60dvh] overflow-y-auto p-5 rounded-2xl border shadow-2xl backdrop-blur-xl animate-fade-in z-30 ${
               isDark ? 'bg-[#181a20]/95 border-purple-500/40 text-white' : 'bg-white/95 border-purple-400 text-gray-900'
             }`}>
               <div className="flex items-start justify-between gap-2 mb-2">
@@ -476,17 +524,18 @@ export default function MindmapModal({ isOpen, onClose, mindmapData, onRegenerat
                   </span>
                 </div>
                 <button 
-                  onClick={() => setSelectedNode(null)}
+                   onClick={() => setSelectedNode(null)}
+                   aria-label="Đóng chi tiết khái niệm"
                   className="text-gray-400 hover:text-white p-1 rounded-lg hover:bg-white/10 transition"
                 >
                   <X size={15} />
                 </button>
               </div>
-              <h4 className="text-sm font-bold text-white mb-1.5">{selectedNode.name}</h4>
-              <p className="text-xs text-gray-300 leading-relaxed max-h-48 overflow-y-auto">
+              <h4 className={`text-sm font-bold mb-1.5 ${isDark ? 'text-white' : 'text-gray-900'}`}>{selectedNode.name}</h4>
+              <p className={`text-xs leading-relaxed max-h-48 overflow-y-auto ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
                 {selectedNode.desc || "Khái niệm này được tự động trích xuất từ tài liệu nghiên cứu của bạn."}
               </p>
-            </div>
+            </aside>
           )}
         </div>
       </div>

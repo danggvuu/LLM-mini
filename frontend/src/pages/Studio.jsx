@@ -1,16 +1,16 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useEffectEvent, useRef, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { spring, transition, blur } from '@animate-ui/react/utils/motion';
+import { spring } from '@animate-ui/react/utils/motion';
 import { 
   Send, Bot, User, FileText, ChevronRight, Paperclip, Loader, Headphones, 
-  RefreshCw, BookOpen, Brain, Layers, X, Check, XCircle, Trash2, 
+  RefreshCw, BookOpen, Brain, Layers, X, Check, Trash2,
   Link as LinkIcon, Plus, ArrowLeft, Settings, Cpu, Cloud, Award, Sparkles,
-  Copy, Download, Eye, SlidersHorizontal, FileDown, Sun, Moon, Mic, MicOff,
+  Copy, Eye, SlidersHorizontal, FileDown, Sun, Moon, Mic, MicOff,
   Search, HelpCircle, Network, Scale, Clock, Share2, Flame, ArrowUp, ArrowDown,
   Square, ShieldAlert, ClipboardCheck, Volume2, VolumeX, Bookmark, BookmarkPlus, Shield,
-  PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, ChevronDown, ChevronUp, LayoutGrid, Printer,
-  Activity
+  PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, ChevronDown, ChevronUp,
+  Activity, AlertCircle
 } from 'lucide-react';
 import SettingsModal from '../components/SettingsModal';
 import QuizletModal from '../components/QuizletModal';
@@ -31,17 +31,23 @@ import SourceInspectorModal from '../components/studio/SourceInspectorModal';
 import CritiqueModal from '../components/studio/CritiqueModal';
 import NotesModal from '../components/studio/NotesModal';
 import PasteTextModal from '../components/studio/PasteTextModal';
+import { requestJson, getErrorMessage, readSSE, escapeHtml } from '../lib/api';
+import { getCustomModels } from '../lib/customModels';
 
 function Studio() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [activeNotebook, setActiveNotebook] = useState(null);
+  const [notebookError, setNotebookError] = useState('');
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [studyGuide, setStudyGuide] = useState(null);
   const [regeneratingGuide, setRegeneratingGuide] = useState(false);
+  const [guideStatus, setGuideStatus] = useState('not_found');
+  const [guideError, setGuideError] = useState('');
+  const [guidePollVersion, setGuidePollVersion] = useState(0);
   const [documents, setDocuments] = useState([]);
   const [podcastGenerating, setPodcastGenerating] = useState(false);
   const [audioUrl, setAudioUrl] = useState(null);
@@ -83,8 +89,6 @@ function Studio() {
   // Quiz & Flashcard state
   const [showQuiz, setShowQuiz] = useState(false);
   const [showFlashcards, setShowFlashcards] = useState(false);
-  const [currentFlashcard, setCurrentFlashcard] = useState(0);
-  const [flashcardFlipped, setFlashcardFlipped] = useState(false);
   const [quizAnswers, setQuizAnswers] = useState({});
   const [quizSubmitted, setQuizSubmitted] = useState(false);
 
@@ -229,8 +233,13 @@ function Studio() {
   // Toast Notification State
   const [toastMsg, setToastMsg] = useState(null);
   const toastTimeoutRef = useRef(null);
+  const podcastTimerRef = useRef(null);
+  const mountedRef = useRef(true);
+  const activeChatRef = useRef(null);
+  const stickToBottomRef = useRef(true);
+  const messageListRef = useRef(null);
 
-  const showToast = (msg, duration = 3000) => {
+  const showToast = (msg, duration = 5000) => {
     if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
     setToastMsg(msg);
     toastTimeoutRef.current = setTimeout(() => {
@@ -253,21 +262,20 @@ function Studio() {
 
   const handlePinNote = async (content, title = "Ghi chú", source = "manual") => {
     const targetNbId = activeNotebook?.id || id;
-    if (!content || !targetNbId) return;
+    if (!content?.trim() || !targetNbId) return false;
     try {
-      const res = await fetch(`/api/notebooks/${targetNbId}/notes`, {
+      const data = await requestJson(`/api/notebooks/${targetNbId}/notes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content, title, source })
       });
-      if (res.ok) {
-        const data = await res.json();
-        setPinnedNotes(data.notes || []);
-        showToast("📌 Đã ghim vào Bảng Ghi chú!");
-      }
+      setPinnedNotes(data.notes || []);
+      showToast('Đã lưu ghi chú.');
+      return true;
     } catch (err) {
       console.error("Lỗi khi ghim ghi chú:", err);
-      showToast("❌ Không thể ghim ghi chú: " + err.message);
+      showToast('Không thể lưu ghi chú: ' + getErrorMessage(err));
+      return false;
     }
   };
 
@@ -275,16 +283,16 @@ function Studio() {
     const targetNbId = activeNotebook?.id || id;
     if (!targetNbId || !noteId) return;
     try {
-      const res = await fetch(`/api/notebooks/${targetNbId}/notes/${noteId}`, {
+      const data = await requestJson(`/api/notebooks/${targetNbId}/notes/${noteId}`, {
         method: 'DELETE'
       });
-      if (res.ok) {
-        const data = await res.json();
-        setPinnedNotes(data.notes || []);
-        showToast("🗑️ Đã xóa ghi chú");
-      }
+      setPinnedNotes(data.notes || []);
+      showToast('Đã xóa ghi chú.');
+      return true;
     } catch (err) {
       console.error("Lỗi xóa ghi chú:", err);
+      showToast('Không thể xóa ghi chú: ' + getErrorMessage(err));
+      return false;
     }
   };
 
@@ -345,8 +353,7 @@ function Studio() {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.detail || 'Không thể nạp ghi chú thành nguồn');
       }
-      await fetchDocuments();
-      setSelectedDocs(prev => new Set([...prev, docTitle]));
+      await refreshSources();
       showToast(`✅ Đã nạp "${docTitle}" thành tài liệu nguồn RAG!`);
     } catch (err) {
       console.error("Lỗi chuyển ghi chú thành nguồn:", err);
@@ -359,10 +366,34 @@ function Studio() {
   const fetchDocuments = async () => {
     const targetId = activeNotebook?.id || id;
     if (!targetId) return;
-    const response = await fetch(`/api/notebooks/${targetId}/documents`);
-    if (!response.ok) throw new Error('Không thể tải danh sách tài liệu');
-    const docs = await response.json();
+    const docs = await requestJson(`/api/notebooks/${targetId}/documents`);
     setDocuments(docs);
+    return docs;
+  };
+
+  const refreshSources = async () => {
+    const docs = await fetchDocuments();
+    if (!mountedRef.current) return;
+    setSelectedDocs(new Set(docs.map(doc => doc.filename)));
+    setStudyGuide(null);
+    setGuideError('');
+    setGuidePollVersion(version => version + 1);
+    setMindmapData(null);
+    setTimelineData(null);
+    setComparisonResult('');
+    setAudioUrl(null);
+    setQuizAnswers({});
+    setQuizSubmitted(false);
+    setShowQuiz(false);
+    setShowFlashcards(false);
+  };
+
+  const requireSources = () => {
+    if (documents.length && selectedDocs.size) return true;
+    showToast(documents.length ? 'Chọn ít nhất một tài liệu làm nguồn trước khi tiếp tục.' : 'Thêm tài liệu để bắt đầu hỏi đáp và tạo học liệu.');
+    setMobileActiveTab('docs');
+    setShowLeftSidebar(true);
+    return false;
   };
 
   // Chat Search match indices & jump handlers
@@ -443,12 +474,6 @@ function Studio() {
   // Critique & Action Plan State
   const [critiqueModal, setCritiqueModal] = useState({ isOpen: false, type: '', title: '', content: '', loading: false });
 
-  // Tools definition for Studio Analysis
-  const tools = [
-    { id: 'critique', name: 'Phản biện AI', desc: 'Tìm lỗ hổng & góc nhìn phản biện', icon: ShieldAlert, endpoint: '/api/studio/critique', color: 'text-rose-600', bg: 'bg-rose-50' },
-    { id: 'action_plan', name: 'Kế hoạch hành động', desc: 'Action Matrix & Checklist thực thi', icon: ClipboardCheck, endpoint: '/api/studio/action-plan', color: 'text-lime-600', bg: 'bg-lime-50' },
-  ];
-
   // Suggested questions extracted from studyGuide.faq
   const suggestedQuestions = useMemo(() => {
     if (!studyGuide?.faq) return [];
@@ -472,9 +497,8 @@ function Studio() {
 
   const messagesEndRef = useRef(null);
 
-  // Global Keyboard Shortcuts
-  useEffect(() => {
-    const handleKeyDown = (e) => {
+  const onGlobalKeyDown = useEffectEvent((e) => {
+      if (e.defaultPrevented) return;
       // Escape closes open modals or stops generation
       if (e.key === 'Escape') {
         if (loading) {
@@ -498,6 +522,8 @@ function Studio() {
         setShowModelManagerModal(false);
         setShowPasteTextModal(false);
         setShowNotesModal(false);
+        setShowSystemHealth(false);
+        setShowUrlInput(false);
         setInspectDoc(null);
         setCritiqueModal(prev => ({ ...prev, isOpen: false }));
         if ('speechSynthesis' in window) {
@@ -533,75 +559,67 @@ function Studio() {
         e.preventDefault();
         setShowFlashcards(prev => !prev);
       }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+  });
+  useEffect(() => {
+    const listener = event => onGlobalKeyDown(event);
+    window.addEventListener('keydown', listener);
+    return () => window.removeEventListener('keydown', listener);
   }, []);
 
   // Auto scroll
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (stickToBottomRef.current) messagesEndRef.current?.scrollIntoView({ behavior: loading ? 'instant' : 'smooth', block: 'end' });
   };
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [messages, loading]);
 
   // Fetch data khi mount
   useEffect(() => {
+    mountedRef.current = true;
     if (!id) return;
     fetchNotebookDetails();
     fetchLocalModels();
+    return () => {
+      mountedRef.current = false;
+      abortControllerRef.current?.abort();
+      clearTimeout(podcastTimerRef.current);
+      clearTimeout(toastTimeoutRef.current);
+      recognitionRef.current?.abort();
+      window.speechSynthesis?.cancel();
+    };
+    // The route is keyed by notebook ID; initialization runs once per notebook.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   const fetchNotebookDetails = async () => {
+    setNotebookError('');
     try {
-      const nbRes = await fetch(`/api/notebooks/${id}`);
-      if (!nbRes.ok) throw new Error("Không tìm thấy sổ tay");
-      const nb = await nbRes.json();
+      const nb = await requestJson(`/api/notebooks/${id}`);
+      if (!mountedRef.current) return;
       setActiveNotebook(nb);
-      
-      const msgRes = await fetch(`/api/notebooks/${nb.id}/messages`);
-      const msgs = await msgRes.json();
-      if (msgs && msgs.length > 0) {
-        setMessages(msgs);
-      } else {
-        const modelLabel = nb.model_name ? ` (${nb.provider?.toUpperCase()}: ${nb.model_name})` : '';
-        setMessages([{ 
-          role: 'assistant', 
-          content: `Xin chào! Bạn đang ở sổ tay "${nb.title}"${modelLabel}. Hãy tải tài liệu hoặc gửi link bài viết/YouTube để bắt đầu hỏi đáp nhé!`, 
-          citations: [] 
-        }]);
-      }
-
-      const guideRes = await fetch(`/api/notebooks/${nb.id}/study-guide`);
-      if (guideRes.ok) {
-        const guide = await guideRes.json();
-        setStudyGuide(guide);
-      }
-
-      const docRes = await fetch(`/api/notebooks/${nb.id}/documents`);
-      if (docRes.ok) {
-        const docs = await docRes.json();
-        setDocuments(docs);
-        setSelectedDocs(new Set(docs.map(d => d.filename)));
-      }
-      fetchPinnedNotes(nb.id);
+      const [msgs, docs] = await Promise.all([
+        requestJson(`/api/notebooks/${nb.id}/messages`),
+        requestJson(`/api/notebooks/${nb.id}/documents`),
+      ]);
+      if (!mountedRef.current) return;
+      setMessages(msgs || []);
+      setDocuments(docs || []);
+      setSelectedDocs(new Set((docs || []).map(doc => doc.filename)));
+      setGuidePollVersion(version => version + 1);
+      void fetchPinnedNotes(nb.id);
+      const status = await requestJson(`/api/podcast/status/${nb.id}`).catch(() => null);
+      if (mountedRef.current && status?.has_audio && status.status !== 'generating') setAudioUrl(`/api/podcast/audio/${nb.id}`);
     } catch (e) {
-      console.error(e);
+      if (mountedRef.current) setNotebookError(getErrorMessage(e, 'Không thể tải sổ tay. Kiểm tra kết nối rồi thử lại.'));
     }
   };
 
   const fetchLocalModels = async () => {
     try {
-      const res = await fetch('/api/llm/local-models');
-      const data = await res.json();
+      setCustomSavedModels(getCustomModels());
+      const data = await requestJson('/api/llm/local-models');
       setAvailableLocalModels(data?.ollama?.models || []);
-      
-      const storedCustom = localStorage.getItem('custom_ai_models');
-      if (storedCustom) {
-        setCustomSavedModels(JSON.parse(storedCustom));
-      }
     } catch (e) {
       console.error("Lỗi lấy local models:", e);
     }
@@ -619,17 +637,18 @@ function Studio() {
       if (newBaseUrl !== undefined) payload.base_url = newBaseUrl;
       if (newApiKey !== undefined) payload.api_key = newApiKey;
 
-      const res = await fetch(`/api/notebooks/${activeNotebook.id}/settings`, {
+      const updated = await requestJson(`/api/notebooks/${activeNotebook.id}/settings`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      if (res.ok) {
-        const updated = await res.json();
-        setActiveNotebook(updated.notebook);
-      }
+      setActiveNotebook(updated.notebook);
+      showToast(`Đã chuyển sang ${newModelName || newProvider}.`);
+      return true;
     } catch (e) {
       console.error("Lỗi đổi model:", e);
+      showToast('Không thể đổi mô hình: ' + getErrorMessage(e));
+      return false;
     }
   };
 
@@ -654,72 +673,95 @@ function Studio() {
     setSelectedDocs(new Set());
   };
 
-  // Polling Study Guide if it is null AND there are documents
+  const notebookId = activeNotebook?.id;
   useEffect(() => {
-    let intervalId;
-    if (activeNotebook && !studyGuide && documents.length > 0) {
-      intervalId = setInterval(async () => {
-        try {
-          const guideRes = await fetch(`/api/notebooks/${activeNotebook.id}/study-guide`);
-          if (guideRes.ok) {
-            const guide = await guideRes.json();
-            if (guide) {
-              setStudyGuide(guide);
-              clearInterval(intervalId);
-            }
+    if (!notebookId || !documents.length) return;
+    const controller = new AbortController();
+    let timer;
+    let attempts = 0;
+    const poll = async () => {
+      try {
+        const status = await requestJson(`/api/notebooks/${notebookId}/study-guide/status`, { signal: controller.signal });
+        if (controller.signal.aborted) return;
+        setGuideStatus(status.status);
+        setGuideError(status.error || '');
+        setRegeneratingGuide(status.status === 'generating');
+        if (status.status === 'completed' || (status.has_guide && status.status !== 'generating')) {
+          const guide = await requestJson(`/api/notebooks/${notebookId}/study-guide`, { signal: controller.signal });
+          if (!controller.signal.aborted) {
+            setStudyGuide(guide);
+            setQuizAnswers({});
+            setQuizSubmitted(false);
           }
-        } catch (e) {
-          console.error("Lỗi khi poll Study Guide:", e);
+        } else if (status.status === 'generating') {
+          if (++attempts < 200) timer = setTimeout(poll, 3000);
+          else {
+            setRegeneratingGuide(false);
+            setGuideError('Tác vụ đang mất nhiều thời gian. Bấm kiểm tra lại để cập nhật tiến trình.');
+          }
         }
-      }, 3000);
-    }
-    return () => {
-      if (intervalId) clearInterval(intervalId);
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        setRegeneratingGuide(false);
+        setGuideError(getErrorMessage(error));
+      }
     };
-  }, [activeNotebook, studyGuide, documents]);
+    void poll();
+    return () => { controller.abort(); clearTimeout(timer); };
+  }, [notebookId, documents.length, guidePollVersion]);
 
-  const handleRegenerateStudyGuide = async () => {
-    if (!activeNotebook || regeneratingGuide) return;
+  const generateStudyGuide = async (config = {}) => {
+    if (!activeNotebook || regeneratingGuide || !requireSources()) return false;
     setRegeneratingGuide(true);
+    setGuideError('');
     try {
-      await fetch(`/api/notebooks/${activeNotebook.id}/study-guide/regenerate`, { 
+      await requestJson(`/api/notebooks/${activeNotebook.id}/study-guide/regenerate`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          ...guideConfig,
-          selected_documents: selectedDocs.size > 0 ? Array.from(selectedDocs) : (documents || []).map(d => d.filename)
+          ...config,
+          selected_documents: Array.from(selectedDocs),
         })
       });
-      setStudyGuide(null); // Kích hoạt polling
+      setGuideStatus('generating');
+      setGuidePollVersion(version => version + 1);
+      setShowGuideConfigModal(false);
+      setShowQuiz(false);
+      setShowFlashcards(false);
+      showToast('Đang tạo cẩm nang. Bạn có thể tiếp tục hỏi đáp trong khi chờ.');
+      return true;
     } catch (e) {
-      alert("Lỗi khi yêu cầu tạo lại cẩm nang: " + e.message);
-    } finally {
-      setTimeout(() => setRegeneratingGuide(false), 2000);
+      setRegeneratingGuide(false);
+      setGuideError(getErrorMessage(e));
+      showToast('Không thể tạo cẩm nang: ' + getErrorMessage(e));
+      return false;
     }
   };
 
+  const handleRegenerateStudyGuide = () => generateStudyGuide(guideConfig);
+
   const handlePrintExam = () => {
     if (!studyGuide?.quiz || studyGuide.quiz.length === 0) {
-      alert("Chưa có dữ liệu bài thi trắc nghiệm để in.");
+      showToast('Chưa có câu hỏi để in. Hãy tạo cẩm nang trước.');
       return;
     }
     const printWindow = window.open('', '_blank');
     if (!printWindow) {
-      alert("Vui lòng cho phép trình duyệt mở tab mới để in đề thi.");
+      showToast('Cho phép trình duyệt mở cửa sổ mới rồi thử in lại.');
       return;
     }
     
-    const title = activeNotebook?.title || "BÀI KIỂM TRA ĐỊNH KỲ";
+    printWindow.opener = null;
+    const title = escapeHtml(activeNotebook?.title || 'BÀI KIỂM TRA ĐỊNH KỲ');
     const letters = ['A', 'B', 'C', 'D'];
     
     const questionsHtml = studyGuide.quiz.map((q, idx) => `
       <div style="margin-bottom: 18px; page-break-inside: avoid;">
         <p style="margin: 0 0 6px 0; font-weight: bold; font-size: 14px;">
-          Câu ${idx + 1}: ${q.question}
+          Câu ${idx + 1}: ${escapeHtml(q.question)}
         </p>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding-left: 15px; font-size: 13px;">
           ${q.options.map((opt, oIdx) => `
-            <div><strong>${letters[oIdx]}.</strong> ${opt}</div>
+            <div><strong>${letters[oIdx]}.</strong> ${escapeHtml(opt)}</div>
           `).join('')}
         </div>
       </div>
@@ -727,7 +769,7 @@ function Studio() {
 
     const answersHtml = studyGuide.quiz.map((q, idx) => `
       <div style="display: inline-block; width: 18%; margin: 4px 1%; border: 1px solid #ccc; padding: 4px 8px; text-align: center; font-size: 13px;">
-        <strong>Câu ${idx + 1}:</strong> <span style="color: #d9534f; font-weight: bold;">${letters[q.answer] || 'A'}</span>
+        <strong>Câu ${idx + 1}:</strong> <span style="color: #d9534f; font-weight: bold;">${letters[q.answer] || 'Chưa xác định'}</span>
       </div>
     `).join('');
 
@@ -804,36 +846,15 @@ function Studio() {
     printWindow.document.close();
   };
 
-  const handleGenerateCustomGuide = async () => {
-    if (!activeNotebook || regeneratingGuide) return;
-    setShowGuideConfigModal(false);
-    setShowQuiz(false);
-    setShowFlashcards(false);
-    setRegeneratingGuide(true);
-    try {
-      await fetch(`/api/notebooks/${activeNotebook.id}/study-guide/regenerate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...guideConfig,
-          selected_documents: selectedDocs.size > 0 ? Array.from(selectedDocs) : (documents || []).map(d => d.filename)
-        })
-      });
-      setStudyGuide(null); // Kích hoạt polling cập nhật giao diện
-    } catch (e) {
-      alert("Lỗi khi tạo lại cẩm nang: " + e.message);
-    } finally {
-      setTimeout(() => setRegeneratingGuide(false), 2000);
-    }
-  };
+  const handleGenerateCustomGuide = () => generateStudyGuide(guideConfig);
 
   const generatePodcast = async () => {
-    if (!activeNotebook) return;
+    if (!activeNotebook || podcastGenerating || !requireSources()) return false;
+    const targetId = activeNotebook.id;
+    clearTimeout(podcastTimerRef.current);
     setPodcastGenerating(true);
-    setShowPodcastModal(false);
-    setAudioUrl(null);
     try {
-      const res = await fetch('/api/podcast/generate', {
+      await requestJson('/api/podcast/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -841,71 +862,49 @@ function Studio() {
           focus_topic: podcastConfig.focus_topic,
           style: podcastConfig.style,
           voice_mode: podcastConfig.voice_mode || 'duo',
-          selected_documents: selectedDocs.size > 0 ? Array.from(selectedDocs) : (documents || []).map(d => d.filename)
+          selected_documents: Array.from(selectedDocs)
         })
       });
-      if (!res.ok) throw new Error("Lỗi khi gọi API tạo Podcast");
-      
-      // Polling kiểm tra tiến trình Podcast mỗi 2s (tối đa 60 lần ~ 120 giây)
+      setShowPodcastModal(false);
+      setAudioUrl(null);
       let attempts = 0;
-      const maxAttempts = 60;
-      const pollAudio = setInterval(async () => {
-        attempts += 1;
+      const pollAudio = async () => {
+        if (!mountedRef.current) return;
         try {
-          // 1. Kiểm tra status endpoint
-          const statusRes = await fetch(`/api/podcast/status/${activeNotebook.id}`);
-          if (statusRes.ok) {
-            const statusData = await statusRes.json();
-            if (statusData.has_audio || statusData.status === 'completed') {
-              clearInterval(pollAudio);
-              setAudioUrl(`/api/podcast/audio/${activeNotebook.id}?t=${Date.now()}`);
-              setPodcastGenerating(false);
-              showToast("🎉 Podcast đã được tạo thành công!");
-              return;
-            }
-            if (statusData.status === 'error') {
-              clearInterval(pollAudio);
-              setPodcastGenerating(false);
-              showToast(`❌ Lỗi tạo Podcast: ${statusData.error || 'Thất bại'}`);
-              return;
-            }
-          }
-
-          // 2. Dự phòng kiểm tra trực tiếp file audio
-          const checkRes = await fetch(`/api/podcast/audio/${activeNotebook.id}`);
-          if (checkRes.ok && checkRes.status === 200) {
-            clearInterval(pollAudio);
-            setAudioUrl(`/api/podcast/audio/${activeNotebook.id}?t=${Date.now()}`);
+          const status = await requestJson(`/api/podcast/status/${targetId}`);
+          if (!mountedRef.current) return;
+          if (status.has_audio && status.status === 'completed') {
+            setAudioUrl(`/api/podcast/audio/${targetId}?t=${Date.now()}`);
             setPodcastGenerating(false);
-            showToast("🎉 Podcast đã được tạo thành công!");
+            showToast('Podcast đã sẵn sàng.');
             return;
           }
-
-          if (attempts >= maxAttempts) {
-            clearInterval(pollAudio);
-            setPodcastGenerating(false);
-            showToast("⚠️ Quá thời gian tạo Podcast. Vui lòng kiểm tra lại kết nối mô hình AI và thử lại.", 5000);
-          }
-        } catch (pollErr) {
-          if (attempts >= maxAttempts) {
-            clearInterval(pollAudio);
-            setPodcastGenerating(false);
-            showToast("⚠️ Quá thời gian tạo Podcast. Vui lòng thử lại.", 5000);
-          }
+          if (status.status === 'error') throw new Error(status.error || 'Không thể tạo âm thanh. Kiểm tra cài đặt giọng đọc rồi thử lại.');
+          if (++attempts >= 200) throw new Error('Chưa nhận được podcast sau 10 phút. Kiểm tra hệ thống rồi thử lại.');
+          podcastTimerRef.current = setTimeout(pollAudio, 3000);
+        } catch (error) {
+          if (!mountedRef.current) return;
+          setPodcastGenerating(false);
+          showToast(getErrorMessage(error), 8000);
         }
-      }, 2000);
+      };
+      podcastTimerRef.current = setTimeout(pollAudio, 1000);
+      return true;
     } catch (e) {
       console.error(e);
-      showToast("❌ Lỗi tạo podcast: " + e.message);
+      showToast('Không thể tạo podcast: ' + getErrorMessage(e));
       setPodcastGenerating(false);
+      return false;
     }
   };
 
-  const handleCopyMessage = (content, idx) => {
+  const handleCopyMessage = async (content, idx) => {
     if (!content) return;
-    navigator.clipboard.writeText(content);
-    setCopiedMsgIdx(idx);
-    setTimeout(() => setCopiedMsgIdx(null), 2000);
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopiedMsgIdx(idx);
+      setTimeout(() => { if (mountedRef.current) setCopiedMsgIdx(null); }, 2000);
+    } catch { showToast('Không thể sao chép. Cho phép truy cập bộ nhớ tạm hoặc chọn văn bản để sao chép.'); }
   };
 
   const handleExportChat = () => {
@@ -945,9 +944,11 @@ function Studio() {
   const handleDeleteMessage = async (msgId, index) => {
     if (msgId) {
       try {
-        await fetch(`/api/notebooks/${activeNotebook.id}/messages/${msgId}`, { method: 'DELETE' });
+        await requestJson(`/api/notebooks/${activeNotebook.id}/messages/${msgId}`, { method: 'DELETE' });
       } catch (e) {
         console.error("Lỗi xóa tin nhắn:", e);
+        showToast('Không thể xóa tin nhắn: ' + getErrorMessage(e));
+        return;
       }
     }
     setMessages(prev => prev.filter((_, i) => i !== index));
@@ -956,10 +957,11 @@ function Studio() {
   const handleClearAllMessages = async () => {
     if (!window.confirm("Bạn có chắc chắn muốn xóa toàn bộ lịch sử trò chuyện của sổ tay này?")) return;
     try {
-      await fetch(`/api/notebooks/${activeNotebook.id}/messages`, { method: 'DELETE' });
+      await requestJson(`/api/notebooks/${activeNotebook.id}/messages`, { method: 'DELETE' });
       setMessages([]);
     } catch (e) {
       console.error("Lỗi xóa toàn bộ hội thoại:", e);
+      showToast('Không thể xóa hội thoại: ' + getErrorMessage(e));
     }
   };
 

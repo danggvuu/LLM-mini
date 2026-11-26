@@ -1,5 +1,7 @@
-import React, { useState } from 'react';
-import { X, Clock, ListTree, RefreshCw, Sparkles, MessageSquare, ChevronDown, ChevronRight, Tag } from 'lucide-react';
+import { useState, useRef } from 'react';
+import { X, Clock, ListTree, RefreshCw, MessageSquare, ChevronDown, ChevronRight, Tag } from 'lucide-react';
+import useDialog from '../hooks/useDialog';
+import { getErrorMessage } from '../lib/api';
 
 export default function TimelineOutlineModal({ 
   isOpen, 
@@ -13,11 +15,31 @@ export default function TimelineOutlineModal({
   const [activeTab, setActiveTab] = useState('timeline'); // 'timeline' | 'outline'
   const [focusTopic, setFocusTopic] = useState('');
   const [expandedSections, setExpandedSections] = useState({ 0: true, 1: true });
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+  const dialogRef = useRef(null);
+  const pendingRef = useRef(false);
+  useDialog(dialogRef, onClose, isOpen);
+  const busy = loading || submitting;
+  const regenerate = async () => {
+    if (busy || pendingRef.current) return;
+    pendingRef.current = true;
+    setSubmitting(true);
+    setError('');
+    try {
+      if (await onRegenerate(focusTopic.trim()) === false) setError('Chưa tạo được dòng thời gian và dàn ý. Vui lòng thử lại.');
+    } catch (err) {
+      setError(getErrorMessage(err, 'Không tạo được dòng thời gian và dàn ý.'));
+    } finally {
+      pendingRef.current = false;
+      setSubmitting(false);
+    }
+  };
 
   if (!isOpen) return null;
 
-  const timelineItems = data?.timeline || [];
-  const outlineItems = data?.outline || [];
+  const timelineItems = Array.isArray(data?.timeline) ? data.timeline.filter(Boolean) : [];
+  const outlineItems = Array.isArray(data?.outline) ? data.outline.filter(Boolean) : [];
 
   const toggleSection = (idx) => {
     setExpandedSections(prev => ({ ...prev, [idx]: !prev[idx] }));
@@ -25,11 +47,11 @@ export default function TimelineOutlineModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-fade-in font-sans">
-      <div className={`w-full max-w-4xl h-[88vh] flex flex-col rounded-3xl shadow-2xl border overflow-hidden transition-colors ${
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Dòng thời gian và dàn ý bài học" tabIndex={-1} className={`w-full max-w-4xl h-[88dvh] max-h-[calc(100dvh-2rem)] flex flex-col rounded-3xl shadow-2xl border overflow-y-auto transition-colors ${
         isDark ? 'bg-[#14151a] border-white/15 text-white' : 'bg-white border-gray-200 text-gray-900'
       }`}>
         {/* Header */}
-        <div className={`p-4 border-b flex items-center justify-between ${
+        <div className={`p-4 border-b flex shrink-0 gap-3 items-center justify-between ${
           isDark ? 'bg-white/[0.02] border-white/10' : 'bg-gray-50 border-gray-200'
         }`}>
           <div className="flex items-center gap-3">
@@ -37,7 +59,7 @@ export default function TimelineOutlineModal({
               <Clock size={20} />
             </div>
             <div>
-              <h2 className="text-base font-bold flex items-center gap-2">
+              <h2 className="text-base font-bold flex flex-wrap items-center gap-2">
                 Dòng thời gian & Dàn ý Bài học
                 <span className="text-[11px] font-normal px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
                   Timeline & Outline
@@ -51,6 +73,7 @@ export default function TimelineOutlineModal({
 
           <button
             onClick={onClose}
+            aria-label="Đóng dòng thời gian và dàn ý"
             className={`p-2 rounded-xl transition ${isDark ? 'hover:bg-white/10 text-gray-400 hover:text-white' : 'hover:bg-gray-100 text-gray-500 hover:text-black'}`}
           >
             <X size={20} />
@@ -58,13 +81,14 @@ export default function TimelineOutlineModal({
         </div>
 
         {/* Action & Tab Header */}
-        <div className={`px-5 py-3 border-b flex flex-wrap items-center justify-between gap-3 ${
+        <div className={`px-4 py-3 border-b flex flex-wrap shrink-0 items-center justify-between gap-3 ${
           isDark ? 'bg-black/20 border-white/10' : 'bg-gray-50/70 border-gray-200'
         }`}>
           {/* Tab Switcher */}
-          <div className="flex items-center gap-2 bg-white/5 p-1 rounded-xl border border-white/10">
+          <div className="flex flex-wrap items-center gap-2 bg-white/5 p-1 rounded-xl border border-white/10">
             <button
               onClick={() => setActiveTab('timeline')}
+              aria-pressed={activeTab === 'timeline'}
               className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition ${
                 activeTab === 'timeline' 
                   ? 'bg-emerald-600 text-white shadow' 
@@ -76,6 +100,7 @@ export default function TimelineOutlineModal({
             </button>
             <button
               onClick={() => setActiveTab('outline')}
+              aria-pressed={activeTab === 'outline'}
               className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition ${
                 activeTab === 'outline' 
                   ? 'bg-emerald-600 text-white shadow' 
@@ -91,6 +116,8 @@ export default function TimelineOutlineModal({
           <div className="flex items-center gap-2 flex-1 max-w-md justify-end">
             <input
               type="text"
+              aria-label="Chủ đề trọng tâm của dòng thời gian và dàn ý"
+              disabled={busy}
               value={focusTopic}
               onChange={e => setFocusTopic(e.target.value)}
               placeholder="Chủ đề trọng tâm cần tập trung..."
@@ -99,19 +126,20 @@ export default function TimelineOutlineModal({
               }`}
             />
             <button
-              onClick={() => onRegenerate(focusTopic)}
-              disabled={loading}
+              onClick={regenerate}
+              disabled={busy}
               className="bg-gradient-to-r from-emerald-600 to-teal-600 hover:opacity-90 disabled:opacity-50 text-white px-3.5 py-1.5 rounded-xl text-xs font-semibold shadow transition flex items-center gap-1.5 shrink-0"
             >
-              <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
-              <span>{loading ? "Đang tạo..." : "Tái tạo"}</span>
+              <RefreshCw size={12} className={busy ? "animate-spin" : ""} />
+              <span>{busy ? "Đang tạo..." : "Tái tạo"}</span>
             </button>
           </div>
         </div>
 
         {/* Content Body */}
-        <div className="flex-1 overflow-y-auto p-6 scrollbar-hide">
-          {loading ? (
+        {error && <p role="alert" className="px-4 pt-3 text-xs text-red-400 shrink-0">{error}</p>}
+        <div className="flex-1 min-h-40 overflow-y-auto p-4 sm:p-6">
+          {busy ? (
             <div className="flex flex-col items-center justify-center h-full gap-3 text-gray-400">
               <RefreshCw size={30} className="animate-spin text-emerald-400" />
               <p className="text-sm font-medium">AI đang trích xuất mốc sự kiện và xây dựng khung dàn ý...</p>
@@ -144,11 +172,11 @@ export default function TimelineOutlineModal({
                         )}
                       </div>
 
-                      <h4 className="text-sm font-bold text-white group-hover:text-emerald-300 transition">
+                      <h4 className={`text-sm font-bold transition ${isDark ? 'text-white group-hover:text-emerald-300' : 'text-gray-900 group-hover:text-emerald-700'}`}>
                         {item.title}
                       </h4>
 
-                      <p className="text-xs text-gray-300 leading-relaxed pt-1">
+                      <p className={`text-xs leading-relaxed pt-1 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
                         {item.description}
                       </p>
                     </div>
@@ -173,19 +201,18 @@ export default function TimelineOutlineModal({
                       className="rounded-2xl border border-white/10 bg-white/[0.03] overflow-hidden"
                     >
                       {/* Section Header */}
-                      <div 
-                        onClick={() => toggleSection(idx)}
-                        className="p-4 flex items-center justify-between cursor-pointer hover:bg-white/5 transition"
+                      <div
+                        className="p-4 flex flex-wrap gap-3 items-center justify-between transition"
                       >
-                        <div className="flex items-center gap-2.5">
+                        <button type="button" onClick={() => toggleSection(idx)} aria-expanded={isExpanded} className="flex flex-1 min-w-0 text-left items-center gap-2.5">
                           {isExpanded ? <ChevronDown size={18} className="text-emerald-400" /> : <ChevronRight size={18} className="text-gray-400" />}
                           <div>
-                            <h4 className="text-sm font-bold text-white">{section.title}</h4>
+                            <h4 className={`text-sm font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>{section.title}</h4>
                             {section.summary && (
                               <p className="text-xs text-gray-400 mt-0.5 line-clamp-1">{section.summary}</p>
                             )}
                           </div>
-                        </div>
+                        </button>
 
                         <button
                           onClick={(e) => {
@@ -193,6 +220,7 @@ export default function TimelineOutlineModal({
                             onAskAboutTopic(`Hãy giải thích chi tiết và đưa ra ví dụ về: "${section.title}"`);
                             onClose();
                           }}
+                          disabled={!onAskAboutTopic}
                           className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1.5 transition shrink-0"
                           title="Gửi câu hỏi này sang khung trò chuyện AI"
                         >
@@ -202,23 +230,24 @@ export default function TimelineOutlineModal({
                       </div>
 
                       {/* Subsections */}
-                      {isExpanded && section.subsections && (
-                        <div className="p-4 pt-1 border-t border-white/10 space-y-3 bg-black/20">
+                      {isExpanded && Array.isArray(section.subsections) && (
+                        <div className={`p-4 pt-1 border-t border-white/10 space-y-3 ${isDark ? 'bg-black/20' : 'bg-gray-50'}`}>
                           {section.subsections.map((sub, sIdx) => (
                             <div key={sub.id || sIdx} className="pl-3 border-l-2 border-emerald-500/40 space-y-1">
                               <div className="flex items-center justify-between">
-                                <h5 className="text-xs font-bold text-gray-200">{sub.title}</h5>
+                                <h5 className={`text-xs font-bold ${isDark ? 'text-gray-200' : 'text-gray-800'}`}>{sub.title}</h5>
                                 <button
                                   onClick={() => {
                                     onAskAboutTopic(`Phân tích chuyên sâu về: "${sub.title}"`);
                                     onClose();
                                   }}
+                                  disabled={!onAskAboutTopic}
                                   className="text-[11px] text-emerald-400 hover:underline flex items-center gap-1"
                                 >
                                   <MessageSquare size={11} /> Hỏi mục này
                                 </button>
                               </div>
-                              {sub.points && sub.points.length > 0 && (
+                              {Array.isArray(sub.points) && sub.points.length > 0 && (
                                 <ul className="list-disc list-inside text-xs text-gray-400 space-y-0.5 pl-1">
                                   {sub.points.map((pt, pIdx) => (
                                     <li key={pIdx}>{pt}</li>

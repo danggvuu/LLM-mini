@@ -1,5 +1,7 @@
-import React from 'react';
+import { useRef, useState } from 'react';
 import { SlidersHorizontal, Brain, Layers, Sparkles, X } from 'lucide-react';
+import useDialog from '../../hooks/useDialog';
+import { getErrorMessage } from '../../lib/api';
 
 export default function GuideConfigModal({
   isOpen,
@@ -9,18 +11,39 @@ export default function GuideConfigModal({
   onGenerate,
   regeneratingGuide
 }) {
+  const dialogRef = useRef(null);
+  const submittingRef = useRef(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+  useDialog(dialogRef, onClose, isOpen);
+  const busy = regeneratingGuide || submitting;
+  const handleGenerate = async () => {
+    if (busy || submittingRef.current) return;
+    submittingRef.current = true;
+    setSubmitting(true);
+    setError('');
+    try {
+      if (await onGenerate() === false) setError('Chưa tạo được bộ học tập. Vui lòng thử lại.');
+    } catch (err) {
+      setError(getErrorMessage(err, 'Không tạo được bộ học tập.'));
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
+    }
+  };
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in font-sans">
-      <div className="bg-[#181a20] border border-blue-500/40 w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden p-6 space-y-5">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Tùy chỉnh bộ học tập" tabIndex={-1} className="bg-[#181a20] border border-blue-500/40 w-full max-w-lg max-h-[calc(100dvh-2rem)] rounded-3xl shadow-2xl overflow-y-auto p-4 sm:p-6 space-y-5">
         <div className="flex justify-between items-center pb-3 border-b border-white/10">
           <div className="flex items-center gap-2.5 text-blue-400 font-bold text-base">
             <SlidersHorizontal size={20} />
             <span>Tùy Chỉnh Bộ Học Tập & Quizlet</span>
           </div>
           <button 
-            onClick={onClose}
+             onClick={onClose}
+             aria-label="Đóng tùy chỉnh bộ học tập"
             className="text-gray-400 hover:text-white p-1 rounded-lg hover:bg-white/5 transition"
           >
             <X size={18} />
@@ -28,7 +51,7 @@ export default function GuideConfigModal({
         </div>
 
         {/* Config Fields */}
-        <div className="space-y-4 text-xs">
+        <fieldset disabled={busy} className="space-y-4 text-xs">
           {/* Quiz Count */}
           <div>
             <div className="flex justify-between items-center mb-1.5">
@@ -41,7 +64,8 @@ export default function GuideConfigModal({
               {[3, 5, 10, 15, 20].map(cnt => (
                 <button
                   key={cnt}
-                  type="button"
+                   type="button"
+                   aria-pressed={guideConfig.quiz_count === cnt}
                   onClick={() => setGuideConfig({...guideConfig, quiz_count: cnt})}
                   className={`flex-1 py-1.5 rounded-xl border text-xs font-semibold transition ${
                     guideConfig.quiz_count === cnt 
@@ -67,7 +91,8 @@ export default function GuideConfigModal({
               {[5, 10, 15, 20, 30].map(cnt => (
                 <button
                   key={cnt}
-                  type="button"
+                   type="button"
+                   aria-pressed={guideConfig.flashcards_count === cnt}
                   onClick={() => setGuideConfig({...guideConfig, flashcards_count: cnt})}
                   className={`flex-1 py-1.5 rounded-xl border text-xs font-semibold transition ${
                     guideConfig.flashcards_count === cnt 
@@ -94,7 +119,8 @@ export default function GuideConfigModal({
               ].map(lvl => (
                 <button
                   key={lvl.key}
-                  type="button"
+                   type="button"
+                   aria-pressed={guideConfig.difficulty === lvl.key}
                   onClick={() => setGuideConfig({...guideConfig, difficulty: lvl.key})}
                   className={`p-2 rounded-xl border text-left transition ${
                     guideConfig.difficulty === lvl.key 
@@ -114,9 +140,10 @@ export default function GuideConfigModal({
             <label className="font-semibold text-gray-300 block mb-1.5">
               Chủ đề / Yêu cầu trọng tâm (Tùy chọn):
             </label>
-            <input
-              type="text"
-              value={guideConfig.focus_topic}
+             <input
+               aria-label="Chủ đề trọng tâm của bộ học tập"
+               type="text"
+               value={guideConfig.focus_topic ?? ''}
               onChange={e => setGuideConfig({...guideConfig, focus_topic: e.target.value})}
               placeholder="Ví dụ: Tập trung vào kiến thức trọng tâm, câu hỏi tình huống..."
               className="w-full bg-black/40 text-xs px-3.5 py-2.5 rounded-xl text-white border border-white/15 focus:border-blue-500 outline-none transition"
@@ -125,7 +152,8 @@ export default function GuideConfigModal({
               AI sẽ tự động lọc các đoạn tài liệu liên quan đến chủ đề này để thiết kế câu hỏi.
             </span>
           </div>
-        </div>
+        </fieldset>
+        {error && <p role="alert" className="text-xs text-red-400">{error}</p>}
 
         {/* Actions */}
         <div className="pt-2 flex justify-end gap-2 border-t border-white/10">
@@ -138,12 +166,12 @@ export default function GuideConfigModal({
           </button>
           <button
             type="button"
-            onClick={onGenerate}
-            disabled={regeneratingGuide}
+            onClick={handleGenerate}
+            disabled={busy}
             className="bg-gradient-to-r from-blue-600 to-purple-600 hover:opacity-90 text-white px-5 py-2 rounded-xl text-xs font-semibold shadow-lg transition flex items-center gap-1.5 disabled:opacity-50"
           >
             <Sparkles size={14} />
-            {regeneratingGuide ? "Đang xử lý..." : "Tạo Cẩm Nang & Quizlet Mới"}
+            {busy ? "Đang xử lý..." : "Tạo bộ học tập mới"}
           </button>
         </div>
       </div>
