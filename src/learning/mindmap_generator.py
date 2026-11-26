@@ -2,7 +2,7 @@ import re
 import json
 import logging
 from typing import Optional, Dict, Any
-from ..llm.llm_client import LLMEngine
+from ..llm.llm_client import LLMEngine, validate_generated_text
 from ..db.session_manager import SessionManager
 
 logger = logging.getLogger(__name__)
@@ -22,7 +22,8 @@ class MindmapGenerator:
         provider: Optional[str] = None,
         model_name: Optional[str] = None,
         api_key: Optional[str] = None,
-        base_url: Optional[str] = None
+        base_url: Optional[str] = None,
+        source_revision: Optional[int] = None
     ) -> Dict[str, Any]:
         """Sinh cây sơ đồ tư duy dạng JSON phân cấp."""
         topic_instruction = f"\nTẬP TRUNG ĐẶC BIỆT VÀO CHỦ ĐỀ: '{focus_topic}'." if focus_topic else ""
@@ -81,7 +82,7 @@ Hãy tạo từ 3 đến 6 nhánh chính, mỗi nhánh có từ 2 đến 5 mục
             api_key=api_key,
             base_url=base_url
         ))
-        full_text = "".join(chunks).strip()
+        full_text = validate_generated_text("".join(chunks))
         
         # Clean json
         cleaned = full_text
@@ -92,45 +93,21 @@ Hãy tạo từ 3 đến 6 nhánh chính, mỗi nhánh có từ 2 đến 5 mục
             
         try:
             parsed = json.loads(cleaned)
-            self.db.save_mindmap(notebook_id, parsed)
-            return parsed
-        except Exception as e:
-            # Fallback regex extraction
+        except ValueError:
             match = re.search(r'\{.*\}', cleaned, re.DOTALL)
-            if match:
-                try:
-                    fixed = re.sub(r',\s*([\]\}])', r'\1', match.group(0))
-                    parsed = json.loads(fixed)
-                    self.db.save_mindmap(notebook_id, parsed)
-                    return parsed
-                except Exception:
-                    pass
-            
-            # Default fallback mindmap
-            fallback = {
-                "id": "root",
-                "name": "Chủ đề Tài liệu",
-                "desc": "Sơ đồ tự động tổng hợp từ tài liệu nghiên cứu",
-                "children": [
-                    {
-                        "id": "b1",
-                        "name": "Nội dung trọng tâm",
-                        "desc": "Các luận điểm và khái niệm mấu chốt",
-                        "children": [
-                            {"id": "b1-1", "name": "Định nghĩa & Bản chất", "desc": "Cơ sở nền tảng"},
-                            {"id": "b1-2", "name": "Đặc trưng nổi bật", "desc": "Điểm quan trọng cần ghi nhớ"}
-                        ]
-                    },
-                    {
-                        "id": "b2",
-                        "name": "Ứng dụng & Thực tiễn",
-                        "desc": "Cách áp dụng vào bài tập và thực tế",
-                        "children": [
-                            {"id": "b2-1", "name": "Ví dụ minh họa", "desc": "Tình huống áp dụng"},
-                            {"id": "b2-2", "name": "Lưu ý thường gặp", "desc": "Các bẫy kiến thức cần tránh"}
-                        ]
-                    }
-                ]
-            }
-            self.db.save_mindmap(notebook_id, fallback)
-            return fallback
+            if not match:
+                raise ValueError("AI không trả về JSON sơ đồ tư duy hợp lệ.")
+            parsed = json.loads(re.sub(r',\s*([\]\}])', r'\1', match.group(0)))
+
+        def validate_node(node, node_id="root"):
+            if not isinstance(node, dict) or not isinstance(node.get("name"), str) or not node["name"].strip():
+                raise ValueError("Sơ đồ tư duy thiếu tên chủ đề hoặc nhánh.")
+            node["id"] = str(node.get("id") or node_id)
+            if not isinstance(node.get("desc", ""), str) or not isinstance(node.get("children", []), list):
+                raise ValueError("Cấu trúc nhánh sơ đồ tư duy không hợp lệ.")
+            for i, child in enumerate(node.get("children", [])):
+                validate_node(child, f"{node_id}-{i}")
+
+        validate_node(parsed)
+        self.db.save_mindmap(notebook_id, parsed, source_revision=source_revision)
+        return parsed

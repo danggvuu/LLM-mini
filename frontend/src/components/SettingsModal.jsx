@@ -1,648 +1,307 @@
-import React, { useState, useEffect } from 'react';
-import { X, Check, Server, Key, Cpu, Cloud, RefreshCw, AlertCircle, Eye, EyeOff, ExternalLink } from 'lucide-react';
-import axios from 'axios';
+import { useState, useEffect, useEffectEvent, useRef } from 'react';
+import { X, Check, Server, Cpu, Cloud, RefreshCw, AlertCircle, Eye, EyeOff, ExternalLink } from 'lucide-react';
+import useDialog from '../hooks/useDialog';
+import { requestJson, getErrorMessage } from '../lib/api';
 
-export default function SettingsModal({ isOpen, onClose, onSettingsSaved }) {
-  const [activeTab, setActiveTab] = useState('local'); // 'local' or 'cloud'
-  const [loading, setLoading] = useState(false);
-  const [scanning, setScanning] = useState(false);
-  const [localStatus, setLocalStatus] = useState({ ollama: { available: false, models: [] }, lm_studio: { available: false, models: [] } });
-  
-  // Settings State
-  const [settings, setSettings] = useState({
-    default_provider: 'ollama',
-    default_model: 'qwen2.5:3b',
-    ollama_base_url: 'http://localhost:11434',
-    lm_studio_base_url: 'http://localhost:1234/v1',
-    gemini_api_key: '',
-    gemini_api_key_configured: false,
-    gemini_model: 'gemini-2.5-flash',
-    openai_api_key: '',
-    openai_api_key_configured: false,
-    openai_model: 'gpt-4o-mini',
-    groq_api_key: '',
-    groq_api_key_configured: false,
-    groq_model: 'llama-3.3-70b-versatile',
-    openrouter_api_key: '',
-    openrouter_api_key_configured: false,
-    openrouter_model: 'deepseek/deepseek-r1',
-    router9_base_url: 'http://localhost:20128/v1',
-    router9_api_key: '',
-    router9_api_key_configured: false,
-    router9_model: 'claude-3-5-sonnet',
-    custom_base_url: '',
-    custom_api_key: '',
-    custom_api_key_configured: false,
-    custom_model: ''
-  });
+const initialSettings = {
+  default_provider: 'ollama', default_model: 'qwen2.5:3b',
+  ollama_base_url: 'http://localhost:11434', lm_studio_base_url: 'http://localhost:1234/v1',
+  gemini_api_key: '', gemini_api_key_configured: false, gemini_model: 'gemini-2.5-flash',
+  openai_api_key: '', openai_api_key_configured: false, openai_model: 'gpt-4o-mini',
+  groq_api_key: '', groq_api_key_configured: false, groq_model: 'llama-3.3-70b-versatile',
+  openrouter_api_key: '', openrouter_api_key_configured: false, openrouter_model: 'deepseek/deepseek-r1',
+  router9_base_url: 'http://localhost:20128/v1', router9_api_key: '', router9_api_key_configured: false, router9_model: 'claude-3-5-sonnet',
+  custom_base_url: '', custom_api_key: '', custom_api_key_configured: false, custom_model: '',
+};
 
+const providers = [
+  { id: 'ollama', title: 'Ollama', tab: 'local', model: 'default_model', url: 'ollama_base_url', scan: 'ollama', placeholder: 'qwen2.5:3b', href: 'https://ollama.com', hint: 'Mở Ollama và tải một model. Bạn có thể sửa endpoint rồi kiểm tra trực tiếp, kể cả khi quét chưa tìm thấy dịch vụ.' },
+  { id: 'lm_studio', title: 'LM Studio / vLLM / LocalAI', tab: 'local', model: 'custom_model', url: 'lm_studio_base_url', scan: 'lm_studio', placeholder: 'local-model', hint: 'Nạp model và bật Local Server. Tên model này cũng được dùng cho cấu hình OpenAI-compatible tùy chỉnh.' },
+  { id: '9router', title: '9Router AI Gateway', tab: '9router', model: 'router9_model', url: 'router9_base_url', key: 'router9_api_key', scan: 'router9', placeholder: 'kr/claude-sonnet-4.5', href: 'https://github.com/9router/9router', hint: 'Nhập endpoint và Model ID do gateway cung cấp. API key có thể để trống nếu gateway không yêu cầu.' },
+  { id: 'gemini', title: 'Google Gemini', tab: 'cloud', model: 'gemini_model', key: 'gemini_api_key', placeholder: 'gemini-2.5-flash', href: 'https://aistudio.google.com', hint: 'Nhập Model ID đang có quyền sử dụng trong tài khoản Google AI.' },
+  { id: 'openai', title: 'OpenAI', tab: 'cloud', model: 'openai_model', key: 'openai_api_key', placeholder: 'gpt-4o-mini', href: 'https://platform.openai.com/api-keys' },
+  { id: 'groq', title: 'Groq', tab: 'cloud', model: 'groq_model', key: 'groq_api_key', placeholder: 'llama-3.3-70b-versatile', href: 'https://console.groq.com/keys' },
+  { id: 'openrouter', title: 'OpenRouter', tab: 'cloud', model: 'openrouter_model', key: 'openrouter_api_key', placeholder: 'deepseek/deepseek-r1', href: 'https://openrouter.ai/keys' },
+  { id: 'custom', title: 'OpenAI-compatible tùy chỉnh', tab: 'cloud', model: 'custom_model', url: 'custom_base_url', key: 'custom_api_key', placeholder: 'Model ID của endpoint', hint: 'Nhập Base URL đầy đủ, thường kết thúc bằng /v1. Có thể để trống API key nếu server không yêu cầu.' },
+];
+
+const apiKeyFields = providers.map(provider => provider.key).filter(Boolean);
+
+function maskedSettings(data) {
+  const next = { ...initialSettings };
+  for (const field of Object.keys(initialSettings)) {
+    if (data[field] != null) next[field] = data[field];
+  }
+  for (const field of apiKeyFields) {
+    next[`${field}_configured`] = Boolean(data[`${field}_configured`] ?? data[field]);
+    next[field] = '';
+  }
+  return next;
+}
+
+export default function SettingsModal({ isOpen, onClose, onSettingsSaved, isDark = true }) {
+  const [activeTab, setActiveTab] = useState('local');
+  const [settings, setSettings] = useState(initialSettings);
+  const [loadingSettings, setLoadingSettings] = useState(true);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [scanning, setScanning] = useState(true);
+  const [localStatus, setLocalStatus] = useState(null);
+  const [settingsError, setSettingsError] = useState('');
+  const [scanError, setScanError] = useState('');
+  const [saveError, setSaveError] = useState('');
   const [testResult, setTestResult] = useState({});
   const [testingProvider, setTestingProvider] = useState(null);
   const [showKeys, setShowKeys] = useState({});
   const [clearApiKeys, setClearApiKeys] = useState([]);
+  const dialogRef = useRef(null);
+  const settingsController = useRef(null);
+  const scanController = useRef(null);
+  const actionController = useRef(null);
+  const pendingRef = useRef(false);
 
-  useEffect(() => {
-    if (isOpen) {
-      loadSettings();
-      scanLocalModels();
-    }
-  }, [isOpen]);
+  const handleClose = () => {
+    if (!saving) onClose();
+  };
+  useDialog(dialogRef, handleClose, isOpen);
 
   const loadSettings = async () => {
+    settingsController.current?.abort();
+    const controller = new AbortController();
+    settingsController.current = controller;
+    setLoadingSettings(true);
+    setSettingsLoaded(false);
+    setSettingsError('');
     try {
-      const res = await axios.get('/api/settings');
-      if (res.data) {
-        setSettings(prev => ({ ...prev, ...res.data }));
-        setClearApiKeys([]);
-      }
-    } catch (e) {
-      console.error("Lỗi tải cài đặt:", e);
+      const data = await requestJson('/api/settings', { signal: controller.signal });
+      if (controller.signal.aborted) return;
+      if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('Phản hồi cài đặt không hợp lệ.');
+      setSettings(maskedSettings(data));
+      setClearApiKeys([]);
+      setShowKeys({});
+      setTestResult({});
+      setSaveError('');
+      setSettingsLoaded(true);
+    } catch (error) {
+      if (!controller.signal.aborted) setSettingsError(`Không tải được cài đặt. ${getErrorMessage(error, 'Kiểm tra kết nối và thử lại.')}`);
+    } finally {
+      if (!controller.signal.aborted) setLoadingSettings(false);
     }
   };
 
   const scanLocalModels = async () => {
+    scanController.current?.abort();
+    const controller = new AbortController();
+    scanController.current = controller;
     setScanning(true);
+    setScanError('');
+    setLocalStatus(null);
     try {
-      const res = await axios.get('/api/llm/local-models');
-      setLocalStatus(res.data);
-      // Nếu có model ollama mà default_model rỗng, chọn model đầu tiên
-      if (res.data?.ollama?.models?.length > 0 && (!settings.default_model || settings.default_model === 'qwen2.5:3b')) {
-        const found = res.data.ollama.models.find(m => m.name === settings.default_model);
-        if (!found) {
-          setSettings(prev => ({ ...prev, default_model: res.data.ollama.models[0].name }));
-        }
-      }
-    } catch (e) {
-      console.error("Lỗi quét local models:", e);
+      const data = await requestJson('/api/llm/local-models', { signal: controller.signal });
+      if (controller.signal.aborted) return;
+      if (!data || typeof data !== 'object' || !data.ollama || !data.lm_studio) throw new Error('Phản hồi quét model không hợp lệ.');
+      setLocalStatus(data);
+    } catch (error) {
+      if (!controller.signal.aborted) setScanError(`Không quét được dịch vụ trên máy. ${getErrorMessage(error, 'Hãy thử lại.')}`);
     } finally {
-      setScanning(false);
+      if (!controller.signal.aborted) setScanning(false);
     }
   };
 
-  const handleTestConnection = async (provider, modelName, apiKey, baseUrl) => {
-    setTestingProvider(provider);
-    setTestResult(prev => ({ ...prev, [provider]: { testing: true } }));
+  const openModal = useEffectEvent(() => {
+    pendingRef.current = false;
+    setSaving(false);
+    setTestingProvider(null);
+    setSaveError('');
+    setShowKeys({});
+    setClearApiKeys([]);
+    setTestResult({});
+    setSettings(initialSettings);
+    void loadSettings();
+    void scanLocalModels();
+  });
+
+  useEffect(() => {
+    if (!isOpen) return;
+    openModal();
+    return () => {
+      settingsController.current?.abort();
+      scanController.current?.abort();
+      actionController.current?.abort();
+    };
+  }, [isOpen]);
+
+  const changeSetting = (field, value) => {
+    setSettings(previous => ({ ...previous, [field]: value }));
+    setTestResult({});
+    setSaveError('');
+    if (apiKeyFields.includes(field)) setClearApiKeys(previous => previous.filter(key => key !== field));
+  };
+
+  const toggleClearKey = field => {
+    setSettings(previous => ({ ...previous, [field]: '' }));
+    setClearApiKeys(previous => previous.includes(field) ? previous.filter(key => key !== field) : [...previous, field]);
+    setTestResult({});
+    setShowKeys({});
+    setSaveError('');
+  };
+
+  const handleTestConnection = async provider => {
+    if (pendingRef.current || !settingsLoaded) return;
+    const modelName = String(settings[provider.model] || '').trim();
+    if (!modelName) {
+      setTestResult(previous => ({ ...previous, [provider.id]: { success: false, message: 'Nhập Model ID trước khi kiểm tra kết nối.' } }));
+      return;
+    }
+    if (clearApiKeys.includes(provider.key)) {
+      setTestResult(previous => ({ ...previous, [provider.id]: { success: false, message: 'Key đang được đánh dấu xóa. Lưu cài đặt hoặc giữ lại key trước khi kiểm tra.' } }));
+      return;
+    }
+    pendingRef.current = true;
+    const controller = new AbortController();
+    actionController.current = controller;
+    setTestingProvider(provider.id);
+    setTestResult(previous => ({ ...previous, [provider.id]: null }));
     try {
-      const res = await axios.post('/api/llm/test-connection', {
-        provider,
-        model_name: modelName,
-        api_key: apiKey,
-        base_url: baseUrl
+      const result = await requestJson('/api/llm/test-connection', {
+        method: 'POST', signal: controller.signal,
+        body: JSON.stringify({ provider: provider.id, model_name: modelName, api_key: provider.key ? settings[provider.key]?.trim() : undefined, base_url: provider.url ? settings[provider.url]?.trim() : undefined }),
       });
-      setTestResult(prev => ({ ...prev, [provider]: res.data }));
-    } catch (e) {
-      setTestResult(prev => ({
-        ...prev,
-        [provider]: { success: false, message: e.response?.data?.detail || e.message }
-      }));
+      if (controller.signal.aborted) return;
+      if (typeof result?.success !== 'boolean') throw new Error('Máy chủ chưa trả về kết quả kiểm tra.');
+      setTestResult(previous => ({ ...previous, [provider.id]: { ...result, message: result.message || (result.success ? 'Model đã phản hồi khi kiểm tra.' : 'Chưa nhận được phản hồi hợp lệ từ model. Kiểm tra key, endpoint và Model ID rồi thử lại.') } }));
+    } catch (error) {
+      if (!controller.signal.aborted) setTestResult(previous => ({ ...previous, [provider.id]: { success: false, message: getErrorMessage(error, 'Không kiểm tra được kết nối. Hãy thử lại.') } }));
     } finally {
-      setTestingProvider(null);
+      if (!controller.signal.aborted) {
+        pendingRef.current = false;
+        setTestingProvider(null);
+      }
     }
   };
 
   const handleSave = async () => {
-    setLoading(true);
-    try {
-      const settingsPayload = { ...settings };
-      Object.keys(settingsPayload)
-        .filter(key => key.endsWith('_api_key_configured'))
-        .forEach(key => delete settingsPayload[key]);
-      const payload = {
-        ...settingsPayload,
-        clear_api_keys: clearApiKeys
-      };
-      const response = await axios.post('/api/settings', payload);
-      const savedSettings = response.data?.settings || settings;
-      setSettings(prev => ({ ...prev, ...savedSettings }));
-      if (onSettingsSaved) onSettingsSaved(savedSettings);
-      onClose();
-    } catch (e) {
-      alert("Lỗi lưu cài đặt: " + (e.response?.data?.detail || e.message));
-    } finally {
-      setLoading(false);
+    if (pendingRef.current || !settingsLoaded || loadingSettings) return;
+    setSaveError('');
+    const selectedProvider = providers.find(provider => provider.id === settings.default_provider || (settings.default_provider === 'local_ai' && provider.id === 'lm_studio'));
+    if (!selectedProvider || !String(settings[selectedProvider.model] || '').trim()) {
+      setSaveError('Chọn nhà cung cấp mặc định và nhập Model ID tương ứng trước khi lưu.');
+      if (selectedProvider) setActiveTab(selectedProvider.tab);
+      return;
     }
-  };
-
-  const toggleShowKey = (field) => {
-    setShowKeys(prev => ({ ...prev, [field]: !prev[field] }));
-  };
-
-  const changeApiKey = (field, value) => {
-    setSettings(prev => ({ ...prev, [field]: value }));
-    setClearApiKeys(prev => prev.filter(key => key !== field));
-  };
-
-  const clearSavedApiKey = (field) => {
-    if (!window.confirm('Xóa API key đã lưu trên máy này?')) return;
-    setSettings(prev => ({ ...prev, [field]: '' }));
-    setClearApiKeys(prev => prev.includes(field) ? prev : [...prev, field]);
+    for (const field of ['ollama_base_url', 'lm_studio_base_url', 'router9_base_url', 'custom_base_url']) {
+      const value = String(settings[field] || '').trim();
+      if (!value) continue;
+      try {
+        const url = new URL(value);
+        if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error('invalid URL');
+      } catch {
+        setSaveError('Endpoint phải là URL HTTP(S) đầy đủ, không chứa key hoặc thông tin đăng nhập.');
+        setActiveTab(providers.find(provider => provider.url === field)?.tab || 'local');
+        return;
+      }
+    }
+    pendingRef.current = true;
+    const controller = new AbortController();
+    actionController.current = controller;
+    setSaving(true);
+    let saved = false;
+    try {
+      const payload = { clear_api_keys: clearApiKeys };
+      for (const [field, value] of Object.entries(settings)) {
+        if (field.endsWith('_api_key_configured')) continue;
+        if (apiKeyFields.includes(field) && !String(value || '').trim()) continue;
+        payload[field] = typeof value === 'string' ? value.trim() : value;
+      }
+      const response = await requestJson('/api/settings', { method: 'POST', signal: controller.signal, body: JSON.stringify(payload) });
+      if (controller.signal.aborted) return;
+      if (response?.status !== 'success' || !response.settings || typeof response.settings !== 'object') throw new Error('Máy chủ chưa xác nhận cài đặt đã lưu. Tải lại cài đặt để kiểm tra.');
+      const savedSettings = maskedSettings(response.settings);
+      saved = true;
+      setSettings(savedSettings);
+      setClearApiKeys([]);
+      setShowKeys({});
+      await onSettingsSaved?.(savedSettings);
+      if (!controller.signal.aborted) onClose();
+    } catch (error) {
+      if (!controller.signal.aborted) setSaveError(`${saved ? 'Cài đặt đã lưu nhưng chưa cập nhật được giao diện.' : 'Không lưu được cài đặt.'} ${getErrorMessage(error, 'Vui lòng thử lại.')}`);
+    } finally {
+      if (!controller.signal.aborted) {
+        pendingRef.current = false;
+        setSaving(false);
+      }
+    }
   };
 
   if (!isOpen) return null;
 
+  const busy = loadingSettings || saving || Boolean(testingProvider);
+  const muted = isDark ? 'text-gray-400' : 'text-slate-600';
+  const border = isDark ? 'border-white/10' : 'border-slate-200';
+  const input = `w-full min-w-0 rounded-xl border px-3 py-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 ${isDark ? 'bg-[#121316] border-white/15 text-white' : 'bg-white border-slate-300 text-slate-900'}`;
+  const secondaryButton = `px-3 py-2 rounded-lg text-xs font-medium transition disabled:opacity-50 disabled:cursor-not-allowed ${isDark ? 'bg-white/5 hover:bg-white/10 text-gray-200' : 'bg-slate-100 hover:bg-slate-200 text-slate-800'}`;
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-fade-in font-sans">
-      <div className="bg-[#181a20] border border-white/10 rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
-        
-        {/* Header */}
-        <div className="p-5 border-b border-white/10 flex items-center justify-between bg-white/[0.02]">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400">
-              <Cpu size={22} />
-            </div>
-            <div>
-              <h2 className="text-xl font-bold text-white">Cấu hình Bộ Não AI</h2>
-              <p className="text-xs text-gray-400">Cắm bất kỳ Local AI hoặc Cloud API nào một cách dễ dàng</p>
-            </div>
-          </div>
-          <button onClick={onClose} className="p-2 text-gray-400 hover:text-white rounded-lg hover:bg-white/5 transition">
-            <X size={20} />
-          </button>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-2 sm:p-4 animate-fade-in">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Cấu hình Bộ Não AI" tabIndex={-1}
+        className={`border rounded-2xl w-full max-w-2xl max-h-[92dvh] flex flex-col shadow-2xl overflow-hidden ${border} ${isDark ? 'bg-[#181a20] text-white' : 'bg-white text-slate-900'}`}>
+        <div className={`p-4 sm:p-5 border-b flex items-start justify-between gap-3 ${border}`}>
+          <div className="flex items-center gap-3 min-w-0"><Cpu size={24} className="text-blue-500 shrink-0" /><div><h2 className="text-lg font-bold">Cấu hình Bộ Não AI</h2><p className={`text-xs mt-1 ${muted}`}>Chọn nhà cung cấp, kiểm tra phản hồi và lưu cài đặt.</p></div></div>
+          <button onClick={handleClose} disabled={saving} aria-label="Đóng cài đặt" className={secondaryButton}><X size={20} /></button>
         </div>
 
-        {/* Tabs */}
-        <div className="flex border-b border-white/10 px-5 bg-white/[0.01]">
-          <button
-            onClick={() => setActiveTab('local')}
-            className={`py-3 px-4 text-xs font-semibold border-b-2 flex items-center gap-2 transition-all ${
-              activeTab === 'local'
-                ? 'border-green-500 text-green-400'
-                : 'border-transparent text-gray-400 hover:text-gray-200'
-            }`}
-          >
-            <Server size={15} /> Local AI (Ollama / Trên máy)
-          </button>
-          <button
-            onClick={() => setActiveTab('9router')}
-            className={`py-3 px-4 text-xs font-semibold border-b-2 flex items-center gap-2 transition-all ${
-              activeTab === '9router'
-                ? 'border-purple-500 text-purple-400'
-                : 'border-transparent text-gray-400 hover:text-gray-200'
-            }`}
-          >
-            <Cpu size={15} /> 9Router Gateway
-          </button>
-          <button
-            onClick={() => setActiveTab('cloud')}
-            className={`py-3 px-4 text-xs font-semibold border-b-2 flex items-center gap-2 transition-all ${
-              activeTab === 'cloud'
-                ? 'border-blue-500 text-blue-400'
-                : 'border-transparent text-gray-400 hover:text-gray-200'
-            }`}
-          >
-            <Cloud size={15} /> Cloud AI (API Key)
-          </button>
+        <nav aria-label="Nhóm nhà cung cấp AI" className={`flex overflow-x-auto shrink-0 border-b px-2 sm:px-5 ${border}`}>
+          {[
+            ['local', Server, 'AI trên máy'], ['9router', Cpu, '9Router Gateway'], ['cloud', Cloud, 'Cloud / API'],
+          ].map(([tab, Icon, label]) => <button key={tab} onClick={() => setActiveTab(tab)} aria-pressed={activeTab === tab} className={`py-3 px-3 text-xs font-semibold border-b-2 flex items-center gap-2 shrink-0 ${activeTab === tab ? `border-blue-500 ${isDark ? 'text-blue-400' : 'text-blue-700'}` : `border-transparent ${muted}`}`}><Icon size={15} />{label}</button>)}
+        </nav>
+
+        <div className="p-4 sm:p-6 overflow-y-auto min-h-0 flex-1 space-y-4">
+          {loadingSettings && <p role="status" className={`text-sm flex items-center gap-2 ${muted}`}><RefreshCw size={16} className="animate-spin" />Đang tải cài đặt đã lưu...</p>}
+          {settingsError && <div role="alert" className={`p-3 rounded-xl border text-xs space-y-2 ${isDark ? 'bg-rose-500/10 border-rose-500/30 text-rose-200' : 'bg-rose-50 border-rose-300 text-rose-900'}`}><p>{settingsError}</p><button onClick={loadSettings} disabled={busy} className="underline disabled:opacity-50">Thử tải lại cài đặt</button></div>}
+          {saveError && <div role="alert" className={`p-3 rounded-xl border text-xs flex gap-2 ${isDark ? 'bg-rose-500/10 border-rose-500/30 text-rose-200' : 'bg-rose-50 border-rose-300 text-rose-900'}`}><AlertCircle size={15} className="shrink-0" /><p className="break-words">{saveError}</p></div>}
+
+          <fieldset disabled={busy || !settingsLoaded} className="space-y-5 min-w-0 disabled:opacity-60">
+            <div className="space-y-2">
+              <label htmlFor="settings-default-provider" className="block text-xs font-semibold">Nhà cung cấp mặc định</label>
+              <select id="settings-default-provider" value={settings.default_provider} onChange={event => { changeSetting('default_provider', event.target.value); setActiveTab(providers.find(provider => provider.id === event.target.value)?.tab || 'local'); }} className={input}>
+                {providers.map(provider => <option key={provider.id} value={provider.id}>{provider.title}</option>)}
+                {settings.default_provider === 'local_ai' && <option value="local_ai">LocalAI (OpenAI-compatible)</option>}
+              </select>
+              <p className={`text-[11px] leading-relaxed ${muted}`}>Cài đặt mặc định áp dụng khi sổ tay chưa có cấu hình riêng. Nhập Model ID tương ứng bên dưới. Kiểm tra kết nối sẽ gửi một yêu cầu ngắn tới nhà cung cấp.</p>
+            </div>
+
+            {(activeTab === 'local' || activeTab === '9router') && <div className="space-y-2"><div className="flex flex-wrap items-center justify-between gap-2"><p role="status" className={`text-xs ${muted}`}>{scanning ? 'Đang quét dịch vụ trên máy...' : 'Lần quét dùng các endpoint đã lưu trong Cài đặt.'}</p><button type="button" onClick={scanLocalModels} disabled={scanning || busy} className={`${secondaryButton} flex items-center gap-1.5`}><RefreshCw size={13} className={scanning ? 'animate-spin' : ''} />Quét lại</button></div>{scanError && <p role="alert" className={`text-xs ${isDark ? 'text-amber-300' : 'text-amber-800'}`}>{scanError} Bạn vẫn có thể nhập endpoint và kiểm tra trực tiếp.</p>}</div>}
+
+            {providers.filter(provider => provider.tab === activeTab).map(provider => {
+              const detected = localStatus?.[provider.scan];
+              const scannedModels = Array.isArray(detected?.models) ? detected.models : [];
+              const result = testResult[provider.id];
+              const clearing = clearApiKeys.includes(provider.key);
+              const configured = provider.key && settings[`${provider.key}_configured`];
+              return (
+                <section key={provider.id} className={`p-4 rounded-xl border space-y-3 ${border} ${isDark ? 'bg-white/[0.03]' : 'bg-slate-50'}`} aria-label={provider.title}>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="font-semibold text-sm">{provider.title}</h3>
+                    {provider.scan && <span className={`text-[11px] ${scanning || !detected ? muted : detected.available ? isDark ? 'text-green-400' : 'text-green-700' : isDark ? 'text-amber-300' : 'text-amber-800'}`}>{scanning ? 'Đang quét...' : !detected ? 'Chưa xác định kết nối' : detected.available ? `Đã thấy dịch vụ (${scannedModels.length} model)` : 'Chưa kết nối được'}</span>}
+                    {provider.href && <a href={provider.href} target="_blank" rel="noreferrer" className={`text-xs flex items-center gap-1 underline underline-offset-2 ${isDark ? 'text-blue-400' : 'text-blue-700'}`}>Tài liệu / API key<ExternalLink size={11} /></a>}
+                  </div>
+                  {provider.hint && <p className={`text-xs leading-relaxed ${muted}`}>{provider.hint}</p>}
+                  {provider.url && <div><label htmlFor={`settings-${provider.id}-url`} className={`block text-xs mb-1 ${muted}`}>Endpoint / Base URL</label><input id={`settings-${provider.id}-url`} type="url" value={settings[provider.url] || ''} onChange={event => changeSetting(provider.url, event.target.value)} placeholder={initialSettings[provider.url] || 'https://.../v1'} className={`${input} font-mono`} /></div>}
+                  <div><label htmlFor={`settings-${provider.id}-model`} className={`block text-xs mb-1 ${muted}`}>Model ID / Tên model</label><input id={`settings-${provider.id}-model`} value={settings[provider.model] || ''} onChange={event => changeSetting(provider.model, event.target.value)} placeholder={provider.placeholder} list={provider.scan ? `settings-${provider.id}-models` : undefined} className={`${input} font-mono`} />{provider.scan && <datalist id={`settings-${provider.id}-models`}>{scannedModels.map(model => <option key={model.name || model.id} value={model.name || model.id} />)}</datalist>}</div>
+                  {provider.key && <div className="space-y-2"><label htmlFor={`settings-${provider.id}-key`} className={`block text-xs ${muted}`}>API key {configured ? '(đã lưu, nội dung được ẩn)' : '(chưa có key đã lưu)'}</label><div className="relative"><input id={`settings-${provider.id}-key`} type={showKeys[provider.id] ? 'text' : 'password'} autoComplete="off" spellCheck={false} value={settings[provider.key] || ''} onChange={event => changeSetting(provider.key, event.target.value)} placeholder={clearing ? 'Key sẽ bị xóa khi lưu' : configured ? 'Để trống để giữ nguyên key đã lưu' : 'Nhập key mới hoặc để trống nếu không cần'} className={`${input} pr-11 font-mono`} /><button type="button" onClick={() => setShowKeys(previous => ({ ...previous, [provider.id]: !previous[provider.id] }))} aria-label={`${showKeys[provider.id] ? 'Ẩn' : 'Hiện'} key mới của ${provider.title}`} aria-pressed={Boolean(showKeys[provider.id])} className={`absolute right-3 top-3 ${muted}`}>{showKeys[provider.id] ? <EyeOff size={15} /> : <Eye size={15} />}</button></div>{configured && <button type="button" onClick={() => toggleClearKey(provider.key)} className={`text-[11px] underline underline-offset-2 ${isDark ? 'text-rose-300' : 'text-rose-700'}`}>{clearing ? 'Hủy xóa, giữ key đã lưu' : 'Đánh dấu xóa key đã lưu'}</button>}{clearing && <p className={`text-[11px] ${isDark ? 'text-amber-300' : 'text-amber-800'}`}>Key chỉ bị xóa sau khi bấm Lưu Cài Đặt. Nhập key mới sẽ hủy yêu cầu xóa.</p>}</div>}
+                  <button type="button" onClick={() => handleTestConnection(provider)} disabled={busy || clearing} className={`${secondaryButton} border ${border} flex items-center gap-1.5`}>{testingProvider === provider.id ? <RefreshCw size={13} className="animate-spin" /> : <Check size={13} />}{testingProvider === provider.id ? 'Đang chờ phản hồi...' : `Kiểm tra ${provider.title}`}</button>
+                  {result && <div role={result.success ? 'status' : 'alert'} className={`p-3 rounded-lg border text-xs break-words ${result.success ? isDark ? 'bg-green-500/10 text-green-200 border-green-500/30' : 'bg-green-50 text-green-900 border-green-300' : isDark ? 'bg-rose-500/10 text-rose-200 border-rose-500/30' : 'bg-rose-50 text-rose-900 border-rose-300'}`}>{result.message}</div>}
+                </section>
+              );
+            })}
+          </fieldset>
         </div>
 
-        {/* Tab Content */}
-        <div className="p-6 overflow-y-auto flex-1 space-y-6 scrollbar-hide">
-          
-          {/* TAB 1: LOCAL AI */}
-          {activeTab === 'local' && (
-            <div className="space-y-6 animate-fade-in">
-              {/* Ollama Section */}
-              <div className="p-4 rounded-xl bg-white/[0.03] border border-white/10 space-y-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold text-white">Ollama</span>
-                    {localStatus?.ollama?.available ? (
-                      <span className="text-xs px-2.5 py-0.5 rounded-full bg-green-500/20 text-green-400 border border-green-500/30 flex items-center gap-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"></span> Đã kết nối ({localStatus.ollama.models.length} model)
-                      </span>
-                    ) : (
-                      <span className="text-xs px-2.5 py-0.5 rounded-full bg-red-500/20 text-red-400 border border-red-500/30">
-                        Chưa tìm thấy
-                      </span>
-                    )}
-                  </div>
-                  <button 
-                    onClick={scanLocalModels} 
-                    disabled={scanning}
-                    className="text-xs flex items-center gap-1.5 text-gray-400 hover:text-white bg-white/5 hover:bg-white/10 px-3 py-1.5 rounded-lg border border-white/10 transition"
-                  >
-                    <RefreshCw size={13} className={scanning ? 'animate-spin' : ''} /> Quét lại
-                  </button>
-                </div>
-
-                {localStatus?.ollama?.available ? (
-                  <div className="space-y-3">
-                    <div>
-                      <label className="block text-xs font-medium text-gray-400 mb-1.5">Chọn Model Ollama mặc định:</label>
-                      <select
-                        value={settings.default_model}
-                        onChange={e => setSettings({ ...settings, default_model: e.target.value })}
-                        className="w-full bg-[#121316] border border-white/15 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-green-500"
-                      >
-                        {localStatus.ollama.models.map(m => (
-                          <option key={m.name} value={m.name}>
-                            {m.name} ({m.size_gb} GB - {m.details?.parameter_size || 'Local'})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div className="flex gap-2">
-                      <input 
-                        type="text" 
-                        value={settings.ollama_base_url} 
-                        onChange={e => setSettings({ ...settings, ollama_base_url: e.target.value })}
-                        placeholder="http://localhost:11434"
-                        className="flex-1 bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs text-gray-300 focus:outline-none focus:border-green-500 font-mono"
-                      />
-                      <button
-                        onClick={() => handleTestConnection('ollama', settings.default_model, '', settings.ollama_base_url)}
-                        disabled={testingProvider === 'ollama'}
-                        className="px-4 py-2 text-xs font-semibold rounded-xl bg-green-500/10 text-green-400 border border-green-500/30 hover:bg-green-500/20 transition flex items-center gap-1"
-                      >
-                        {testingProvider === 'ollama' ? <RefreshCw size={12} className="animate-spin" /> : <Check size={12} />}
-                        Test
-                      </button>
-                    </div>
-
-                    {testResult.ollama && (
-                      <div className={`p-2.5 rounded-lg text-xs border ${testResult.ollama.success ? 'bg-green-500/10 text-green-300 border-green-500/30' : 'bg-red-500/10 text-red-300 border-red-500/30'}`}>
-                        {testResult.ollama.message}
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-xl text-xs text-yellow-300/90 leading-relaxed">
-                    💡 <strong>Mẹo cho người dùng mới:</strong> Cài ứng dụng <strong>Ollama</strong> (từ ollama.com) rồi chạy lệnh ví dụ <code>ollama run qwen2.5:3b</code> hoặc mở app lên là hệ thống tự động nhận diện 100%!
-                  </div>
-                )}
-              </div>
-
-              {/* LM Studio / Local OpenAI Compatible */}
-              <div className="p-4 rounded-xl bg-white/[0.03] border border-white/10 space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="font-semibold text-white">LM Studio / vLLM / LocalAI</span>
-                  {localStatus?.lm_studio?.available ? (
-                    <span className="text-xs px-2.5 py-0.5 rounded-full bg-green-500/20 text-green-400 border border-green-500/30">
-                      Sẵn sàng
-                    </span>
-                  ) : (
-                    <span className="text-xs text-gray-500">Cổng 1234</span>
-                  )}
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium text-gray-400 mb-1">Địa chỉ Local Endpoint:</label>
-                    <input 
-                      type="text" 
-                      value={settings.lm_studio_base_url}
-                      onChange={e => setSettings({ ...settings, lm_studio_base_url: e.target.value })}
-                      placeholder="http://localhost:1234/v1"
-                      className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500 font-mono"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-gray-400 mb-1">Tên Model tải trong LM Studio:</label>
-                    <input 
-                      type="text" 
-                      value={settings.custom_model || 'local-model'}
-                      onChange={e => setSettings({ ...settings, custom_model: e.target.value })}
-                      placeholder="local-model"
-                      className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500 font-mono"
-                    />
-                  </div>
-                </div>
-
-                <button
-                  onClick={() => handleTestConnection('lm_studio', settings.custom_model || 'local-model', '', settings.lm_studio_base_url)}
-                  disabled={testingProvider === 'lm_studio'}
-                  className="w-full py-2 text-xs font-semibold rounded-xl bg-white/5 hover:bg-white/10 text-gray-200 border border-white/10 transition flex items-center justify-center gap-1.5"
-                >
-                  {testingProvider === 'lm_studio' ? <RefreshCw size={12} className="animate-spin" /> : null}
-                  Kiểm tra kết nối LM Studio
-                </button>
-
-                {testResult.lm_studio && (
-                  <div className={`p-2.5 rounded-lg text-xs border ${testResult.lm_studio.success ? 'bg-green-500/10 text-green-300 border-green-500/30' : 'bg-red-500/10 text-red-300 border-red-500/30'}`}>
-                    {testResult.lm_studio.message}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* TAB 2: 9ROUTER GATEWAY */}
-          {activeTab === '9router' && (
-            <div className="space-y-5 animate-fade-in">
-              <div className="p-4 rounded-xl bg-purple-500/[0.04] border border-purple-500/20 space-y-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold text-white">9Router AI Gateway</span>
-                    {localStatus?.router9?.available ? (
-                      <span className="text-xs px-2.5 py-0.5 rounded-full bg-green-500/20 text-green-400 border border-green-500/30 flex items-center gap-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"></span> Đã kết nối ({localStatus.router9.models.length} model)
-                      </span>
-                    ) : (
-                      <span className="text-xs px-2.5 py-0.5 rounded-full bg-gray-500/20 text-gray-400 border border-gray-500/30">
-                        Chưa chạy cục bộ (Cổng 20128)
-                      </span>
-                    )}
-                  </div>
-                  <a 
-                    href="https://github.com/9router/9router" 
-                    target="_blank" 
-                    rel="noreferrer" 
-                    className="text-xs text-purple-400 hover:underline flex items-center gap-1"
-                  >
-                    Tài liệu 9Router <ExternalLink size={11} />
-                  </a>
-                </div>
-
-                <div className="p-3 bg-black/40 rounded-xl border border-white/10 text-xs text-gray-300 space-y-1.5 leading-relaxed">
-                  <p className="font-medium text-purple-300">⚡ Tính năng nổi bật của 9Router:</p>
-                  <ul className="list-disc list-inside space-y-0.5 text-gray-400 text-[11px]">
-                    <li><strong>Smart 3-Tier Auto Fallback:</strong> Tự động đổi sang model khác khi bị Rate Limit (429) hoặc hết quota.</li>
-                    <li><strong>Hỗ trợ 60+ nhà cung cấp AI</strong> chỉ qua 1 cổng duy nhất tương thích OpenAI API.</li>
-                    <li>Cài đặt nhanh trên máy: <code className="bg-white/10 px-1 py-0.5 rounded text-white font-mono">npm install -g 9router && 9router</code></li>
-                  </ul>
-                </div>
-
-                <div className="space-y-3">
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-300 mb-1">9Router Endpoint URL:</label>
-                    <input 
-                      type="text" 
-                      value={settings.router9_base_url || 'http://localhost:20128/v1'}
-                      onChange={e => setSettings({ ...settings, router9_base_url: e.target.value })}
-                      placeholder="http://localhost:20128/v1"
-                      className="w-full bg-black/40 border border-white/15 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-purple-500 font-mono"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div className="relative">
-                      <label className="block text-xs font-semibold text-gray-300 mb-1">9Router API Key (nếu có đặt):</label>
-                      <input 
-                        type={showKeys.router9 ? "text" : "password"}
-                        value={settings.router9_api_key || ''}
-                        onChange={e => changeApiKey('router9_api_key', e.target.value)}
-                        placeholder={settings.router9_api_key_configured ? 'Đã lưu; để trống để giữ nguyên' : 'Lấy từ Dashboard localhost:20128'}
-                        className="w-full bg-black/40 border border-white/15 rounded-xl px-3.5 py-2.5 pr-10 text-xs text-white focus:outline-none focus:border-purple-500 font-mono"
-                      />
-                      <button 
-                        type="button" 
-                        onClick={() => toggleShowKey('router9')}
-                        className="absolute right-3 top-8 text-gray-400 hover:text-white"
-                      >
-                        {showKeys.router9 ? <EyeOff size={14} /> : <Eye size={14} />}
-                      </button>
-                      {settings.router9_api_key_configured && (
-                        <button type="button" onClick={() => clearSavedApiKey('router9_api_key')} className="mt-2 text-[11px] text-rose-400 hover:text-rose-300">
-                          Xóa key đã lưu
-                        </button>
-                      )}
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-300 mb-1">Tên Model định tuyến:</label>
-                      <input 
-                        type="text" 
-                        value={settings.router9_model || 'claude-3-5-sonnet'}
-                        onChange={e => setSettings({ ...settings, router9_model: e.target.value })}
-                        placeholder="claude-3-5-sonnet, deepseek-chat, gpt-4o"
-                        className="w-full bg-black/40 border border-white/15 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-purple-500 font-mono"
-                      />
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={() => handleTestConnection('9router', settings.router9_model || 'claude-3-5-sonnet', settings.router9_api_key, settings.router9_base_url || 'http://localhost:20128/v1')}
-                    disabled={testingProvider === '9router'}
-                    className="w-full py-2.5 text-xs font-semibold rounded-xl bg-purple-600/20 text-purple-300 border border-purple-500/40 hover:bg-purple-600/30 transition flex items-center justify-center gap-1.5"
-                  >
-                    {testingProvider === '9router' ? <RefreshCw size={13} className="animate-spin" /> : <Check size={13} />}
-                    Kiểm tra kết nối 9Router Gateway
-                  </button>
-
-                  {testResult['9router'] && (
-                    <div className={`p-2.5 rounded-lg text-xs border ${testResult['9router'].success ? 'bg-green-500/10 text-green-300 border-green-500/30' : 'bg-red-500/10 text-red-300 border-red-500/30'}`}>
-                      {testResult['9router'].message}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* TAB 3: CLOUD API */}
-          {activeTab === 'cloud' && (
-            <div className="space-y-5 animate-fade-in">
-              
-              {/* Gemini */}
-              <div className="p-4 rounded-xl bg-white/[0.03] border border-white/10 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold text-white">Google Gemini</span>
-                    <a href="https://aistudio.google.com" target="_blank" rel="noreferrer" className="text-xs text-blue-400 hover:underline flex items-center gap-0.5">
-                      Lấy Key miễn phí <ExternalLink size={10} />
-                    </a>
-                  </div>
-                  <span className="text-xs text-gray-500">Khuyên dùng</span>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div className="sm:col-span-2 relative">
-                    <input 
-                      type={showKeys.gemini ? "text" : "password"}
-                      value={settings.gemini_api_key || ''}
-                      onChange={e => changeApiKey('gemini_api_key', e.target.value)}
-                      placeholder={settings.gemini_api_key_configured ? 'Đã lưu; để trống để giữ nguyên' : 'AIzaSy...'}
-                      className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 pr-10 text-xs text-white focus:outline-none focus:border-blue-500 font-mono"
-                    />
-                    <button 
-                      type="button" 
-                      onClick={() => toggleShowKey('gemini')}
-                      className="absolute right-3 top-2.5 text-gray-400 hover:text-white"
-                    >
-                      {showKeys.gemini ? <EyeOff size={14} /> : <Eye size={14} />}
-                    </button>
-                  </div>
-                  <div>
-                    <select
-                      value={settings.gemini_model || 'gemini-2.5-flash'}
-                      onChange={e => setSettings({ ...settings, gemini_model: e.target.value })}
-                      className="w-full bg-[#121316] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
-                    >
-                      <option value="gemini-2.5-flash">gemini-2.5-flash (Nhanh)</option>
-                      <option value="gemini-2.0-flash">gemini-2.0-flash</option>
-                      <option value="gemini-1.5-flash">gemini-1.5-flash</option>
-                      <option value="gemini-1.5-pro">gemini-1.5-pro (Mạnh)</option>
-                    </select>
-                  </div>
-                </div>
-
-                {settings.gemini_api_key_configured && (
-                  <button type="button" onClick={() => clearSavedApiKey('gemini_api_key')} className="text-[11px] text-rose-400 hover:text-rose-300">Xóa Gemini key đã lưu</button>
-                )}
-
-                <button
-                  onClick={() => handleTestConnection('gemini', settings.gemini_model, settings.gemini_api_key, '')}
-                  disabled={testingProvider === 'gemini' || (!settings.gemini_api_key && !settings.gemini_api_key_configured)}
-                  className="px-4 py-1.5 text-xs font-semibold rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/30 hover:bg-blue-500/20 disabled:opacity-40 transition flex items-center gap-1.5"
-                >
-                  {testingProvider === 'gemini' ? <RefreshCw size={12} className="animate-spin" /> : null}
-                  Kiểm tra Gemini Key
-                </button>
-
-                {testResult.gemini && (
-                  <div className={`p-2.5 rounded-lg text-xs border ${testResult.gemini.success ? 'bg-green-500/10 text-green-300 border-green-500/30' : 'bg-red-500/10 text-red-300 border-red-500/30'}`}>
-                    {testResult.gemini.message}
-                  </div>
-                )}
-              </div>
-
-              {/* OpenAI */}
-              <div className="p-4 rounded-xl bg-white/[0.03] border border-white/10 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="font-semibold text-white">OpenAI (ChatGPT)</span>
-                  <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer" className="text-xs text-blue-400 hover:underline flex items-center gap-0.5">
-                    Lấy Key <ExternalLink size={10} />
-                  </a>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div className="sm:col-span-2 relative">
-                    <input 
-                      type={showKeys.openai ? "text" : "password"}
-                      value={settings.openai_api_key || ''}
-                      onChange={e => changeApiKey('openai_api_key', e.target.value)}
-                      placeholder={settings.openai_api_key_configured ? 'Đã lưu; để trống để giữ nguyên' : 'sk-proj-...'}
-                      className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 pr-10 text-xs text-white focus:outline-none focus:border-blue-500 font-mono"
-                    />
-                    <button 
-                      type="button" 
-                      onClick={() => toggleShowKey('openai')}
-                      className="absolute right-3 top-2.5 text-gray-400 hover:text-white"
-                    >
-                      {showKeys.openai ? <EyeOff size={14} /> : <Eye size={14} />}
-                    </button>
-                  </div>
-                  <div>
-                    <select
-                      value={settings.openai_model || 'gpt-4o-mini'}
-                      onChange={e => setSettings({ ...settings, openai_model: e.target.value })}
-                      className="w-full bg-[#121316] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
-                    >
-                      <option value="gpt-4o-mini">gpt-4o-mini (Tiết kiệm)</option>
-                      <option value="gpt-4o">gpt-4o (Thông minh)</option>
-                      <option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
-                    </select>
-                  </div>
-                </div>
-
-                {settings.openai_api_key_configured && (
-                  <button type="button" onClick={() => clearSavedApiKey('openai_api_key')} className="text-[11px] text-rose-400 hover:text-rose-300">Xóa OpenAI key đã lưu</button>
-                )}
-
-                <button
-                  onClick={() => handleTestConnection('openai', settings.openai_model, settings.openai_api_key, '')}
-                  disabled={testingProvider === 'openai' || (!settings.openai_api_key && !settings.openai_api_key_configured)}
-                  className="px-4 py-1.5 text-xs font-semibold rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/30 hover:bg-blue-500/20 disabled:opacity-40 transition flex items-center gap-1.5"
-                >
-                  {testingProvider === 'openai' ? <RefreshCw size={12} className="animate-spin" /> : null}
-                  Kiểm tra OpenAI Key
-                </button>
-
-                {testResult.openai && (
-                  <div className={`p-2.5 rounded-lg text-xs border ${testResult.openai.success ? 'bg-green-500/10 text-green-300 border-green-500/30' : 'bg-red-500/10 text-red-300 border-red-500/30'}`}>
-                    {testResult.openai.message}
-                  </div>
-                )}
-              </div>
-
-              {/* Groq (Fast & Free) */}
-              <div className="p-4 rounded-xl bg-white/[0.03] border border-white/10 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold text-white">Groq</span>
-                    <span className="text-xs px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 font-semibold">Cực nhanh</span>
-                  </div>
-                  <a href="https://console.groq.com/keys" target="_blank" rel="noreferrer" className="text-xs text-blue-400 hover:underline flex items-center gap-0.5">
-                    Lấy Key miễn phí <ExternalLink size={10} />
-                  </a>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div className="sm:col-span-2 relative">
-                    <input 
-                      type={showKeys.groq ? "text" : "password"}
-                      value={settings.groq_api_key || ''}
-                      onChange={e => changeApiKey('groq_api_key', e.target.value)}
-                      placeholder={settings.groq_api_key_configured ? 'Đã lưu; để trống để giữ nguyên' : 'gsk_...'}
-                      className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 pr-10 text-xs text-white focus:outline-none focus:border-purple-500 font-mono"
-                    />
-                    <button 
-                      type="button" 
-                      onClick={() => toggleShowKey('groq')}
-                      className="absolute right-3 top-2.5 text-gray-400 hover:text-white"
-                    >
-                      {showKeys.groq ? <EyeOff size={14} /> : <Eye size={14} />}
-                    </button>
-                  </div>
-                  <div>
-                    <select
-                      value={settings.groq_model || 'llama-3.3-70b-versatile'}
-                      onChange={e => setSettings({ ...settings, groq_model: e.target.value })}
-                      className="w-full bg-[#121316] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500"
-                    >
-                      <option value="llama-3.3-70b-versatile">llama-3.3-70b</option>
-                      <option value="llama-3.1-8b-instant">llama-3.1-8b (Flash)</option>
-                      <option value="mixtral-8x7b-32768">mixtral-8x7b</option>
-                    </select>
-                  </div>
-                </div>
-
-                {settings.groq_api_key_configured && (
-                  <button type="button" onClick={() => clearSavedApiKey('groq_api_key')} className="text-[11px] text-rose-400 hover:text-rose-300">Xóa Groq key đã lưu</button>
-                )}
-
-                <button
-                  onClick={() => handleTestConnection('groq', settings.groq_model, settings.groq_api_key, '')}
-                  disabled={testingProvider === 'groq' || (!settings.groq_api_key && !settings.groq_api_key_configured)}
-                  className="px-4 py-1.5 text-xs font-semibold rounded-lg bg-purple-500/10 text-purple-400 border border-purple-500/30 hover:bg-purple-500/20 disabled:opacity-40 transition flex items-center gap-1.5"
-                >
-                  {testingProvider === 'groq' ? <RefreshCw size={12} className="animate-spin" /> : null}
-                  Kiểm tra Groq Key
-                </button>
-
-                {testResult.groq && (
-                  <div className={`p-2.5 rounded-lg text-xs border ${testResult.groq.success ? 'bg-green-500/10 text-green-300 border-green-500/30' : 'bg-red-500/10 text-red-300 border-red-500/30'}`}>
-                    {testResult.groq.message}
-                  </div>
-                )}
-              </div>
-
-            </div>
-          )}
-
+        <div className={`p-4 border-t flex flex-wrap items-center justify-between gap-3 ${border}`}>
+          <p className={`text-[11px] leading-relaxed flex-1 min-w-[180px] ${muted}`}>Cài đặt và key được lưu trên máy chủ ứng dụng. Trình duyệt không lưu API key vào localStorage. Để trống key sẽ giữ nguyên key đã lưu.</p>
+          <div className="flex gap-2 ml-auto"><button onClick={handleClose} disabled={saving} className={secondaryButton}>Đóng</button><button onClick={handleSave} disabled={busy || !settingsLoaded} className="px-4 py-2 rounded-xl text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed">{saving ? <RefreshCw size={14} className="animate-spin" /> : <Check size={14} />}{saving ? 'Đang lưu...' : 'Lưu Cài Đặt'}</button></div>
         </div>
-
-        {/* Footer */}
-        <div className="p-4 border-t border-white/10 bg-white/[0.02] flex items-center justify-between">
-          <p className="text-xs text-gray-500">Cài đặt lưu cục bộ trong storage/notebooks.db; hãy bảo vệ file này và bản sao lưu.</p>
-          <div className="flex gap-2">
-            <button
-              onClick={onClose}
-              className="px-4 py-2 rounded-xl text-xs font-medium text-gray-400 hover:text-white hover:bg-white/5 transition"
-            >
-              Đóng
-            </button>
-            <button
-              onClick={handleSave}
-              disabled={loading}
-              className="px-5 py-2 rounded-xl text-xs font-semibold bg-white text-black hover:bg-gray-200 transition shadow-lg flex items-center gap-1.5 disabled:opacity-50"
-            >
-              {loading ? <RefreshCw size={14} className="animate-spin" /> : <Check size={14} />}
-              Lưu Cài Đặt
-            </button>
-          </div>
-        </div>
-
       </div>
     </div>
   );

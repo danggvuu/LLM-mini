@@ -1,18 +1,38 @@
-import React, { useState } from 'react';
+import { Children, isValidElement, useState, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Copy, Check } from 'lucide-react';
 
-function CodeBlock({ children, className, ...props }) {
+function CodeBlock({ children, className }) {
   const [copied, setCopied] = useState(false);
+  const [copying, setCopying] = useState(false);
+  const [copyError, setCopyError] = useState('');
+  const copiedTimerRef = useRef(null);
   const match = /language-(\w+)/.exec(className || '');
   const language = match ? match[1] : '';
   const codeText = String(children).replace(/\n$/, '');
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(codeText);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  useEffect(() => {
+    setCopied(false);
+    setCopyError('');
+    return () => clearTimeout(copiedTimerRef.current);
+  }, [codeText]);
+
+  const handleCopy = async () => {
+    if (copying) return;
+    setCopying(true);
+    setCopied(false);
+    setCopyError('');
+    try {
+      await navigator.clipboard.writeText(codeText);
+      setCopied(true);
+      clearTimeout(copiedTimerRef.current);
+      copiedTimerRef.current = setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopyError('Không sao chép được. Hãy chọn và chép mã trực tiếp.');
+    } finally {
+      setCopying(false);
+    }
   };
 
   return (
@@ -22,6 +42,7 @@ function CodeBlock({ children, className, ...props }) {
         <button
           onClick={handleCopy}
           type="button"
+          disabled={copying}
           className="flex items-center gap-1 hover:text-white transition px-2 py-0.5 rounded hover:bg-white/10"
           title="Sao chép mã"
         >
@@ -38,33 +59,32 @@ function CodeBlock({ children, className, ...props }) {
           )}
         </button>
       </div>
-      <div className="p-3.5 overflow-x-auto text-gray-200 leading-relaxed scrollbar-hide">
+      {copyError && <p role="alert" className="px-3.5 pt-2 text-xs text-red-300">{copyError}</p>}
+      <pre className="p-3.5 overflow-x-auto text-gray-200 leading-relaxed">
         <code>{codeText}</code>
-      </div>
+      </pre>
     </div>
   );
 }
 
 export default function MarkdownRenderer({ content, isDark = true }) {
-  if (!content) return null;
+  if (typeof content !== 'string' || !content) return null;
 
   return (
     <div className={`markdown-content text-sm leading-relaxed ${isDark ? 'text-gray-200' : 'text-gray-800'}`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
-          code({ node, inline, className, children, ...props }) {
-            const hasLang = /language-(\w+)/.test(className || '');
-            const isMultiline = String(children).includes('\n');
-            if (!inline && (hasLang || isMultiline)) {
-              return <CodeBlock className={className} {...props}>{children}</CodeBlock>;
-            }
+          pre({ children }) {
+            const code = Children.toArray(children).find(isValidElement);
+            return <CodeBlock className={code?.props.className}>{code?.props.children ?? children}</CodeBlock>;
+          },
+          code({ children }) {
             return (
               <code 
                 className={`px-1.5 py-0.5 rounded text-[12px] font-mono font-medium ${
                   isDark ? 'bg-white/10 text-pink-300' : 'bg-gray-200 text-purple-700'
                 }`} 
-                {...props}
               >
                 {children}
               </code>
@@ -102,7 +122,7 @@ export default function MarkdownRenderer({ content, isDark = true }) {
             </div>
           ),
           thead: ({ children }) => (
-            <thead className="bg-white/10 text-white font-semibold border-b border-white/15">{children}</thead>
+            <thead className={`font-semibold border-b ${isDark ? 'bg-white/10 text-white border-white/15' : 'bg-gray-100 text-gray-900 border-gray-200'}`}>{children}</thead>
           ),
           th: ({ children }) => (
             <th className="px-3 py-2 border-r border-white/10 last:border-r-0">{children}</th>
