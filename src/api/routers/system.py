@@ -262,7 +262,7 @@ def save_settings_endpoint(payload: SettingsPayload):
     for key in _SECRET_SETTING_KEYS:
         if key in clear_keys:
             data[key] = ""
-        elif key in data and not data[key]:
+        elif key in data and (not data[key] or set(data[key].strip()) <= {"*", "\u2022"}):
             # Empty inputs mean "leave the saved key unchanged". Clearing is
             # explicit via clear_api_keys, so saving other fields is safe.
             data.pop(key)

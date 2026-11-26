@@ -383,10 +383,10 @@ export default function MindmapModal({ isOpen, onClose, mindmapData, onRegenerat
                           className="cursor-pointer flex items-start justify-between gap-2 pb-2.5 border-b border-white/10"
                         >
                           <div>
-                            <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md ${style.badge}`}>
+                            <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md ${isDark ? style.badge : 'bg-purple-50 text-purple-700'}`}>
                               Nhánh {idx + 1}
                             </span>
-                            <h4 className="text-sm font-bold mt-1 text-white group-hover:text-purple-300 transition flex items-center gap-1.5">
+                            <h4 className={`text-sm font-bold mt-1 transition flex items-center gap-1.5 ${isDark ? 'text-white group-hover:text-purple-300' : 'text-gray-900 group-hover:text-purple-700'}`}>
                               {branch.name}
                             </h4>
                           </div>
@@ -399,7 +399,7 @@ export default function MindmapModal({ isOpen, onClose, mindmapData, onRegenerat
                         </div>
 
                         {branch.desc && (
-                          <p className="text-xs text-gray-300 mt-2 leading-relaxed">
+                          <p className={`text-xs mt-2 leading-relaxed ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
                             {branch.desc}
                           </p>
                         )}
@@ -416,11 +416,11 @@ export default function MindmapModal({ isOpen, onClose, mindmapData, onRegenerat
                               <button type="button"
                                 key={sub.id || sIdx}
                                 onClick={() => setSelectedNode(sub)}
-                                className="px-3 py-2 rounded-xl text-xs bg-black/40 hover:bg-black/70 border border-white/10 hover:border-white/20 text-gray-200 transition cursor-pointer flex items-start gap-2 shadow-sm"
+                                className={`w-full text-left px-3 py-2 rounded-xl text-xs border transition cursor-pointer flex items-start gap-2 shadow-sm ${isDark ? 'bg-black/40 hover:bg-black/70 border-white/10 hover:border-white/20 text-gray-200' : 'bg-white/80 hover:bg-white border-gray-200 text-gray-800'}`}
                               >
                                 <span className={`w-2 h-2 rounded-full mt-1 shrink-0 ${style.dot}`}></span>
                                 <div className="flex-1 min-w-0">
-                                  <div className="font-semibold text-white truncate">{sub.name}</div>
+                                  <div className="font-semibold truncate">{sub.name}</div>
                                   {sub.desc && (
                                     <div className="text-[11px] text-gray-400 line-clamp-1 mt-0.5">{sub.desc}</div>
                                   )}
@@ -444,12 +444,12 @@ export default function MindmapModal({ isOpen, onClose, mindmapData, onRegenerat
               {/* Summary Card */}
               <button type="button"
                 onClick={() => setSelectedNode(mindmapData)}
-                className="p-5 rounded-2xl bg-gradient-to-r from-purple-900/40 via-indigo-900/30 to-blue-900/40 border border-purple-500/30 flex items-center justify-between gap-4 cursor-pointer hover:border-purple-500/60 transition"
+                className={`p-5 rounded-2xl border border-purple-500/30 flex flex-wrap text-left items-center justify-between gap-4 cursor-pointer hover:border-purple-500/60 transition ${isDark ? 'bg-gradient-to-r from-purple-900/40 via-indigo-900/30 to-blue-900/40' : 'bg-purple-50'}`}
               >
                 <div>
                   <span className="text-[10px] uppercase tracking-wider text-purple-400 font-bold">Chủ đề chính</span>
-                  <h3 className="text-base font-bold text-white mt-0.5">{mindmapData.name}</h3>
-                  {mindmapData.desc && <p className="text-xs text-gray-300 mt-1">{mindmapData.desc}</p>}
+                  <h3 className={`text-base font-bold mt-0.5 ${isDark ? 'text-white' : 'text-gray-900'}`}>{mindmapData.name}</h3>
+                  {mindmapData.desc && <p className={`text-xs mt-1 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>{mindmapData.desc}</p>}
                 </div>
                 <div className="text-right shrink-0">
                   <span className="text-xs px-2.5 py-1 rounded-lg bg-purple-500/20 text-purple-300 font-mono">
@@ -469,7 +469,7 @@ export default function MindmapModal({ isOpen, onClose, mindmapData, onRegenerat
                     >
                       <div>
                         <div className="flex items-center justify-between gap-2 mb-2">
-                          <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md ${style.badge}`}>
+                          <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md ${isDark ? style.badge : 'bg-purple-50 text-purple-700'}`}>
                             Nhánh {idx + 1}
                           </span>
                           <span className="text-[11px] text-gray-400 font-mono">
@@ -478,12 +478,12 @@ export default function MindmapModal({ isOpen, onClose, mindmapData, onRegenerat
                         </div>
                         <button type="button"
                           onClick={() => setSelectedNode(branch)}
-                          className="text-sm font-bold text-white hover:text-purple-300 cursor-pointer transition"
+                          className={`text-left text-sm font-bold cursor-pointer transition ${isDark ? 'text-white hover:text-purple-300' : 'text-gray-900 hover:text-purple-700'}`}
                         >
                           {branch.name}
                         </button>
                         {branch.desc && (
-                          <p className="text-xs text-gray-300 mt-1.5 leading-relaxed">{branch.desc}</p>
+                          <p className={`text-xs mt-1.5 leading-relaxed ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>{branch.desc}</p>
                         )}
                       </div>
 
@@ -493,11 +493,11 @@ export default function MindmapModal({ isOpen, onClose, mindmapData, onRegenerat
                             <button type="button"
                               key={sub.id || sIdx}
                               onClick={() => setSelectedNode(sub)}
-                              className="p-2 rounded-xl bg-black/30 hover:bg-black/50 border border-white/5 hover:border-white/15 transition cursor-pointer flex items-center justify-between gap-2 text-xs"
+                              className={`w-full text-left p-2 rounded-xl border transition cursor-pointer flex items-center justify-between gap-2 text-xs ${isDark ? 'bg-black/30 hover:bg-black/50 border-white/5 hover:border-white/15' : 'bg-white/80 hover:bg-white border-gray-200'}`}
                             >
                               <div className="flex items-center gap-2 min-w-0">
                                 <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${style.dot}`}></span>
-                                <span className="font-medium text-gray-200 truncate">{sub.name}</span>
+                                <span className={`font-medium truncate ${isDark ? 'text-gray-200' : 'text-gray-800'}`}>{sub.name}</span>
                               </div>
                               <ChevronRight size={13} className="text-gray-500 shrink-0" />
                             </button>
@@ -526,7 +526,7 @@ export default function MindmapModal({ isOpen, onClose, mindmapData, onRegenerat
                 <button 
                    onClick={() => setSelectedNode(null)}
                    aria-label="Đóng chi tiết khái niệm"
-                  className="text-gray-400 hover:text-white p-1 rounded-lg hover:bg-white/10 transition"
+                  className="text-gray-500 hover:text-purple-500 p-2 rounded-lg transition"
                 >
                   <X size={15} />
                 </button>

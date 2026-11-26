@@ -155,7 +155,10 @@ def review_srs_card(notebook_id: str, payload: SrsReviewRequest):
     cards = guide.get("flashcards")
     if not isinstance(cards, list) or payload.card_index >= len(cards):
         raise HTTPException(status_code=404, detail="Thẻ nhớ không còn tồn tại. Vui lòng tải lại bộ thẻ.")
-    res = sm.update_srs_progress(notebook_id, payload.card_index, payload.rating)
+    try:
+        res = sm.update_srs_progress(notebook_id, payload.card_index, payload.rating)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"status": "success", "card": res}
 
 @router.get("/api/notebooks/{notebook_id}/mindmap")

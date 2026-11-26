@@ -666,6 +666,11 @@ class SessionManager:
         from datetime import datetime, timedelta, timezone
         
         with self._get_conn() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            saved_cards = conn.execute("SELECT flashcards FROM study_guides WHERE notebook_id = ?", (notebook_id,)).fetchone()
+            cards = json.loads(saved_cards[0]) if saved_cards and saved_cards[0] else []
+            if not isinstance(cards, list) or type(card_index) is not int or not 0 <= card_index < len(cards) or rating not in {1, 2, 3, 4}:
+                raise ValueError("Thẻ nhớ hoặc đánh giá không hợp lệ. Vui lòng tải lại bộ thẻ.")
             cursor = conn.execute(
                 "SELECT ease_factor, interval_days, repetitions FROM flashcard_progress WHERE notebook_id = ? AND card_index = ?",
                 (notebook_id, card_index)
@@ -748,6 +753,39 @@ class SessionManager:
 
     def import_notebook_data(self, data: Dict[str, Any]) -> str:
         nb_info = data.get("notebook", {})
+        if not isinstance(nb_info, dict) or not isinstance(nb_info.get("title", ""), str):
+            raise ValueError("Thông tin sổ tay không hợp lệ.")
+        for key in ("documents", "messages"):
+            if not isinstance(data.get(key, []), list) or any(not isinstance(item, dict) for item in data.get(key, [])):
+                raise ValueError(f"{key} phải là danh sách đối tượng.")
+        if any(not isinstance(doc.get("filename"), str) or not doc["filename"].strip() for doc in data.get("documents", [])):
+            raise ValueError("Tên nguồn tài liệu không hợp lệ.")
+        if any(msg.get("role") not in {"user", "assistant", "system"} or not isinstance(msg.get("content"), str) for msg in data.get("messages", [])):
+            raise ValueError("Tin nhắn trong sổ tay không hợp lệ.")
+        sg = data.get("study_guide")
+        if sg is not None and not isinstance(sg, dict):
+            raise ValueError("Cẩm nang phải là đối tượng JSON.")
+        if sg:
+            from src.learning.guide_generator import GuideGenerator
+            sg = dict(sg)
+            if sg.get("quiz") is not None:
+                sg["quiz"] = GuideGenerator._validate_quiz(sg["quiz"])
+            if sg.get("flashcards") is not None:
+                sg["flashcards"] = GuideGenerator._validate_flashcards(sg["flashcards"])
+        srs_data = data.get("srs_progress", {})
+        if not isinstance(srs_data, dict):
+            raise ValueError("Tiến độ thẻ nhớ phải là đối tượng JSON.")
+        validated_srs = []
+        for c_idx, c_info in srs_data.items():
+            if not isinstance(c_info, dict):
+                raise ValueError("Tiến độ thẻ nhớ không hợp lệ.")
+            card_index = int(c_info.get("card_index", c_idx))
+            if not sg or not 0 <= card_index < len(sg.get("flashcards") or []):
+                raise ValueError("Tiến độ tham chiếu thẻ nhớ không tồn tại.")
+            validated_srs.append((
+                card_index, float(c_info.get("ease_factor", 2.5)), int(c_info.get("interval_days", 0)),
+                int(c_info.get("repetitions", 0)), c_info.get("next_review_date", ""), int(c_info.get("last_rating", 0)),
+            ))
         new_id = uuid.uuid4().hex
         title = nb_info.get("title", "Notebook đã nhập") + " (Bản sao)"
         
@@ -770,7 +808,6 @@ class SessionManager:
             self.save_message(new_id, msg.get("role", "user"), msg.get("content", ""), msg.get("citations"))
             
         # Import study guide
-        sg = data.get("study_guide")
         if sg:
             self.save_study_guide(
                 new_id,
@@ -784,23 +821,14 @@ class SessionManager:
             )
             
         # Import tiến độ học thẻ nhớ SRS (nếu có)
-        srs_data = data.get("srs_progress", {})
-        if isinstance(srs_data, dict) and srs_data:
+        if validated_srs:
             with self._get_conn() as conn:
-                for c_idx, c_info in srs_data.items():
+                for progress in validated_srs:
                     conn.execute(
                         """INSERT OR REPLACE INTO flashcard_progress 
                            (notebook_id, card_index, ease_factor, interval_days, repetitions, next_review_date, last_rating)
                            VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                        (
-                            new_id,
-                            int(c_info.get("card_index", c_idx)),
-                            float(c_info.get("ease_factor", 2.5)),
-                            int(c_info.get("interval_days", 0)),
-                            int(c_info.get("repetitions", 0)),
-                            c_info.get("next_review_date", ""),
-                            int(c_info.get("last_rating", 0))
-                        )
+                        (new_id, *progress)
                     )
                 conn.commit()
 

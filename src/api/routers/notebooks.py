@@ -118,18 +118,20 @@ def update_notebook_settings(notebook_id: str, data: NotebookUpdate):
     if not nb:
         raise HTTPException(status_code=404, detail="Notebook not found")
 
+    new_provider = data.provider.lower() if data.provider else None
+    provider_changed = new_provider is not None and new_provider != (nb.get("provider") or "").lower()
     new_base_url = data.base_url
-    if data.provider and data.provider != nb.get('provider') and new_base_url is None:
+    if provider_changed and new_base_url is None:
         new_base_url = ""
     new_api_key = data.api_key
-    if data.provider and data.provider != nb.get("provider") and new_api_key is None:
-        new_api_key = ""
+    if new_api_key is None or not new_api_key.strip() or set(new_api_key.strip()) <= {"*", "\u2022"}:
+        new_api_key = "" if provider_changed else None
 
     sm.update_notebook_settings(
         notebook_id=notebook_id,
         title=data.title,
-        provider=data.provider,
-        model_name=data.model_name,
+        provider=new_provider,
+        model_name="" if provider_changed and data.model_name is None else data.model_name,
         api_key=new_api_key,
         base_url=new_base_url,
         is_private=data.is_private
@@ -166,11 +168,11 @@ def export_notebook_endpoint(notebook_id: str):
     for doc in data.get("documents", []):
         fname = doc.get("filename")
         if fname:
-            doc_chunks = vs.get_chunks_by_document(notebook_id, fname, limit=200)
-            for c_text in doc_chunks:
+            doc_chunks = vs.get_document_chunk_records(notebook_id, fname, limit=10000)
+            for chunk in doc_chunks:
                 chunks_export.append({
-                    "content": c_text,
-                    "metadata": {"filename": fname}
+                    "content": chunk["content"],
+                    "metadata": {**chunk.get("metadata", {}), "filename": fname}
                 })
     data["chunks"] = chunks_export
     data["pinned_notes"] = _load_notes(notebook_id)
@@ -180,9 +182,23 @@ def export_notebook_endpoint(notebook_id: str):
 async def import_notebook_endpoint(payload: Dict[str, Any]):
     """Nhập dữ liệu sổ tay từ file JSON và tự động tái lập chỉ mục Qdrant + BM25."""
     sm = get_session_manager()
-    new_id = await run_in_threadpool(sm.import_notebook_data, payload)
-    
+    imported_notes = payload.get("pinned_notes", [])
     imported_chunks = payload.get("chunks", [])
+    if not isinstance(imported_notes, list) or any(
+        not isinstance(note, dict) or not isinstance(note.get("content"), str) or not isinstance(note.get("id"), str)
+        for note in imported_notes
+    ):
+        raise HTTPException(status_code=422, detail="Danh sách ghi chú trong tệp nhập không hợp lệ.")
+    if not isinstance(imported_chunks, list) or any(
+        not isinstance(chunk, dict) or not isinstance(chunk.get("content"), str) or not isinstance(chunk.get("metadata", {}), dict)
+        for chunk in imported_chunks
+    ):
+        raise HTTPException(status_code=422, detail="Các đoạn nội dung trong tệp nhập không hợp lệ.")
+    try:
+        new_id = await run_in_threadpool(sm.import_notebook_data, payload)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=422, detail=f"Tệp sổ tay không hợp lệ: {exc}") from exc
+    
     if imported_chunks and isinstance(imported_chunks, list):
         formatted_chunks = []
         for ch in imported_chunks:
@@ -195,7 +211,6 @@ async def import_notebook_endpoint(payload: Dict[str, Any]):
             vs = await run_in_threadpool(get_vector_store)
             await run_in_threadpool(vs.index_chunks, formatted_chunks)
 
-    imported_notes = payload.get("pinned_notes", [])
     if imported_notes and isinstance(imported_notes, list):
         _save_notes(new_id, imported_notes)
 

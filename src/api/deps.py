@@ -170,8 +170,8 @@ class PodcastRequest(BaseModel):
     notebook_id: str
 
 class SrsReviewRequest(BaseModel):
-    card_index: int
-    rating: int
+    card_index: int = Field(ge=0, strict=True)
+    rating: int = Field(ge=1, le=4, strict=True)
 
 class CompareDocsRequest(BaseModel):
     filenames: List[str]
@@ -200,7 +200,9 @@ def resolve_llm_config(notebook: dict, override_provider: str = None, override_m
     global_settings = sm.get_app_settings()
 
     provider = (override_provider or notebook.get('provider') or global_settings.get('default_provider', 'ollama')).lower()
-    model_name = override_model or notebook.get('model_name')
+    nb_provider = (notebook.get('provider') or '').lower()
+    same_provider = provider == nb_provider
+    model_name = override_model or (notebook.get('model_name') if same_provider else None)
     
     if not model_name or str(model_name).strip() == "":
         if provider == "ollama":
@@ -215,27 +217,19 @@ def resolve_llm_config(notebook: dict, override_provider: str = None, override_m
             model_name = global_settings.get("groq_model", "llama-3.3-70b-versatile")
         elif provider == "openrouter":
             model_name = global_settings.get("openrouter_model", "deepseek/deepseek-r1")
+        elif provider in {"custom", "lm_studio", "local_ai", "vllm", "hf_local"}:
+            model_name = global_settings.get("custom_model") or "default"
         else:
             model_name = "default"
 
-    nb_url = notebook.get('base_url', '') or ''
-    nb_provider = (notebook.get('provider', '') or '').lower()
+    nb_url = (notebook.get('base_url') or '') if same_provider else ''
 
     if provider == "ollama":
-        if nb_url and ("11434" in nb_url or "ollama" in nb_url) and "20128" not in nb_url and "1234" not in nb_url:
-            base_url = nb_url
-        else:
-            base_url = global_settings.get("ollama_base_url") or "http://127.0.0.1:11434"
+        base_url = nb_url or global_settings.get("ollama_base_url") or "http://127.0.0.1:11434"
     elif provider == "9router":
-        if nb_url and ("20128" in nb_url or "router" in nb_url):
-            base_url = nb_url
-        else:
-            base_url = global_settings.get("router9_base_url") or "http://localhost:20128/v1"
+        base_url = nb_url or global_settings.get("router9_base_url") or "http://localhost:20128/v1"
     elif provider in ["lm_studio", "local_ai"]:
-        if nb_url and ("1234" in nb_url or "8080" in nb_url):
-            base_url = nb_url
-        else:
-            base_url = global_settings.get("lm_studio_base_url") or "http://localhost:1234/v1"
+        base_url = nb_url or global_settings.get("lm_studio_base_url") or "http://localhost:1234/v1"
     elif provider == "gemini":
         base_url = ""
     elif provider == "openai":
@@ -259,11 +253,11 @@ def resolve_llm_config(notebook: dict, override_provider: str = None, override_m
     elif provider == "openrouter":
         api_key = nb_key if (nb_provider == "openrouter" and nb_key) else global_settings.get("openrouter_api_key", "")
     elif provider == "custom":
-        api_key = nb_key or global_settings.get("custom_api_key", "")
+        api_key = nb_key if same_provider and nb_key else global_settings.get("custom_api_key", "")
     else:
         api_key = ""
 
-    is_private = provider in ["ollama", "lm_studio", "local_ai"]
+    is_private = provider in ["ollama", "lm_studio", "local_ai", "vllm", "hf_local"]
     return provider, model_name, api_key, base_url, is_private
 
 def get_notebook_id(request: Request, notebook_id: Optional[str] = None) -> str:
@@ -299,6 +293,7 @@ def _save_notes(notebook_id: str, notes: List[Dict[str, Any]]) -> None:
             json.dump(notes, f, ensure_ascii=False, indent=2)
     except Exception as e:
         logger.error(f"Lỗi khi lưu ghi chú notebook {notebook_id}: {e}")
+        raise HTTPException(status_code=500, detail="Không thể lưu ghi chú. Vui lòng kiểm tra quyền ghi thư mục lưu trữ.") from e
 
 def get_notebook_engines(notebook_id: str = "default") -> Dict[str, Any]:
     global _NOTEBOOK_CACHE

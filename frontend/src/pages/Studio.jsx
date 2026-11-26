@@ -49,6 +49,7 @@ function Studio() {
   const [guideError, setGuideError] = useState('');
   const [guidePollVersion, setGuidePollVersion] = useState(0);
   const [documents, setDocuments] = useState([]);
+  const [sourceSearch, setSourceSearch] = useState('');
   const [podcastGenerating, setPodcastGenerating] = useState(false);
   const [audioUrl, setAudioUrl] = useState(null);
   
@@ -1554,16 +1555,16 @@ function Studio() {
   const currentModel = activeNotebook.model_name || (currentProvider === 'ollama' ? 'qwen2.5:3b' : 'gemini-2.5-flash');
 
   return (
-    <div className={`h-screen w-full flex overflow-hidden font-sans transition-colors ${
+    <div data-theme={theme} className={`studio-shell h-dvh w-full flex overflow-hidden font-sans transition-colors pb-16 lg:pb-0 ${
       isDark ? 'bg-[#101216] text-white selection:bg-blue-500/30' : 'bg-[#f8fafc] text-slate-900 selection:bg-blue-200'
     }`}>
       
       {/* Cột 1: Left Sidebar (Sources) */}
       <div className={`${
-        showLeftSidebar ? 'w-64 xl:w-72 flex' : 'hidden'
+        showLeftSidebar ? 'w-64 xl:w-72 hidden lg:flex' : 'hidden'
       } flex-shrink-0 h-full border-r flex-col p-4 z-20 relative transition-all duration-200 ${
         isDark ? 'bg-[#14161a] border-white/5' : 'bg-white border-slate-200'
-      } ${mobileActiveTab === 'docs' ? '!flex fixed inset-0 z-40 w-full md:relative md:w-64 xl:md:w-72' : ''}`}>
+      } ${mobileActiveTab === 'docs' ? '!flex !w-full fixed inset-0 bottom-16 z-20 lg:!w-64 xl:lg:!w-72 lg:relative lg:inset-auto' : ''}`}>
         
         <div className="flex items-center justify-between pb-3.5 border-b border-white/10 mb-4 min-h-[44px]">
           <button onClick={() => navigate('/dashboard')} className={`flex items-center gap-2 transition-colors text-sm font-medium ${isDark ? 'text-gray-400 hover:text-white' : 'text-slate-500 hover:text-slate-900'}`}>
@@ -1632,7 +1633,12 @@ function Studio() {
           </div>
         )}
         
-        <div className="flex-1 overflow-y-auto scrollbar-hide space-y-2">
+        {documents.length > 0 && <label className="relative mb-3 block">
+          <span className="sr-only">Tìm nguồn tài liệu</span>
+          <Search size={14} className="absolute left-3 top-3 text-slate-400" />
+          <input value={sourceSearch} onChange={event => setSourceSearch(event.target.value)} placeholder="Tìm tài liệu..." className={`w-full rounded-xl border py-2.5 pl-9 pr-3 text-xs ${isDark ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'}`} />
+        </label>}
+        <div className="flex-1 min-h-0 overflow-y-auto space-y-2">
           {documents.length === 0 && uploadingDocs.length === 0 ? (
             <div className="text-center text-gray-500 text-xs mt-12 px-4 leading-relaxed">
               Chưa có tài liệu nào.<br />Hãy tải tệp PDF, Word, Ảnh hoặc dán Link bài viết vào đây.
@@ -1646,11 +1652,11 @@ function Studio() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-medium truncate text-gray-200" title={doc.filename}>{doc.filename}</p>
-                    <p className="text-[10px] text-blue-400 truncate mt-0.5">Đang xử lý & nhúng vector...</p>
+                    <p role="status" className="text-[10px] text-blue-400 truncate mt-0.5">Đang đọc tài liệu...</p>
                   </div>
                 </div>
               ))}
-              {documents.map((doc, index) => {
+              {documents.filter(doc => doc.filename.toLowerCase().includes(sourceSearch.toLowerCase())).map((doc, index) => {
                 const isSelected = selectedDocs.has(doc.filename);
                 return (
                   <div 
@@ -1676,6 +1682,9 @@ function Studio() {
                             : 'border-white/30 bg-white/5 hover:border-white/50 text-transparent'
                         }`}
                         title={isSelected ? "Bỏ chọn" : "Chọn làm ngữ cảnh"}
+                        role="checkbox"
+                        aria-checked={isSelected}
+                        aria-label={`Dùng ${doc.filename} làm nguồn`}
                       >
                         <Check size={11} strokeWidth={3} />
                       </button>
@@ -1690,7 +1699,7 @@ function Studio() {
                         <p className="text-[10px] text-gray-500 truncate">{new Date(doc.created_at).toLocaleDateString('vi-VN')}</p>
                       </div>
                     </div>
-                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition shrink-0" onClick={e => e.stopPropagation()}>
+                    <div className="flex items-center gap-1 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 focus-within:opacity-100 transition shrink-0" onClick={e => e.stopPropagation()}>
                       <button 
                         onClick={(e) => handleInspectChunks(doc.filename, e)}
                         className="p-1.5 rounded text-gray-400 hover:text-emerald-400 hover:bg-emerald-500/10 transition"
@@ -1726,7 +1735,7 @@ function Studio() {
               onClick={() => setShowUrlInput(!showUrlInput)}
               className="bg-white/5 hover:bg-white/10 text-gray-200 py-2 rounded-xl flex justify-center items-center gap-1.5 font-medium text-xs transition border border-white/10"
             >
-              <LinkIcon size={14} /> Link / YT
+              <LinkIcon size={14} /> Website / YouTube
             </button>
             <button 
               onClick={() => setShowPasteTextModal(true)}
@@ -1739,7 +1748,7 @@ function Studio() {
             onClick={() => document.getElementById('file-upload').click()}
             className="w-full bg-white text-black hover:bg-gray-200 py-2.5 rounded-xl flex justify-center items-center gap-2 font-semibold text-xs transition shadow-lg"
           >
-            <Plus size={15} /> Tải tệp lên (Nhiều tệp)
+            {uploading ? <Loader size={15} className="animate-spin" /> : <Plus size={15} />} {uploading ? 'Đang thêm tài liệu...' : 'Thêm tài liệu'}
           </button>
         </div>
       </div>

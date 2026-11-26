@@ -113,7 +113,7 @@ export default function QuizletModal({
         if (!controller.signal.aborted) setError(getErrorMessage(err, 'Không tải được tiến độ ôn tập.'));
       });
     return () => controller.abort();
-  }, [isOpen, notebookId]);
+  }, [isOpen, notebookId, flashcards]);
 
   const handleKeyboard = useEffectEvent((e) => {
     if (!isOpen || !['flashcards', 'srs'].includes(mode) || !cards.length || srsLoading) return;
@@ -621,7 +621,7 @@ export default function QuizletModal({
                   <div className="w-16 h-16 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center mx-auto shadow-xl">
                     <Trophy size={32} />
                   </div>
-                  <h3 className="text-2xl font-bold text-white">Hoàn thành bài thi thử!</h3>
+                  <h3 className="text-2xl font-bold">Hoàn thành bài thi thử!</h3>
                   <div className="flex justify-center gap-6 text-sm font-mono pt-2">
                     <div className="p-3 rounded-2xl bg-white/5 border border-white/10">
                       <div className="text-gray-400 text-xs">Tổng điểm</div>
@@ -740,8 +740,8 @@ export default function QuizletModal({
                           isWrong 
                             ? 'bg-red-500/30 border-red-500 text-red-200 animate-shake'
                             : isSelected
-                            ? 'bg-blue-600/30 border-blue-500 text-white scale-105 shadow-lg'
-                            : 'bg-white/5 border-white/10 hover:border-white/25 text-gray-300 hover:text-white'
+                            ? `bg-blue-600/30 border-blue-500 scale-105 shadow-lg ${isDark ? 'text-white' : 'text-blue-950'}`
+                            : isDark ? 'bg-white/5 border-white/10 hover:border-white/25 text-gray-300 hover:text-white' : 'bg-gray-50 border-gray-200 hover:border-blue-300 text-gray-800'
                         }`}
                       >
                         <span className="line-clamp-3">{tile.text}</span>
@@ -754,7 +754,7 @@ export default function QuizletModal({
                   <div className="w-16 h-16 rounded-full bg-yellow-500/20 text-yellow-400 flex items-center justify-center mx-auto shadow-xl">
                     <Trophy size={32} />
                   </div>
-                  <h3 className="text-2xl font-bold text-white">Xuất sắc! Bạn đã ghép xong</h3>
+                  <h3 className="text-2xl font-bold">Bạn đã ghép xong</h3>
                   <p className="text-gray-400 text-sm">
                     Thời gian hoàn thành: <span className="text-yellow-400 font-bold font-mono text-base">{gameTimer} giây</span>
                   </p>
@@ -772,11 +772,11 @@ export default function QuizletModal({
           {/* MODE 5: EXPORT TO QUIZLET.COM */}
           {mode === 'export' && (
             <div className="w-full max-w-xl space-y-5 animate-fade-in my-auto">
-              <div className="bg-purple-500/10 border border-purple-500/20 p-4 rounded-2xl text-xs text-purple-200 space-y-2">
-                <h4 className="font-bold flex items-center gap-1.5 text-purple-300">
+              <div className="bg-purple-500/10 border border-purple-500/20 p-4 rounded-2xl text-xs space-y-2">
+                <h4 className={`font-bold flex items-center gap-1.5 ${isDark ? 'text-purple-300' : 'text-purple-700'}`}>
                   <ExternalLink size={14} /> Cách nạp nhanh vào Quizlet.com:
                 </h4>
-                <ol className="list-decimal list-inside space-y-1 text-gray-300">
+                <ol className={`list-decimal list-inside space-y-1 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
                   <li>Bấm nút <strong>"Sao chép toàn bộ thẻ"</strong> bên dưới.</li>
                   <li>Truy cập <a href="https://quizlet.com/create-set" target="_blank" rel="noreferrer" className="text-purple-400 underline font-semibold">quizlet.com/create-set</a></li>
                   <li>Bấm vào <strong>"Nhập từ Word, Excel, Google Docs"</strong> và dán (Ctrl+V / Cmd+V) vào ô. Xong!</li>
@@ -789,7 +789,7 @@ export default function QuizletModal({
                   <button
                     onClick={handleCopyExport}
                     disabled={copying || !cards.length}
-                    className="text-xs px-3 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white flex items-center gap-1 transition"
+                    className={`text-xs px-3 py-1 rounded-lg flex items-center gap-1 transition ${isDark ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-gray-100 hover:bg-gray-200 text-gray-800'}`}
                   >
                     {copied ? <CheckCheck size={14} className="text-green-400" /> : <Copy size={14} />}
                     <span>{copied ? "Đã sao chép!" : "Sao chép toàn bộ"}</span>
@@ -800,7 +800,7 @@ export default function QuizletModal({
                   readOnly
                   value={exportText}
                   rows={8}
-                  className="w-full bg-black/40 border border-white/15 rounded-xl p-3 font-mono text-xs text-gray-300 focus:outline-none select-all"
+                  className={`w-full border rounded-xl p-3 font-mono text-xs focus:outline-none select-all ${isDark ? 'bg-black/40 border-white/15 text-gray-300' : 'bg-gray-50 border-gray-200 text-gray-700'}`}
                 />
               </div>
 
