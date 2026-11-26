@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useDeferredValue } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
-  BookOpen, Plus, Search, Check, Settings, Trash2, Cpu, Cloud, Server, 
-  ExternalLink, Sun, Moon, Upload, FileJson, Mountain, Sparkles, RefreshCw, Activity 
+  BookOpen, Plus, Search, Check, Settings, Trash2, Cloud, Server,
+  Sun, Moon, Upload, Sparkles, RefreshCw, Activity, X
 } from 'lucide-react';
-import axios from 'axios';
+import { requestJson, getErrorMessage } from '../lib/api';
+import useDialog from '../hooks/useDialog';
 import { motion, AnimatePresence } from 'motion/react';
 import { spring, transition, blur } from '@animate-ui/react/utils/motion';
 import SettingsModal from '../components/SettingsModal';
@@ -14,9 +15,17 @@ function Dashboard() {
   const navigate = useNavigate();
   const [notebooks, setNotebooks] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const deferredSearch = useDeferredValue(searchQuery);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [createError, setCreateError] = useState('');
+  const [sortBy, setSortBy] = useState('newest');
   const [showModal, setShowModal] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showSystemHealth, setShowSystemHealth] = useState(false);
+  const createDialogRef = useRef(null);
+  useDialog(createDialogRef, () => { if (!saving) setShowModal(false); }, showModal);
 
   // Theme state
   const [theme, setTheme] = useState(() => localStorage.getItem('notebooklm_theme') || 'dark');
@@ -38,14 +47,11 @@ function Dashboard() {
     try {
       const text = await file.text();
       const parsed = JSON.parse(text);
-      const res = await axios.post('/api/notebooks/import', parsed);
-      if (res.data && res.data.notebook_id) {
-        alert("Nhập sổ tay thành công!");
-        fetchNotebooks();
-        navigate(`/notebook/${res.data.notebook_id}`);
-      }
+      const data = await requestJson('/api/notebooks/import', { method: 'POST', body: JSON.stringify(parsed) });
+      if (!data?.notebook_id) throw new Error('Chưa nhận được sổ tay đã nhập. Hãy thử lại.');
+      navigate(`/notebook/${data.notebook_id}`);
     } catch (err) {
-      alert("Lỗi nhập sổ tay: " + (err.response?.data?.detail || err.message));
+      setError('Không thể nhập sổ tay: ' + getErrorMessage(err));
     } finally {
       setImporting(false);
       if (importInputRef.current) importInputRef.current.value = "";
@@ -55,15 +61,14 @@ function Dashboard() {
   // Seed Lao Cai Sample Notebook State
   const [seedingLaoCai, setSeedingLaoCai] = useState(false);
   const handleSeedLaoCai = async () => {
+    if (seedingLaoCai) return;
     setSeedingLaoCai(true);
     try {
-      const res = await axios.post('/api/notebooks/seed/lao-cai');
-      if (res.data && res.data.notebook_id) {
-        fetchNotebooks();
-        navigate(`/notebook/${res.data.notebook_id}`);
-      }
+      const data = await requestJson('/api/notebooks/seed/lao-cai', { method: 'POST' });
+      if (!data?.notebook_id) throw new Error('Chưa tạo được sổ tay mẫu.');
+      navigate(`/notebook/${data.notebook_id}`);
     } catch (err) {
-      alert("Lỗi khi nạp Sổ tay Lào Cai: " + (err.response?.data?.detail || err.message));
+      setError('Không thể tải sổ tay mẫu: ' + getErrorMessage(err));
     } finally {
       setSeedingLaoCai(false);
     }
@@ -83,26 +88,26 @@ function Dashboard() {
   }, []);
 
   const fetchNotebooks = async () => {
+    setLoading(true);
+    setError('');
     try {
-      const res = await axios.get('/api/notebooks');
-      setNotebooks(res.data);
+      const data = await requestJson('/api/notebooks');
+      setNotebooks(data);
     } catch (err) {
-      console.error(err);
-    }
+      setError(getErrorMessage(err, 'Không thể tải sổ tay. Kiểm tra kết nối rồi thử lại.'));
+    } finally { setLoading(false); }
   };
 
   const fetchSettingsAndModels = async () => {
     try {
-      const [settingsRes, modelsRes] = await Promise.all([
-        axios.get('/api/settings'),
-        axios.get('/api/llm/local-models')
+      const [settings, models] = await Promise.all([
+        requestJson('/api/settings'),
+        requestJson('/api/llm/local-models').catch(() => null),
       ]);
-      setGlobalSettings(settingsRes.data || {});
-      const ollamaModels = modelsRes.data?.ollama?.models || [];
+      setGlobalSettings(settings || {});
+      const ollamaModels = models?.ollama?.models || [];
       setLocalModels(ollamaModels);
-      if (ollamaModels.length > 0 && !selectedModel) {
-        setSelectedModel(ollamaModels[0].name);
-      }
+      setSelectedModel(current => current || ollamaModels[0]?.name || settings.ollama_chat_model || 'qwen2.5:3b');
     } catch (err) {
       console.error(err);
     }
@@ -112,6 +117,7 @@ function Dashboard() {
     fetchSettingsAndModels();
     setNewTitle('');
     setCustomKey('');
+    setCreateError('');
     setShowModal(true);
   };
 
@@ -119,48 +125,51 @@ function Dashboard() {
     e.stopPropagation();
     if (!window.confirm("Bạn có chắc chắn muốn xóa Sổ tay này cùng toàn bộ tài liệu bên trong không?")) return;
     try {
-      await axios.delete(`/api/notebooks/${id}`);
+      await requestJson(`/api/notebooks/${id}`, { method: 'DELETE' });
       setNotebooks(prev => prev.filter(nb => nb.id !== id));
     } catch (err) {
-      alert("Lỗi xóa sổ tay: " + (err.response?.data?.detail || err.message));
+      setError('Không thể xóa sổ tay: ' + getErrorMessage(err));
     }
   };
 
-  const handleCreate = async () => {
-    if (!newTitle.trim()) return;
+  const handleCreate = async (event) => {
+    event?.preventDefault();
+    if (!newTitle.trim() || saving) return;
+    setCreateError('');
 
-    let finalKey = customKey.trim();
+    const finalKey = customKey.trim();
     const keyName = provider === '9router' ? 'router9' : provider;
     const keyConfigured = Boolean(globalSettings[`${keyName}_api_key_configured`]);
 
     if (['gemini', 'openai', 'groq', 'openrouter'].includes(provider) && !finalKey && !keyConfigured) {
-      alert(`Vui lòng nhập API Key cho ${provider.toUpperCase()} hoặc cài đặt trong phần Cài đặt!`);
+      setCreateError(`Nhập API key cho ${provider.toUpperCase()} hoặc lưu khóa trong Cài đặt trước khi tạo sổ tay.`);
       return;
     }
     
-    const id = Date.now().toString();
+    const id = crypto.randomUUID();
     const isPrivate = ['ollama', 'lm_studio'].includes(provider);
 
+    setSaving(true);
     try {
-      await axios.post('/api/notebooks', {
+      await requestJson('/api/notebooks', { method: 'POST', body: JSON.stringify({
         id,
         title: newTitle.trim(),
         is_private: isPrivate,
         provider,
         model_name: selectedModel || undefined,
         api_key: finalKey || undefined
-      });
+      }) });
       setShowModal(false);
       navigate(`/notebook/${id}`);
     } catch (err) {
       console.error(err);
-      alert('Lỗi tạo sổ ghi chú: ' + (err.response?.data?.detail || err.message));
-    }
+      setCreateError('Không thể tạo sổ tay: ' + getErrorMessage(err));
+    } finally { setSaving(false); }
   };
 
   const filteredNotebooks = notebooks.filter(nb => 
-    nb.title.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+    nb.title.toLowerCase().includes(deferredSearch.toLowerCase())
+  ).sort((a, b) => sortBy === 'name' ? a.title.localeCompare(b.title, 'vi') : new Date(b.created_at) - new Date(a.created_at));
 
   const getProviderBadge = (nb) => {
     const prov = (nb.provider || (nb.is_private ? 'ollama' : 'gemini')).toLowerCase();
@@ -201,7 +210,7 @@ function Dashboard() {
   };
 
   return (
-    <div className={`flex flex-col min-h-screen font-sans w-full transition-colors ${
+    <div data-theme={theme} className={`dashboard-shell flex flex-col min-h-screen font-sans w-full transition-colors ${
       isDark ? 'bg-[#121316] text-white selection:bg-blue-500/30' : 'bg-[#f8fafc] text-slate-900 selection:bg-blue-200'
     }`}>
       {/* Hidden file input for notebook import */}
@@ -214,7 +223,7 @@ function Dashboard() {
       />
 
       {/* Header */}
-      <header className={`flex justify-between items-center px-6 py-4 border-b transition-colors ${
+      <header className={`flex flex-wrap gap-3 justify-between items-center px-4 sm:px-6 py-4 border-b transition-colors ${
         isDark ? 'border-white/5 bg-[#14161a]' : 'border-slate-200 bg-white'
       }`}>
         <div className="flex items-center gap-3 cursor-pointer" onClick={() => navigate('/')}>
@@ -234,8 +243,8 @@ function Dashboard() {
             }`}
             title="Chẩn đoán sức khỏe hệ thống AI & Vector DB"
           >
-            <Activity size={16} className="animate-pulse" />
-            <span>Trạng thái hệ thống</span>
+            <Activity size={16} />
+            <span className="hidden sm:inline">Kiểm tra hệ thống</span>
           </button>
 
           {/* Theme Switcher */}
@@ -255,26 +264,28 @@ function Dashboard() {
               isDark ? 'border-white/10 bg-white/5 hover:bg-white/10 text-gray-200' : 'border-slate-200 bg-slate-100 hover:bg-slate-200 text-slate-700'
             }`}
           >
-            <Settings size={16} /> Cài đặt Model & API Key
+            <Settings size={16} /> <span>Cài đặt AI</span>
           </button>
         </div>
       </header>
 
       {/* Main Area */}
-      <main className="flex-1 max-w-6xl w-full mx-auto p-8">
+      <main id="main-content" className="flex-1 max-w-6xl w-full mx-auto p-4 sm:p-8">
+        {error && <div role="alert" className="mb-6 p-4 rounded-xl border border-amber-500/30 bg-amber-500/10 flex flex-wrap gap-3 items-center text-sm"><span className="flex-1 min-w-48">{error}</span><button onClick={fetchNotebooks} className="font-semibold underline">Thử lại</button><button onClick={() => setShowSystemHealth(true)} className="underline">Kiểm tra hệ thống</button></div>}
         
         {/* Toolbar */}
         <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mb-8">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight">Sổ ghi chú của bạn</h1>
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Sổ tay của bạn</h1>
             <p className="text-xs text-gray-400 mt-1">Quản lý và nghiên cứu thông tin dựa trên dữ liệu của riêng bạn</p>
           </div>
           
-          <div className="flex items-center gap-3 w-full sm:w-auto">
+          <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
             <div className="relative flex-1 sm:w-64">
               <Search size={16} className="absolute left-3.5 top-3 text-gray-400" />
               <input 
                 type="text" 
+                aria-label="Tìm sổ tay"
                 placeholder="Tìm kiếm sổ ghi chú..." 
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
@@ -332,13 +343,13 @@ function Dashboard() {
             </div>
             <div>
               <div className="flex items-center gap-2 flex-wrap">
-                <h3 className="font-bold text-base">Trợ Lý Học Tập & Khảo Thí Đa Phương Thức (Multimodal AI)</h3>
+                <h2 className="font-bold text-base">Đọc tài liệu, hỏi rõ hơn, nhớ lâu hơn.</h2>
                 <span className="text-[11px] bg-blue-500/20 text-blue-400 border border-blue-500/40 px-2.5 py-0.5 rounded-full font-semibold">
-                  Mô hình Tự Học & Lớp Học Đảo Ngược
+                  Học từ nguồn của bạn
                 </span>
               </div>
               <p className={`text-xs mt-1 max-w-2xl leading-relaxed ${isDark ? 'text-gray-300' : 'text-slate-600'}`}>
-                Nạp bất kỳ tài liệu nào (SGK, giáo trình ĐH, slide ôn thi, tài liệu chuyên ngành) để AI tự động tạo <strong>Podcast đối thoại tiếng Việt</strong>, <strong>Sơ đồ tư duy 2D</strong>, <strong>Flashcards 3D (Anki SRS)</strong> và <strong>In đề thi trắc nghiệm A4 kèm đáp án</strong> trong 30 giây.
+                Tạo sổ tay theo môn học, thêm tài liệu rồi hỏi đáp có trích dẫn. Khi cần ôn bài, tạo <strong>podcast</strong>, <strong>sơ đồ tư duy</strong>, <strong>thẻ học</strong> hoặc <strong>đề trắc nghiệm</strong>. Thời gian xử lý tùy tài liệu và mô hình AI.
               </p>
             </div>
           </div>
@@ -353,10 +364,20 @@ function Dashboard() {
             className="w-full md:w-auto px-5 py-2.5 rounded-xl font-semibold text-xs bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-lg shadow-blue-500/25 flex items-center justify-center gap-2 shrink-0 cursor-pointer disabled:opacity-50"
           >
             {seedingLaoCai ? <RefreshCw className="animate-spin" size={14} /> : <Sparkles size={14} />}
-            <span>{seedingLaoCai ? "Đang khởi tạo học liệu..." : "Nạp Dữ Liệu Mẫu Khảo Thí (1-Click)"}</span>
+            <span>{seedingLaoCai ? 'Đang chuẩn bị tài liệu mẫu...' : 'Khám phá sổ tay mẫu'}</span>
           </motion.button>
         </motion.div>
 
+        {!loading && !notebooks.length && !error && <section className={`mb-7 p-5 sm:p-7 rounded-2xl border ${isDark ? 'bg-[#181a20] border-white/10' : 'bg-white border-slate-200'}`}>
+          <h2 className="text-lg font-semibold mb-2">Bắt đầu với sổ tay đầu tiên</h2>
+          <p className="text-sm opacity-70 leading-6">Một sổ tay dành cho một môn học hoặc chủ đề. Bạn có thể bổ sung tài liệu và đổi mô hình bất cứ lúc nào.</p>
+          <ol className="mt-4 grid sm:grid-cols-3 gap-3 text-sm"><li className="p-3 rounded-xl bg-blue-500/5">1. Tạo sổ tay</li><li className="p-3 rounded-xl bg-blue-500/5">2. Thêm tài liệu</li><li className="p-3 rounded-xl bg-blue-500/5">3. Hỏi đáp và ôn tập</li></ol>
+        </section>}
+        <div className="flex items-center justify-between mb-4 gap-3">
+          <p role="status" className="text-xs opacity-60">{loading ? 'Đang tải sổ tay...' : `${filteredNotebooks.length} sổ tay`}</p>
+          <label className="text-xs flex gap-2 items-center"><span className="opacity-60">Sắp xếp</span><select value={sortBy} onChange={event => setSortBy(event.target.value)} className={`p-2 rounded-lg border ${isDark ? 'bg-[#181a20] border-white/10' : 'bg-white border-slate-200'}`}><option value="newest">Mới nhất</option><option value="name">Tên A–Z</option></select></label>
+        </div>
+        {!loading && notebooks.length > 0 && filteredNotebooks.length === 0 && <p role="status" className="py-8 text-center opacity-70">Không có sổ tay phù hợp. <button onClick={() => setSearchQuery('')} className="text-blue-500 underline">Xóa tìm kiếm</button></p>}
         {/* Notebooks Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
           {/* Create New Card */}
@@ -364,7 +385,10 @@ function Dashboard() {
             whileHover={{ y: -4 }}
             whileTap={{ scale: 0.985 }}
             transition={spring.highlight}
-            onClick={handleOpenCreateModal}
+             onClick={handleOpenCreateModal}
+             role="button"
+             tabIndex={0}
+             onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); handleOpenCreateModal(); } }}
             className={`aspect-[4/3] rounded-2xl border border-dashed transition-colors cursor-pointer flex flex-col items-center justify-center group ${
               isDark 
                 ? 'bg-white/[0.03] hover:bg-white/[0.07] border-white/15 hover:border-white/30' 
@@ -375,7 +399,7 @@ function Dashboard() {
               <Plus size={24} />
             </div>
             <span className={`font-semibold text-base ${isDark ? 'text-gray-200' : 'text-slate-800'}`}>Tạo sổ ghi chú mới</span>
-            <span className={`text-xs mt-1 ${isDark ? 'text-gray-500' : 'text-slate-400'}`}>Cắm Local hoặc Cloud AI</span>
+            <span className={`text-xs mt-1 ${isDark ? 'text-gray-500' : 'text-slate-400'}`}>Chọn mô hình trên máy hoặc trực tuyến</span>
           </motion.div>
 
           {/* Existing Notebooks */}
@@ -388,6 +412,10 @@ function Dashboard() {
                 whileTap={{ scale: 0.985 }}
                 transition={spring.highlight}
                 onClick={() => navigate(`/notebook/${nb.id}`)}
+                role="link"
+                tabIndex={0}
+                aria-label={`Mở sổ tay ${nb.title}`}
+                onKeyDown={event => { if (event.target === event.currentTarget && event.key === 'Enter') navigate(`/notebook/${nb.id}`); }}
                 className={`aspect-[4/3] rounded-2xl border p-5 flex flex-col justify-between cursor-pointer transition-shadow hover:shadow-xl relative overflow-hidden group ${
                   isDark 
                     ? 'bg-[#181a20] border-white/10 hover:border-white/25 text-white' 
@@ -400,10 +428,10 @@ function Dashboard() {
                   </span>
                   <button 
                     onClick={(e) => handleDeleteNotebook(e, nb.id)}
-                    className={`opacity-0 group-hover:opacity-100 p-1.5 rounded-lg transition ${
+                    className={`opacity-100 lg:opacity-0 lg:group-hover:opacity-100 focus:opacity-100 p-2 rounded-lg transition ${
                       isDark ? 'text-gray-400 hover:text-red-400 hover:bg-white/10' : 'text-slate-400 hover:text-red-500 hover:bg-slate-100'
                     }`}
-                    title="Xóa sổ ghi chú"
+                    title={`Xóa sổ tay ${nb.title}`}
                   >
                     <Trash2 size={15} />
                   </button>
@@ -429,25 +457,37 @@ function Dashboard() {
             exit={{ opacity: 0 }}
             transition={transition.overlay}
             className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 backdrop-blur-sm p-4"
-            onClick={() => setShowModal(false)}
+            onClick={() => { if (!saving) setShowModal(false); }}
           >
-            <motion.div 
+            <motion.form
+              ref={createDialogRef}
+              onSubmit={handleCreate}
+              role="dialog"
+              aria-modal="true"
+              aria-label="Tạo sổ tay mới"
+              aria-busy={saving}
+              tabIndex={-1}
               initial={{ opacity: 0, scale: 0.94, y: 10, filter: blur.surface }}
               animate={{ opacity: 1, scale: 1, y: 0, filter: 'blur(0px)' }}
               exit={{ opacity: 0, scale: 0.94, y: 10, filter: blur.surface }}
               transition={spring.dialog}
               onClick={(e) => e.stopPropagation()}
-              className="bg-[#181a20] border border-white/10 rounded-2xl p-6 max-w-lg w-full shadow-2xl space-y-5"
+              className={`create-dialog border rounded-2xl p-5 sm:p-6 max-w-lg w-full max-h-[90dvh] overflow-y-auto shadow-2xl ${isDark ? 'bg-[#181a20] border-white/10' : 'bg-white border-slate-200'}`}
             >
+              <fieldset disabled={saving} className="space-y-5">
               <div className="flex items-center justify-between pb-3 border-b border-white/10">
-                <h3 className="text-xl font-bold text-white">Tạo Sổ ghi chú mới</h3>
-                <button onClick={() => setShowModal(false)} className="text-gray-400 hover:text-white">✕</button>
+                <h2 className="text-xl font-bold">Tạo sổ tay mới</h2>
+                <button type="button" onClick={() => setShowModal(false)} aria-label="Đóng tạo sổ tay" className="text-gray-400 p-2"><X size={18} /></button>
               </div>
+              {createError && <p role="alert" className="p-3 rounded-xl bg-red-500/10 text-red-500 text-sm leading-relaxed">{createError}</p>}
             
             <div>
-              <label className="block text-xs font-semibold text-gray-300 mb-1.5">Tên sổ ghi chú</label>
+              <label htmlFor="notebook-title" className="block text-xs font-semibold text-gray-300 mb-1.5">Tên sổ tay</label>
               <input 
                 type="text" 
+                id="notebook-title"
+                required
+                maxLength={160}
                 value={newTitle}
                 onChange={e => setNewTitle(e.target.value)}
                 className="w-full bg-black/40 border border-white/15 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500"
@@ -457,13 +497,15 @@ function Dashboard() {
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-gray-300 mb-2">Chọn Bộ não AI (Mô hình)</label>
+              <p className="block text-xs font-semibold text-gray-300 mb-2">Chọn nơi xử lý tài liệu</p>
               
               <div className="grid grid-cols-2 gap-3 mb-3">
-                <div 
+                <button type="button"
+                  aria-pressed={provider === 'ollama'}
                   onClick={() => {
                     setProvider('ollama');
-                    if (localModels.length > 0) setSelectedModel(localModels[0].name);
+                    setCustomKey('');
+                    setSelectedModel(localModels[0]?.name || globalSettings.ollama_chat_model || 'qwen2.5:3b');
                   }}
                   className={`p-3 rounded-xl border cursor-pointer transition-all ${
                     provider === 'ollama' 
@@ -475,12 +517,14 @@ function Dashboard() {
                     <Server size={16} className="text-green-400" />
                     <span className="font-semibold text-sm text-green-300">Ollama Local</span>
                   </div>
-                  <p className="text-[11px] text-gray-400 leading-tight">100% Offline trên máy tính, bảo mật tuyệt đối.</p>
-                </div>
+                  <p className="text-[11px] text-gray-400 leading-tight">Chạy trên máy. Cần cài và mở Ollama.</p>
+                </button>
 
-                <div 
+                <button type="button"
+                  aria-pressed={provider === 'gemini'}
                   onClick={() => {
                     setProvider('gemini');
+                    setCustomKey('');
                     setSelectedModel(globalSettings.gemini_model || 'gemini-2.5-flash');
                   }}
                   className={`p-3 rounded-xl border cursor-pointer transition-all ${
@@ -493,16 +537,17 @@ function Dashboard() {
                     <Cloud size={16} className="text-blue-400" />
                     <span className="font-semibold text-sm text-blue-300">Google Gemini</span>
                   </div>
-                  <p className="text-[11px] text-gray-400 leading-tight">Siêu nhanh, thông minh, miễn phí API key.</p>
-                </div>
+                  <p className="text-[11px] text-gray-400 leading-tight">Dùng Internet và API key của Google.</p>
+                </button>
               </div>
 
               {/* Provider Options Row */}
-              <div className="flex gap-2 mb-3">
+              <div className="flex flex-wrap gap-2 mb-3">
                 <button
                   type="button"
                   onClick={() => {
                     setProvider('openai');
+                    setCustomKey('');
                     setSelectedModel(globalSettings.openai_model || 'gpt-4o-mini');
                   }}
                   className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition ${
@@ -515,6 +560,7 @@ function Dashboard() {
                   type="button"
                   onClick={() => {
                     setProvider('groq');
+                    setCustomKey('');
                     setSelectedModel(globalSettings.groq_model || 'llama-3.3-70b-versatile');
                   }}
                   className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition ${
@@ -527,7 +573,8 @@ function Dashboard() {
                   type="button"
                   onClick={() => {
                     setProvider('lm_studio');
-                    setSelectedModel('local-model');
+                    setCustomKey('');
+                    setSelectedModel(globalSettings.custom_model || 'local-model');
                   }}
                   className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition ${
                     provider === 'lm_studio' ? 'border-teal-500 bg-teal-500/10 text-teal-300' : 'border-white/10 text-gray-400 hover:text-white'
@@ -539,6 +586,7 @@ function Dashboard() {
                   type="button"
                   onClick={() => {
                     setProvider('9router');
+                    setCustomKey('');
                     setSelectedModel('gemini-2.5-flash');
                   }}
                   className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition ${
@@ -602,7 +650,7 @@ function Dashboard() {
               {['gemini', 'openai', 'groq'].includes(provider) && (
                 <div className="bg-black/30 p-3 rounded-xl border border-white/10 space-y-2">
                   <div className="flex justify-between items-center">
-                    <label className="text-xs text-gray-300 font-medium">
+                    <label htmlFor="notebook-key" className="text-xs text-gray-300 font-medium">
                       {provider.toUpperCase()} API Key:
                     </label>
                     {globalSettings[`${provider}_api_key_configured`] && !customKey && (
@@ -613,6 +661,8 @@ function Dashboard() {
                   </div>
                   <input 
                     type="password" 
+                    id="notebook-key"
+                    autoComplete="off"
                     value={customKey}
                     onChange={e => setCustomKey(e.target.value)}
                     placeholder={globalSettings[`${provider}_api_key_configured`] ? "Đang dùng key đã lưu (hoặc dán key mới)" : "Dán API Key vào đây..."}
@@ -631,24 +681,25 @@ function Dashboard() {
                 Hủy
               </button>
               <motion.button 
-                type="button"
+                type="submit"
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
                 transition={spring.press}
-                onClick={handleCreate}
-                disabled={!newTitle.trim()}
+                disabled={!newTitle.trim() || saving}
                 className="px-5 py-2 rounded-xl text-xs font-semibold bg-white text-black hover:bg-gray-200 disabled:opacity-50 transition shadow-lg cursor-pointer"
               >
-                Tạo sổ ghi chú
+                {saving ? 'Đang tạo sổ tay...' : 'Tạo sổ tay và thêm tài liệu'}
               </motion.button>
             </div>
-          </motion.div>
+              </fieldset>
+          </motion.form>
         </motion.div>
       )}
     </AnimatePresence>
 
       {/* Global Settings Modal */}
       <SettingsModal 
+        isDark={isDark}
         isOpen={showSettings} 
         onClose={() => setShowSettings(false)} 
         onSettingsSaved={() => {
@@ -658,6 +709,7 @@ function Dashboard() {
 
       {/* System Health Diagnostics Modal */}
       <SystemHealthModal 
+        isDark={isDark}
         isOpen={showSystemHealth}
         onClose={() => setShowSystemHealth(false)}
         onOpenSettings={() => setShowSettings(true)}

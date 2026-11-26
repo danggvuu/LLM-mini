@@ -1,4 +1,4 @@
-import time
+import uuid
 import logging
 import re
 from datetime import datetime
@@ -254,6 +254,8 @@ async def generate_timeline_outline_endpoint(notebook_id: str, payload: Timeline
 def get_notebook_notes(notebook_id: str):
     """Lấy danh sách ghi chú đã ghim của sổ tay."""
     _validate_notebook_id(notebook_id)
+    if not get_session_manager().get_notebook(notebook_id):
+        raise HTTPException(status_code=404, detail="Notebook not found")
     notes = _load_notes(notebook_id)
     return {"notes": notes}
 
@@ -261,11 +263,13 @@ def get_notebook_notes(notebook_id: str):
 def create_notebook_note(notebook_id: str, payload: NoteItemRequest):
     """Thêm ghi chú mới vào sổ tay."""
     _validate_notebook_id(notebook_id)
+    if not get_session_manager().get_notebook(notebook_id):
+        raise HTTPException(status_code=404, detail="Notebook not found")
     if not payload.content or not payload.content.strip():
         raise HTTPException(status_code=400, detail="Nội dung ghi chú không được để trống")
     notes = _load_notes(notebook_id)
     new_note = {
-        "id": f"note_{int(time.time() * 1000)}",
+        "id": f"note_{uuid.uuid4().hex}",
         "title": payload.title.strip() if payload.title else "Ghi chú",
         "content": payload.content.strip(),
         "source": payload.source or "manual",
@@ -279,6 +283,8 @@ def create_notebook_note(notebook_id: str, payload: NoteItemRequest):
 def delete_notebook_note(notebook_id: str, note_id: str):
     """Xóa một ghi chú theo id."""
     _validate_notebook_id(notebook_id)
+    if not get_session_manager().get_notebook(notebook_id):
+        raise HTTPException(status_code=404, detail="Notebook not found")
     notes = _load_notes(notebook_id)
     new_notes = [n for n in notes if n.get("id") != note_id]
     _save_notes(notebook_id, new_notes)
@@ -288,6 +294,8 @@ def delete_notebook_note(notebook_id: str, note_id: str):
 def synthesize_notebook_notes(notebook_id: str):
     """Tổng hợp tất cả các ghi chú đã ghim thành Báo cáo chuyên đề (Executive Synthesis Report)."""
     _validate_notebook_id(notebook_id)
+    if not get_session_manager().get_notebook(notebook_id):
+        raise HTTPException(status_code=404, detail="Notebook not found")
     notes = _load_notes(notebook_id)
     if not notes or len(notes) < 2:
         raise HTTPException(status_code=400, detail="Cần ít nhất 2 ghi chú để tiến hành tổng hợp báo cáo.")

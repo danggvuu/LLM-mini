@@ -38,11 +38,10 @@ def _run_podcast_generation_task(generator: PodcastGenerator, notebook_id: str, 
         out = generator.generate_podcast(notebook_id=notebook_id, source_revision=source_revision, **kwargs)
         if not is_valid_audio_file(out):
             raise RuntimeError("TTS không tạo được âm thanh Podcast hợp lệ.")
-        if generator.db.get_source_revision(notebook_id) != source_revision:
-            generator.db._delete_generated_audio(notebook_id)
-            raise RuntimeError("Nguồn tài liệu đã thay đổi. Vui lòng tạo lại Podcast.")
         if _PODCAST_STATUS.get(notebook_id, {}).get("generation_id") != generation_id:
             return
+        if generator.db.get_source_revision(notebook_id) != source_revision:
+            raise RuntimeError("Nguồn tài liệu đã thay đổi. Vui lòng tạo lại Podcast.")
         _PODCAST_STATUS[notebook_id] = {
             "status": "completed",
             "completed_at": time.time(),
@@ -53,6 +52,8 @@ def _run_podcast_generation_task(generator: PodcastGenerator, notebook_id: str, 
         }
     except Exception as e:
         logger.error(f"Lỗi background tạo podcast notebook {notebook_id}: {e}")
+        if _PODCAST_STATUS.get(notebook_id, {}).get("generation_id") != generation_id:
+            return
         _PODCAST_STATUS[notebook_id] = {
             "status": "error",
             "generation_id": generation_id,
@@ -102,7 +103,7 @@ async def generate_podcast(
         raise HTTPException(status_code=409, detail="Podcast đang được tạo. Vui lòng chờ hoàn tất.")
     vs = await run_in_threadpool(get_vector_store)
     try:
-        custom_context = await run_in_threadpool(collect_document_context, vs, target_id, docs, limit=10)
+        custom_context = await run_in_threadpool(collect_document_context, vs, target_id, docs, limit=10, max_chars=5000)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

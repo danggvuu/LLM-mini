@@ -76,6 +76,25 @@ async def _save_upload(file: UploadFile) -> tuple[str, str]:
     return display_name, str(file_path)
 
 
+async def _replace_document_chunks(store, sm, notebook_id, filename, chunks, file_path=None):
+    old_file_path = sm.get_document_storage_path(notebook_id, filename)
+    old_records = await run_in_threadpool(store.get_document_chunk_records, notebook_id, filename)
+    try:
+        await run_in_threadpool(store.delete_document_chunks, notebook_id, filename)
+        await run_in_threadpool(store.index_chunks, chunks)
+        sm.add_document(notebook_id, filename, file_path=file_path)
+    except Exception:
+        try:
+            await run_in_threadpool(store.delete_document_chunks, notebook_id, filename)
+            if old_records:
+                await run_in_threadpool(store.index_chunks, old_records)
+        except Exception:
+            logger.exception("Không thể khôi phục index cũ cho %s/%s", notebook_id, filename)
+        raise
+    if old_file_path and old_file_path != file_path:
+        sm._delete_managed_upload(old_file_path)
+
+
 async def _index_uploaded_file(notebook_id: str, display_filename: str, file_path: str, sm):
     """Parse and index one upload, cleaning the new file if ingestion fails."""
     committed = False
@@ -103,27 +122,8 @@ async def _index_uploaded_file(notebook_id: str, display_filename: str, file_pat
             chunk["metadata"]["filename"] = display_filename
 
         store = await run_in_threadpool(get_vector_store)
-        old_file_path = sm.get_document_storage_path(notebook_id, display_filename)
-        old_records = await run_in_threadpool(
-            store.get_document_chunk_records, notebook_id, display_filename
-        )
-        try:
-            await run_in_threadpool(store.delete_document_chunks, notebook_id, display_filename)
-            await run_in_threadpool(store.index_chunks, chunks)
-            sm.add_document(notebook_id, display_filename, file_path=file_path)
-            committed = True
-        except Exception:
-            # Re-upload must not destroy the last known-good indexed version.
-            try:
-                await run_in_threadpool(store.delete_document_chunks, notebook_id, display_filename)
-                if old_records:
-                    await run_in_threadpool(store.index_chunks, old_records)
-            except Exception:
-                logger.exception("Không thể khôi phục index cũ cho %s/%s", notebook_id, display_filename)
-            raise
-
-        if old_file_path and old_file_path != file_path:
-            sm._delete_managed_upload(old_file_path)
+        await _replace_document_chunks(store, sm, notebook_id, display_filename, chunks, file_path)
+        committed = True
         return chunks
     except Exception:
         if not committed:
@@ -221,9 +221,7 @@ async def ingest_url(background_tasks: BackgroundTasks, notebook_id: str = Form(
         chunk["metadata"]["filename"] = filename
     
     store = await run_in_threadpool(get_vector_store)
-    await run_in_threadpool(store.delete_document_chunks, notebook_id, filename)
-    await run_in_threadpool(store.index_chunks, chunks)
-    sm.add_document(notebook_id, filename)
+    await _replace_document_chunks(store, sm, notebook_id, filename, chunks)
     
     queue_study_guide(background_tasks, sm, notebook_id)
     
@@ -275,9 +273,7 @@ async def ingest_raw_text(background_tasks: BackgroundTasks, req: IngestTextRequ
         chunk["metadata"]["filename"] = doc_title
 
     store = await run_in_threadpool(get_vector_store)
-    await run_in_threadpool(store.delete_document_chunks, req.notebook_id, doc_title)
-    await run_in_threadpool(store.index_chunks, chunks)
-    sm.add_document(req.notebook_id, doc_title)
+    await _replace_document_chunks(store, sm, req.notebook_id, doc_title, chunks)
 
     queue_study_guide(background_tasks, sm, req.notebook_id)
 

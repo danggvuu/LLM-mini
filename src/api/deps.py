@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import tempfile
 from typing import Optional, List, Dict, Any
 from fastapi import Request, HTTPException
 from pydantic import BaseModel, Field
@@ -73,13 +74,15 @@ def select_notebook_documents(sm, notebook_id: str, selected_documents=None) -> 
     return docs
 
 
-def collect_document_context(store, notebook_id: str, docs: List[Dict[str, Any]], limit: int = 15) -> str:
+def collect_document_context(store, notebook_id: str, docs: List[Dict[str, Any]], limit: int = 15, max_chars: int = 10000) -> str:
     blocks = []
     for doc in docs:
         chunks = store.get_chunks_by_document(notebook_id, doc["filename"], limit=limit)
         text = "\n".join(chunk for chunk in chunks if isinstance(chunk, str) and chunk.strip())
         if text.strip():
-            blocks.append(f"--- {doc['filename']} ---\n{text}")
+            header = f"--- {doc['filename']} ---\n"
+            budget = max(1, max_chars // len(docs) - len(header) - 2)
+            blocks.append(header + text[:budget])
     if not blocks:
         raise ValueError("Không tìm thấy nội dung trong nguồn đã chọn. Vui lòng nạp lại tài liệu.")
     return "\n\n".join(blocks)
@@ -89,6 +92,8 @@ def _generate_notebook_guide(sm, notebook_id: str, generation_id: str, selected_
     try:
         notebook = sm.get_notebook(notebook_id)
         if not notebook:
+            return
+        if sm.get_study_guide_status(notebook_id)["generation_id"] != generation_id:
             return
         docs = select_notebook_documents(sm, notebook_id, selected_documents)
         context = collect_document_context(get_vector_store(), notebook_id, docs)
@@ -288,12 +293,18 @@ def _load_notes(notebook_id: str) -> List[Dict[str, Any]]:
 
 def _save_notes(notebook_id: str, notes: List[Dict[str, Any]]) -> None:
     path = _get_notes_path(notebook_id)
+    temporary_path = None
     try:
-        with open(path, "w", encoding="utf-8") as f:
+        with tempfile.NamedTemporaryFile(mode="w", dir=NOTES_DIR, encoding="utf-8", delete=False) as f:
+            temporary_path = f.name
             json.dump(notes, f, ensure_ascii=False, indent=2)
+        os.replace(temporary_path, path)
     except Exception as e:
         logger.error(f"Lỗi khi lưu ghi chú notebook {notebook_id}: {e}")
         raise HTTPException(status_code=500, detail="Không thể lưu ghi chú. Vui lòng kiểm tra quyền ghi thư mục lưu trữ.") from e
+    finally:
+        if temporary_path and os.path.exists(temporary_path):
+            os.remove(temporary_path)
 
 def get_notebook_engines(notebook_id: str = "default") -> Dict[str, Any]:
     global _NOTEBOOK_CACHE

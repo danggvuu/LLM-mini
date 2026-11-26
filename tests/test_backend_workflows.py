@@ -26,6 +26,9 @@ class MemoryStore:
     def delete_document_chunks(self, notebook_id, filename):
         self.records.pop((notebook_id, filename), None)
 
+    def delete_notebook_chunks(self, notebook_id):
+        self.records = {key: records for key, records in self.records.items() if key[0] != notebook_id}
+
     def index_chunks(self, chunks):
         for chunk in chunks:
             meta = chunk["metadata"]
@@ -496,3 +499,89 @@ def test_transcription_empty_audio_or_silence_not_success(backend, monkeypatch):
         audio.writeframes(b"\x00\x00" * 800)
     response = backend.client.post("/api/audio/transcribe", files={"file": ("recording.wav", buffer.getvalue(), "audio/wav")})
     assert response.status_code == 422
+
+
+def test_failed_document_replacement_restores_index_and_guide(backend, monkeypatch):
+    from src.api.routers.documents import _replace_document_chunks
+    add_source(backend)
+    save_guide(backend.sm)
+    original_index = copy.deepcopy(backend.store.records)
+    original_guide = backend.sm.get_study_guide("safe-nb")
+    original_index_chunks = backend.store.index_chunks
+    calls = 0
+    def fail_once(chunks):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            original_index_chunks(chunks)
+            raise RuntimeError("Index temporarily unavailable")
+        original_index_chunks(chunks)
+    monkeypatch.setattr(backend.store, "index_chunks", fail_once)
+    with pytest.raises(RuntimeError, match="Index temporarily unavailable"):
+        asyncio.run(_replace_document_chunks(
+            backend.store, backend.sm, "safe-nb", "a.txt",
+            [{"content": "Replacement", "metadata": {"notebook_id": "safe-nb", "filename": "a.txt"}}],
+        ))
+    assert backend.store.records == original_index
+    assert backend.sm.get_study_guide("safe-nb") == original_guide
+    assert backend.sm.get_study_guide_status("safe-nb")["status"] == "completed"
+
+
+def test_failed_import_removes_only_the_incomplete_copy(backend, monkeypatch):
+    add_source(backend)
+    save_guide(backend.sm)
+    exported = backend.client.get("/api/notebooks/safe-nb/export").json()
+    original_records = copy.deepcopy(backend.store.records)
+    original_index_chunks = backend.store.index_chunks
+    def partial_failure(chunks):
+        original_index_chunks(chunks)
+        raise RuntimeError("Index unavailable")
+    monkeypatch.setattr(backend.store, "index_chunks", partial_failure)
+    response = backend.client.post("/api/notebooks/import", json=exported)
+    assert response.status_code == 500
+    assert [notebook["id"] for notebook in backend.sm.list_notebooks()] == ["safe-nb"]
+    assert backend.store.records == original_records
+
+
+def test_note_write_failure_preserves_saved_notes_and_reports_error(backend, monkeypatch):
+    from src.api import deps
+    original = [{"id": "saved-note", "content": "Keep this research"}]
+    deps._save_notes("safe-nb", original)
+    def fail_replace(*args):
+        raise OSError("Disk unavailable")
+    monkeypatch.setattr(deps.os, "replace", fail_replace)
+    response = backend.client.post("/api/notebooks/safe-nb/notes", json={"content": "New research"})
+    assert response.status_code == 500
+    assert deps._load_notes("safe-nb") == original
+    assert len(list((backend.root / "notes").iterdir())) == 1
+
+
+def test_long_first_document_does_not_hide_other_selected_sources(backend):
+    from src.api.deps import collect_document_context
+    add_source(backend, "a.txt", "First source " * 4000)
+    add_source(backend, "b.txt", "Distinct second source")
+    context = collect_document_context(backend.store, "safe-nb", backend.sm.get_documents("safe-nb"))
+    assert len(context) <= 10000
+    assert "First source" in context and "Distinct second source" in context
+
+
+def test_audio_validation_rejects_renamed_wav_and_truncated_mp3(backend, monkeypatch):
+    from src.utils import audio
+    monkeypatch.setattr(audio.shutil, "which", lambda *args: None)
+    wav = make_wav(backend.root / "sample.wav")
+    renamed = backend.root / "sample.mp3"
+    renamed.write_bytes(wav.read_bytes())
+    assert not audio.is_valid_audio_file(renamed)
+    # MPEG-1 Layer III, 128 kbps at 44.1 kHz: a complete frame is 417 bytes.
+    frame = b"\xff\xfb\x90\x00" + b"\x00" * 413
+    renamed.write_bytes(frame * 2)
+    assert audio.is_valid_audio_file(renamed)
+    renamed.write_bytes(frame + frame[:100])
+    assert not audio.is_valid_audio_file(renamed)
+
+
+def test_global_masked_key_save_preserves_secret(backend):
+    backend.sm.save_app_settings({"openai_api_key": "Original secret"})
+    response = backend.client.post("/api/settings", json={"openai_api_key": "******", "openai_model": "new-model"})
+    assert response.status_code == 200
+    assert backend.sm.get_app_settings()["openai_api_key"] == "Original secret"

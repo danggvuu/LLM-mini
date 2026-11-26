@@ -199,7 +199,7 @@ async def import_notebook_endpoint(payload: Dict[str, Any]):
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=422, detail=f"Tệp sổ tay không hợp lệ: {exc}") from exc
     
-    if imported_chunks and isinstance(imported_chunks, list):
+    try:
         formatted_chunks = []
         for ch in imported_chunks:
             content = ch.get("content", "")
@@ -210,8 +210,17 @@ async def import_notebook_endpoint(payload: Dict[str, Any]):
         if formatted_chunks:
             vs = await run_in_threadpool(get_vector_store)
             await run_in_threadpool(vs.index_chunks, formatted_chunks)
-
-    if imported_notes and isinstance(imported_notes, list):
-        _save_notes(new_id, imported_notes)
+        if imported_notes:
+            _save_notes(new_id, imported_notes)
+    except Exception as exc:
+        logger.exception("Nhập sổ tay thất bại, dọn dẹp bản sao %s", new_id)
+        if imported_chunks:
+            try:
+                vs = await run_in_threadpool(get_vector_store)
+                await run_in_threadpool(vs.delete_notebook_chunks, new_id)
+            except Exception:
+                logger.exception("Không thể dọn dẹp index của bản sao %s", new_id)
+        sm.delete_notebook(new_id)
+        raise HTTPException(status_code=500, detail="Không thể nhập nội dung sổ tay. Bản sao chưa hoàn chỉnh đã được hủy; vui lòng thử lại.") from exc
 
     return {"status": "success", "notebook_id": new_id}

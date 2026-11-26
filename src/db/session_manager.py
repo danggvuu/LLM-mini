@@ -9,7 +9,7 @@ from typing import List, Dict, Optional, Any
 from src.utils.config import settings
 
 logger = logging.getLogger(__name__)
-_GENERATION_OWNER = uuid.uuid4().hex
+_GENERATION_OWNER = f"{os.getpid()}:{uuid.uuid4().hex}"
 
 class SessionManager:
     """Quản lý CSDL SQLite cho Notebooks, tin nhắn, Cài đặt hệ thống và Study Guides."""
@@ -305,11 +305,11 @@ class SessionManager:
             conn.execute("DELETE FROM messages WHERE notebook_id = ?", (notebook_id,))
             conn.execute("DELETE FROM documents WHERE notebook_id = ?", (notebook_id,))
             conn.execute("DELETE FROM notebooks WHERE id = ?", (notebook_id,))
+            self._delete_generated_audio(notebook_id)
             conn.commit()
 
         for file_path in file_paths:
             self._delete_managed_upload(file_path)
-        self._delete_generated_audio(notebook_id)
             
         # Dọn dẹp chỉ mục BM25
         try:
@@ -355,12 +355,25 @@ class SessionManager:
             )
             self._invalidate_generated_artifacts(conn, notebook_id)
             conn.commit()
-        self._delete_generated_audio(notebook_id)
 
     def get_source_revision(self, notebook_id: str) -> Optional[int]:
         with self._get_conn() as conn:
             row = conn.execute("SELECT source_revision FROM notebooks WHERE id = ?", (notebook_id,)).fetchone()
             return row[0] if row else None
+
+    def publish_podcast_audio(self, notebook_id: str, candidate: Path, source_revision: Optional[int] = None) -> str:
+        if not notebook_id or len(notebook_id) > 128 or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-" for c in notebook_id):
+            raise ValueError("notebook_id không hợp lệ.")
+        destination = settings.project_root / "storage" / "podcasts" / f"{notebook_id}{candidate.suffix}"
+        with self._get_conn() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT source_revision FROM notebooks WHERE id = ?", (notebook_id,)).fetchone()
+            if not row or (source_revision is not None and row[0] != source_revision):
+                raise ValueError("Nguồn tài liệu đã thay đổi. Vui lòng tạo lại Podcast.")
+            os.replace(candidate, destination)
+            other = destination.with_suffix(".wav" if candidate.suffix == ".mp3" else ".mp3")
+            other.unlink(missing_ok=True)
+        return str(destination)
 
     @staticmethod
     def _delete_generated_audio(notebook_id: str) -> None:
@@ -375,6 +388,7 @@ class SessionManager:
 
     @staticmethod
     def _invalidate_generated_artifacts(conn, notebook_id: str) -> None:
+        SessionManager._delete_generated_audio(notebook_id)
         conn.execute("UPDATE notebooks SET source_revision = source_revision + 1 WHERE id = ?", (notebook_id,))
         conn.execute("DELETE FROM study_guides WHERE notebook_id = ?", (notebook_id,))
         conn.execute("DELETE FROM flashcard_progress WHERE notebook_id = ?", (notebook_id,))
@@ -409,7 +423,13 @@ class SessionManager:
             has_guide = bool(conn.execute(
                 "SELECT 1 FROM study_guides WHERE notebook_id = ? AND COALESCE(summary, '') != ''", (notebook_id,),
             ).fetchone())
-            if row and row[1] == "generating" and not row[0].startswith(f"{_GENERATION_OWNER}:"):
+            owner_alive = True
+            if row and row[1] == "generating" and not (row[0] or "").startswith(f"{_GENERATION_OWNER}:"):
+                try:
+                    os.kill(int(row[0].split(":", 1)[0]), 0)
+                except (OSError, TypeError, ValueError):
+                    owner_alive = False
+            if row and row[1] == "generating" and not owner_alive:
                 error = "Tiến trình tạo cẩm nang đã bị gián đoạn. Vui lòng tạo lại."
                 self.fail_study_guide_generation(notebook_id, row[0], error)
                 row = (row[0], "error", error, row[3])
@@ -457,8 +477,6 @@ class SessionManager:
 
         for file_path in file_paths:
             self._delete_managed_upload(file_path)
-        if deleted.rowcount:
-            self._delete_generated_audio(notebook_id)
             
         # Cập nhật lại BM25 index
         try:
@@ -768,10 +786,12 @@ class SessionManager:
         if sg:
             from src.learning.guide_generator import GuideGenerator
             sg = dict(sg)
-            if sg.get("quiz") is not None:
+            if sg.get("quiz") not in (None, []):
                 sg["quiz"] = GuideGenerator._validate_quiz(sg["quiz"])
-            if sg.get("flashcards") is not None:
+            if sg.get("flashcards") not in (None, []):
                 sg["flashcards"] = GuideGenerator._validate_flashcards(sg["flashcards"])
+            if any(value is not None and not isinstance(value, str) for value in (sg.get("summary"), sg.get("faq"), sg.get("glossary"))):
+                raise ValueError("Nội dung cẩm nang không hợp lệ.")
         srs_data = data.get("srs_progress", {})
         if not isinstance(srs_data, dict):
             raise ValueError("Tiến độ thẻ nhớ phải là đối tượng JSON.")
@@ -789,47 +809,35 @@ class SessionManager:
         new_id = uuid.uuid4().hex
         title = nb_info.get("title", "Notebook đã nhập") + " (Bản sao)"
         
-        self.create_notebook(
-            notebook_id=new_id,
-            title=title,
-            is_private=nb_info.get("is_private", True),
-            provider=nb_info.get("provider", "ollama"),
-            model_name=nb_info.get("model_name", ""),
-            api_key=nb_info.get("api_key", ""),
-            base_url=nb_info.get("base_url", "")
-        )
-        
-        # Import tài liệu
-        for doc in data.get("documents", []):
-            self.add_document(new_id, doc.get("filename", "unknown"))
-            
-        # Import tin nhắn
-        for msg in data.get("messages", []):
-            self.save_message(new_id, msg.get("role", "user"), msg.get("content", ""), msg.get("citations"))
-            
-        # Import study guide
-        if sg:
-            self.save_study_guide(
-                new_id,
-                summary=sg.get("summary", ""),
-                faq=sg.get("faq", ""),
-                glossary=sg.get("glossary", ""),
-                quiz=sg.get("quiz"),
-                flashcards=sg.get("flashcards"),
-                mindmap=sg.get("mindmap"),
-                timeline_outline=sg.get("timeline_outline")
+        for key in ("provider", "model_name", "api_key", "base_url"):
+            if nb_info.get(key) is not None and not isinstance(nb_info[key], str):
+                raise ValueError(f"{key} phải là chuỗi.")
+        # Keep all imported SQLite records in one transaction.
+        with self._get_conn() as conn:
+            conn.execute(
+                "INSERT INTO notebooks (id, title, is_private, provider, model_name, api_key, base_url, source_revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (new_id, title, bool(nb_info.get("is_private", True)), nb_info.get("provider") or "ollama",
+                 nb_info.get("model_name") or "", nb_info.get("api_key") or "", nb_info.get("base_url") or "", len(data.get("documents", []))),
             )
-            
-        # Import tiến độ học thẻ nhớ SRS (nếu có)
-        if validated_srs:
-            with self._get_conn() as conn:
-                for progress in validated_srs:
-                    conn.execute(
-                        """INSERT OR REPLACE INTO flashcard_progress 
-                           (notebook_id, card_index, ease_factor, interval_days, repetitions, next_review_date, last_rating)
-                           VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                        (new_id, *progress)
-                    )
-                conn.commit()
+            conn.executemany(
+                "INSERT INTO documents (notebook_id, filename) VALUES (?, ?)",
+                [(new_id, doc["filename"]) for doc in data.get("documents", [])],
+            )
+            conn.executemany(
+                "INSERT INTO messages (notebook_id, role, content, citations) VALUES (?, ?, ?, ?)",
+                [(new_id, msg["role"], msg["content"], json.dumps(msg.get("citations") or [], ensure_ascii=False)) for msg in data.get("messages", [])],
+            )
+            if sg:
+                conn.execute(
+                    "INSERT INTO study_guides (notebook_id, summary, faq, glossary, quiz, flashcards, mindmap, timeline_outline) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (new_id, sg.get("summary"), sg.get("faq"), sg.get("glossary"), *[
+                        json.dumps(sg.get(key), ensure_ascii=False) if sg.get(key) is not None else None
+                        for key in ("quiz", "flashcards", "mindmap", "timeline_outline")
+                    ]),
+                )
+            conn.executemany(
+                "INSERT INTO flashcard_progress (notebook_id, card_index, ease_factor, interval_days, repetitions, next_review_date, last_rating) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                [(new_id, *progress) for progress in validated_srs],
+            )
 
         return new_id

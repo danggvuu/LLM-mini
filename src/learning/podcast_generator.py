@@ -69,14 +69,14 @@ class PodcastGenerator:
         
         logger.info(f"Đang sinh kịch bản Podcast cho notebook {notebook_id} (Focus: '{focus_topic}', Style: '{style}', Voice: '{voice_mode}')...")
         generator = self.llm.generate(
-                prompt, 
-                system_prompt="Bạn là biên kịch Podcast chuyên nghiệp. Chỉ xuất ra các dòng thoại bắt đầu bằng 'A:' hoặc 'B:'.",
-                is_private=is_private,
-                gemini_api_key=api_key or gemini_api_key,
-                provider=provider,
-                model_name=model_name,
-                api_key=api_key,
-                base_url=base_url
+            prompt,
+            system_prompt="Bạn là biên kịch Podcast chuyên nghiệp. Chỉ xuất ra các dòng thoại bắt đầu bằng 'A:' hoặc 'B:'.",
+            is_private=is_private,
+            gemini_api_key=api_key or gemini_api_key,
+            provider=provider,
+            model_name=model_name,
+            api_key=api_key,
+            base_url=base_url
         )
         script_raw = validate_generated_text("".join(generator))
         
@@ -109,13 +109,7 @@ class PodcastGenerator:
                     for suffix in (".mp3", ".wav"):
                         candidate = Path(output_file).with_suffix(suffix)
                         if is_valid_audio_file(candidate):
-                            if source_revision is not None and self.db.get_source_revision(notebook_id) != source_revision:
-                                raise RuntimeError("Nguồn tài liệu đã thay đổi. Vui lòng tạo lại Podcast.")
-                            destination = Path(self.output_dir) / f"{notebook_id}{suffix}"
-                            os.replace(candidate, destination)
-                            other = destination.with_suffix(".wav" if suffix == ".mp3" else ".mp3")
-                            other.unlink(missing_ok=True)
-                            return str(destination)
+                            return self.db.publish_podcast_audio(notebook_id, candidate, source_revision)
                     raise RuntimeError("TTS không tạo được tệp âm thanh hợp lệ.")
                 except Exception as exc:
                     errors.append(str(exc))
