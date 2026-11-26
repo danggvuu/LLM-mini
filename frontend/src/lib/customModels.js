@@ -11,7 +11,7 @@ function sanitizeModels(models) {
   return models.filter(model => model && typeof model === 'object').map(model => {
     const provider = String(model.provider || 'ollama').trim().toLowerCase();
     const name = String(model.model_name || model.model || model.name || '').trim();
-    return {
+    const metadata = {
       id: String(model.id || `${provider}:${name}`),
       name: String(model.name || name),
       provider,
@@ -21,6 +21,8 @@ function sanitizeModels(models) {
       ...(typeof model.created_at === 'string' ? { created_at: model.created_at } : {}),
       requires_api_key: Boolean(model.requires_api_key || model.api_key || keyedProviders.has(provider)),
     };
+    if (runtimeKeys.has(modelIdentity(metadata))) metadata.requires_api_key = true;
+    return metadata;
   }).filter(model => model.model_name);
 }
 
@@ -49,7 +51,12 @@ function withRuntimeKeys(models) {
 
 export function getCustomModels() {
   const stored = localStorage.getItem(STORAGE_KEY);
-  const records = JSON.parse(stored || '[]');
+  let records;
+  try {
+    records = JSON.parse(stored || '[]');
+  } catch {
+    throw new Error('Danh sách model đã lưu bị lỗi định dạng. Không thể đọc model hoặc key từ dữ liệu này.');
+  }
   const metadata = sanitizeModels(records);
   rememberKeys(records, metadata);
   const sanitized = JSON.stringify(metadata);

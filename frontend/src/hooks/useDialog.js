@@ -14,7 +14,7 @@ export default function useDialog(ref, onClose, enabled = true) {
       document.body.style.overflow = 'hidden';
     }
     const focusable = () => [...dialog.querySelectorAll(
-      'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex="0"]',
+      'button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]:not(:disabled)',
     )].filter(element => element.getClientRects().length > 0);
     const focusTimer = setTimeout(() => {
       if (!dialog.contains(document.activeElement)) (focusable()[0] || dialog).focus();
@@ -29,7 +29,7 @@ export default function useDialog(ref, onClose, enabled = true) {
         const elements = focusable();
         const first = elements[0] || dialog;
         const last = elements.at(-1) || dialog;
-        if (!elements.length || (event.shiftKey && document.activeElement === first)) {
+        if (!elements.length || (event.shiftKey && (document.activeElement === first || document.activeElement === dialog))) {
           event.preventDefault();
           last.focus();
         } else if (!event.shiftKey && document.activeElement === last) {

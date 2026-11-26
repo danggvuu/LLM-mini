@@ -153,6 +153,10 @@ export default function SettingsModal({ isOpen, onClose, onSettingsSaved, isDark
       setTestResult(previous => ({ ...previous, [provider.id]: { success: false, message: 'Nhập Model ID trước khi kiểm tra kết nối.' } }));
       return;
     }
+    if (provider.id === 'custom' && !settings.custom_base_url.trim()) {
+      setTestResult(previous => ({ ...previous, [provider.id]: { success: false, message: 'Nhập Base URL của endpoint tùy chỉnh trước khi kiểm tra.' } }));
+      return;
+    }
     if (clearApiKeys.includes(provider.key)) {
       setTestResult(previous => ({ ...previous, [provider.id]: { success: false, message: 'Key đang được đánh dấu xóa. Lưu cài đặt hoặc giữ lại key trước khi kiểm tra.' } }));
       return;
@@ -165,7 +169,7 @@ export default function SettingsModal({ isOpen, onClose, onSettingsSaved, isDark
     try {
       const result = await requestJson('/api/llm/test-connection', {
         method: 'POST', signal: controller.signal,
-        body: JSON.stringify({ provider: provider.id, model_name: modelName, api_key: provider.key ? settings[provider.key]?.trim() : undefined, base_url: provider.url ? settings[provider.url]?.trim() : undefined }),
+        body: JSON.stringify({ provider: provider.id, model_name: modelName, api_key: provider.key ? settings[provider.key]?.trim() : undefined, base_url: provider.url ? (settings[provider.url]?.trim() || initialSettings[provider.url]) : undefined }),
       });
       if (controller.signal.aborted) return;
       if (typeof result?.success !== 'boolean') throw new Error('Máy chủ chưa trả về kết quả kiểm tra.');
@@ -187,6 +191,11 @@ export default function SettingsModal({ isOpen, onClose, onSettingsSaved, isDark
     if (!selectedProvider || !String(settings[selectedProvider.model] || '').trim()) {
       setSaveError('Chọn nhà cung cấp mặc định và nhập Model ID tương ứng trước khi lưu.');
       if (selectedProvider) setActiveTab(selectedProvider.tab);
+      return;
+    }
+    if (selectedProvider.id === 'custom' && !settings.custom_base_url.trim()) {
+      setSaveError('Nhập Base URL cho nhà cung cấp tùy chỉnh trước khi lưu làm mặc định.');
+      setActiveTab('cloud');
       return;
     }
     for (const field of ['ollama_base_url', 'lm_studio_base_url', 'router9_base_url', 'custom_base_url']) {
@@ -212,10 +221,11 @@ export default function SettingsModal({ isOpen, onClose, onSettingsSaved, isDark
         if (field.endsWith('_api_key_configured')) continue;
         if (apiKeyFields.includes(field) && !String(value || '').trim()) continue;
         payload[field] = typeof value === 'string' ? value.trim() : value;
+        if (field.endsWith('_base_url') && initialSettings[field] && !payload[field]) payload[field] = initialSettings[field];
       }
       const response = await requestJson('/api/settings', { method: 'POST', signal: controller.signal, body: JSON.stringify(payload) });
       if (controller.signal.aborted) return;
-      if (response?.status !== 'success' || !response.settings || typeof response.settings !== 'object') throw new Error('Máy chủ chưa xác nhận cài đặt đã lưu. Tải lại cài đặt để kiểm tra.');
+      if (response?.status !== 'success' || !response.settings || typeof response.settings !== 'object' || Array.isArray(response.settings)) throw new Error('Máy chủ chưa xác nhận cài đặt đã lưu. Tải lại cài đặt để kiểm tra.');
       const savedSettings = maskedSettings(response.settings);
       saved = true;
       setSettings(savedSettings);
@@ -275,7 +285,8 @@ export default function SettingsModal({ isOpen, onClose, onSettingsSaved, isDark
 
             {providers.filter(provider => provider.tab === activeTab).map(provider => {
               const detected = localStatus?.[provider.scan];
-              const scannedModels = Array.isArray(detected?.models) ? detected.models : [];
+              const scannedModels = Array.isArray(detected?.models)
+                ? detected.models.map(model => typeof model === 'string' ? model : model?.name || model?.id).filter(Boolean) : [];
               const result = testResult[provider.id];
               const clearing = clearApiKeys.includes(provider.key);
               const configured = provider.key && settings[`${provider.key}_configured`];
@@ -288,7 +299,7 @@ export default function SettingsModal({ isOpen, onClose, onSettingsSaved, isDark
                   </div>
                   {provider.hint && <p className={`text-xs leading-relaxed ${muted}`}>{provider.hint}</p>}
                   {provider.url && <div><label htmlFor={`settings-${provider.id}-url`} className={`block text-xs mb-1 ${muted}`}>Endpoint / Base URL</label><input id={`settings-${provider.id}-url`} type="url" value={settings[provider.url] || ''} onChange={event => changeSetting(provider.url, event.target.value)} placeholder={initialSettings[provider.url] || 'https://.../v1'} className={`${input} font-mono`} /></div>}
-                  <div><label htmlFor={`settings-${provider.id}-model`} className={`block text-xs mb-1 ${muted}`}>Model ID / Tên model</label><input id={`settings-${provider.id}-model`} value={settings[provider.model] || ''} onChange={event => changeSetting(provider.model, event.target.value)} placeholder={provider.placeholder} list={provider.scan ? `settings-${provider.id}-models` : undefined} className={`${input} font-mono`} />{provider.scan && <datalist id={`settings-${provider.id}-models`}>{scannedModels.map(model => <option key={model.name || model.id} value={model.name || model.id} />)}</datalist>}</div>
+                  <div><label htmlFor={`settings-${provider.id}-model`} className={`block text-xs mb-1 ${muted}`}>Model ID / Tên model</label><input id={`settings-${provider.id}-model`} value={settings[provider.model] || ''} onChange={event => changeSetting(provider.model, event.target.value)} placeholder={provider.placeholder} list={provider.scan ? `settings-${provider.id}-models` : undefined} className={`${input} font-mono`} />{provider.scan && <datalist id={`settings-${provider.id}-models`}>{scannedModels.map(name => <option key={name} value={name} />)}</datalist>}</div>
                   {provider.key && <div className="space-y-2"><label htmlFor={`settings-${provider.id}-key`} className={`block text-xs ${muted}`}>API key {configured ? '(đã lưu, nội dung được ẩn)' : '(chưa có key đã lưu)'}</label><div className="relative"><input id={`settings-${provider.id}-key`} type={showKeys[provider.id] ? 'text' : 'password'} autoComplete="off" spellCheck={false} value={settings[provider.key] || ''} onChange={event => changeSetting(provider.key, event.target.value)} placeholder={clearing ? 'Key sẽ bị xóa khi lưu' : configured ? 'Để trống để giữ nguyên key đã lưu' : 'Nhập key mới hoặc để trống nếu không cần'} className={`${input} pr-11 font-mono`} /><button type="button" onClick={() => setShowKeys(previous => ({ ...previous, [provider.id]: !previous[provider.id] }))} aria-label={`${showKeys[provider.id] ? 'Ẩn' : 'Hiện'} key mới của ${provider.title}`} aria-pressed={Boolean(showKeys[provider.id])} className={`absolute right-3 top-3 ${muted}`}>{showKeys[provider.id] ? <EyeOff size={15} /> : <Eye size={15} />}</button></div>{configured && <button type="button" onClick={() => toggleClearKey(provider.key)} className={`text-[11px] underline underline-offset-2 ${isDark ? 'text-rose-300' : 'text-rose-700'}`}>{clearing ? 'Hủy xóa, giữ key đã lưu' : 'Đánh dấu xóa key đã lưu'}</button>}{clearing && <p className={`text-[11px] ${isDark ? 'text-amber-300' : 'text-amber-800'}`}>Key chỉ bị xóa sau khi bấm Lưu Cài Đặt. Nhập key mới sẽ hủy yêu cầu xóa.</p>}</div>}
                   <button type="button" onClick={() => handleTestConnection(provider)} disabled={busy || clearing} className={`${secondaryButton} border ${border} flex items-center gap-1.5`}>{testingProvider === provider.id ? <RefreshCw size={13} className="animate-spin" /> : <Check size={13} />}{testingProvider === provider.id ? 'Đang chờ phản hồi...' : `Kiểm tra ${provider.title}`}</button>
                   {result && <div role={result.success ? 'status' : 'alert'} className={`p-3 rounded-lg border text-xs break-words ${result.success ? isDark ? 'bg-green-500/10 text-green-200 border-green-500/30' : 'bg-green-50 text-green-900 border-green-300' : isDark ? 'bg-rose-500/10 text-rose-200 border-rose-500/30' : 'bg-rose-50 text-rose-900 border-rose-300'}`}>{result.message}</div>}

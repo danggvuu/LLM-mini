@@ -6,9 +6,13 @@ import platform
 import subprocess
 import logging
 import asyncio
+import tempfile
+from pathlib import Path
 from typing import Optional, List, Tuple
-from ..llm.llm_client import LLMEngine
+from ..llm.llm_client import LLMEngine, validate_generated_text
 from ..db.session_manager import SessionManager
+from ..utils.config import settings
+from ..utils.audio import is_valid_audio_file
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +20,7 @@ class PodcastGenerator:
     def __init__(self, llm_engine: LLMEngine, session_manager: SessionManager):
         self.llm = llm_engine
         self.db = session_manager
-        self.output_dir = "storage/podcasts"
+        self.output_dir = str(settings.project_root / "storage" / "podcasts")
         os.makedirs(self.output_dir, exist_ok=True)
 
     def generate_podcast(
@@ -31,7 +35,8 @@ class PodcastGenerator:
         focus_topic: Optional[str] = None,
         style: Optional[str] = "fun",
         custom_context: Optional[str] = None,
-        voice_mode: Optional[str] = "duo"
+        voice_mode: Optional[str] = "duo",
+        source_revision: Optional[int] = None
     ) -> str:
         """Sinh Podcast MP3 đa giọng đọc (Song ca Nam/Nữ, Độc thoại Nữ Hoài My, Nam Nam Minh, hoặc Chị Google) kèm khoảng nghỉ tự nhiên."""
         guide = self.db.get_study_guide(notebook_id)
@@ -41,7 +46,7 @@ class PodcastGenerator:
         elif guide and guide.get('summary'):
             summary = f"{guide.get('summary', '')}\n\n{guide.get('glossary', '')}"
         else:
-            summary = "Tài liệu kiến thức tổng hợp."
+            raise ValueError("Không có nội dung nguồn để tạo Podcast. Vui lòng chọn nguồn và thử lại.")
         
         style_instructions = {
             "fun": "Phong cách trò chuyện: Hài hước, sôi nổi, dí dỏm, sử dụng ngôn từ đời thường gần gũi, nhiều năng lượng.",
@@ -63,9 +68,7 @@ class PodcastGenerator:
         )
         
         logger.info(f"Đang sinh kịch bản Podcast cho notebook {notebook_id} (Focus: '{focus_topic}', Style: '{style}', Voice: '{voice_mode}')...")
-        script_raw = ""
-        try:
-            generator = self.llm.generate(
+        generator = self.llm.generate(
                 prompt, 
                 system_prompt="Bạn là biên kịch Podcast chuyên nghiệp. Chỉ xuất ra các dòng thoại bắt đầu bằng 'A:' hoặc 'B:'.",
                 is_private=is_private,
@@ -74,15 +77,8 @@ class PodcastGenerator:
                 model_name=model_name,
                 api_key=api_key,
                 base_url=base_url
-            )
-            # Timeout an toàn cho việc sinh kịch bản văn bản
-            chunks = []
-            for chunk in generator:
-                chunks.append(chunk)
-            script_raw = "".join(chunks)
-        except Exception as e:
-            logger.warning(f"Lỗi khi gọi LLM sinh kịch bản Podcast ({e}), sử dụng kịch bản dự phòng...")
-            script_raw = ""
+        )
+        script_raw = validate_generated_text("".join(generator))
         
         dialogues = []
         if script_raw and not script_raw.startswith("⚠️") and "không thể kết nối" not in script_raw.lower():
@@ -98,49 +94,34 @@ class PodcastGenerator:
                         dialogues.append(('B', text_part))
                 
         if not dialogues:
-            clean_summary = summary.replace('\n', ' ').strip()
-            topic_str = focus_topic if focus_topic and focus_topic.strip() else "tài liệu học tập"
-            dialogues = [
-                ('A', f'Chào các bạn thính giả! Chào mừng các bạn quay trở lại với chuỗi Podcast phân tích học tập trên NotebookLM Mini.'),
-                ('B', f'Chào anh Minh và các bạn! Hôm nay chúng ta sẽ cùng đào sâu chủ đề: {topic_str}.'),
-                ('A', f'Điểm cốt lõi đáng chú ý nhất trong tài liệu chính là: {clean_summary[:200]}...'),
-                ('B', f'Đúng vậy anh Minh! Phần nội dung này được trình bày rất logic và có nhiều ví dụ thực tế minh họa.'),
-                ('A', f'Các bạn học sinh và thầy cô có thể theo dõi thêm qua tính năng Sơ đồ tư duy 2D và Thẻ ghi nhớ 3D để nắm vững kiến thức nhé.'),
-                ('B', f'Chúc các bạn có những giờ học tập thật hứng khởi và đạt kết quả xuất sắc!')
-            ]
-            
-        output_file = os.path.join(self.output_dir, f"{notebook_id}.mp3")
-        
-        # 1. Thử nghiệm trực tiếp với Microsoft Edge Neural TTS (Nhanh, tự nhiên, đa giọng)
-        if voice_mode != "gtts":
-            try:
-                self._generate_with_edge_tts_native(dialogues, output_file, voice_mode=voice_mode)
-                if os.path.exists(output_file) and os.path.getsize(output_file) > 1000:
-                    logger.info(f"Tạo Podcast thành công với Edge-TTS: {output_file}")
-                    return output_file
-            except Exception as e:
-                logger.warning(f"Edge-TTS native thất bại: {e}, chuyển sang phương thức dự phòng gTTS...")
+            raise ValueError("AI không trả về kịch bản Podcast hợp lệ. Vui lòng thử lại.")
 
-        # 2. Dự phòng Google Translate TTS (gTTS)
-        try:
-            self._generate_with_gtts(dialogues, output_file)
-            if os.path.exists(output_file) and os.path.getsize(output_file) > 1000:
-                logger.info(f"Tạo Podcast thành công với gTTS: {output_file}")
-                return output_file
-        except Exception as ge:
-            logger.warning(f"gTTS thất bại: {ge}, chuyển sang phương thức offline macOS say...")
-
-        # 3. Dự phòng macOS Say hoặc offline audio
-        try:
-            self._generate_offline(dialogues, output_file)
-            if os.path.exists(output_file) and os.path.getsize(output_file) > 1000:
-                logger.info(f"Tạo Podcast thành công với Offline TTS: {output_file}")
-                return output_file
-        except Exception as ex:
-            logger.error(f"Tất cả TTS thất bại: {ex}. Tạo file âm thanh dự phòng...")
-            self._create_dummy_audio(output_file)
-                
-        return output_file
+        errors = []
+        with tempfile.TemporaryDirectory(dir=self.output_dir, prefix="podcast_") as staging_dir:
+            output_file = str(Path(staging_dir) / "audio.mp3")
+            methods = []
+            if voice_mode != "gtts":
+                methods.append(lambda: self._generate_with_edge_tts_native(dialogues, output_file, voice_mode=voice_mode))
+            methods.extend((lambda: self._generate_with_gtts(dialogues, output_file), lambda: self._generate_offline(dialogues, output_file)))
+            for synthesize in methods:
+                try:
+                    synthesize()
+                    for suffix in (".mp3", ".wav"):
+                        candidate = Path(output_file).with_suffix(suffix)
+                        if is_valid_audio_file(candidate):
+                            if source_revision is not None and self.db.get_source_revision(notebook_id) != source_revision:
+                                raise RuntimeError("Nguồn tài liệu đã thay đổi. Vui lòng tạo lại Podcast.")
+                            destination = Path(self.output_dir) / f"{notebook_id}{suffix}"
+                            os.replace(candidate, destination)
+                            other = destination.with_suffix(".wav" if suffix == ".mp3" else ".mp3")
+                            other.unlink(missing_ok=True)
+                            return str(destination)
+                    raise RuntimeError("TTS không tạo được tệp âm thanh hợp lệ.")
+                except Exception as exc:
+                    errors.append(str(exc))
+                    for suffix in (".mp3", ".wav"):
+                        Path(output_file).with_suffix(suffix).unlink(missing_ok=True)
+        raise RuntimeError("Không thể tạo âm thanh Podcast: " + "; ".join(errors))
 
     def _generate_with_edge_tts_native(self, dialogues: List[Tuple[str, str]], output_file: str, voice_mode: str = "duo"):
         """Sử dụng trực tiếp Python API của edge_tts bất đồng bộ (chạy song song các chunk, tốc độ siêu nhanh 3-5s)."""
@@ -277,9 +258,7 @@ class PodcastGenerator:
                     
                     ffmpeg_bin = shutil.which("ffmpeg") or "/opt/homebrew/bin/ffmpeg"
                     if os.path.exists(ffmpeg_bin):
-                        subprocess.run([ffmpeg_bin, "-y", "-i", wav_out, output_file], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    else:
-                        shutil.copy(wav_out, output_file)
+                        subprocess.run([ffmpeg_bin, "-y", "-i", wav_out, output_file], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, timeout=30)
                     return
             except Exception as e:
                 logger.warning(f"macOS say thất bại: {e}")
@@ -287,35 +266,4 @@ class PodcastGenerator:
                 if os.path.exists(temp_dir):
                     shutil.rmtree(temp_dir, ignore_errors=True)
 
-        self._create_dummy_audio(output_file)
-
-    def _create_dummy_audio(self, output_file: str):
-        import wave
-        import struct
-        wav_path = output_file.replace(".mp3", ".wav")
-        with wave.open(wav_path, 'w') as f:
-            f.setnchannels(1)
-            f.setsampwidth(2)
-            f.setframerate(44100)
-            for i in range(44100 * 2):
-                value = int(32767.0 * 0.1 * (i % 100) / 100)
-                data = struct.pack('<h', value)
-                f.writeframesraw(data)
-        if os.path.exists(wav_path) and not os.path.exists(output_file):
-            shutil.copy(wav_path, output_file)
-
-
-    def _create_dummy_audio(self, output_file: str):
-        import wave
-        import struct
-        wav_path = output_file.replace(".mp3", ".wav")
-        with wave.open(wav_path, 'w') as f:
-            f.setnchannels(1)
-            f.setsampwidth(2)
-            f.setframerate(44100)
-            for i in range(44100 * 2):
-                value = int(32767.0 * 0.1 * (i % 100) / 100)
-                data = struct.pack('<h', value)
-                f.writeframesraw(data)
-        if os.path.exists(wav_path) and not os.path.exists(output_file):
-            shutil.copy(wav_path, output_file)
+        raise RuntimeError("TTS offline không khả dụng. Kiểm tra Edge-TTS/gTTS hoặc giọng đọc hệ thống macOS.")

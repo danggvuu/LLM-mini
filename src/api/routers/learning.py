@@ -11,6 +11,7 @@ from src.learning.guide_generator import GuideGenerator
 from src.learning.evaluator import Evaluator
 from src.learning.mindmap_generator import MindmapGenerator
 from src.learning.timeline_generator import TimelineOutlineGenerator
+from src.llm.llm_client import validate_generated_text
 from src.api.deps import (
     get_session_manager,
     get_vector_store,
@@ -334,6 +335,7 @@ Hãy viết bằng tiếng Việt lưu loát, khoa học, định dạng tiêu �
             system_prompt=system_prompt,
             **llm_kwargs
         )
+        report = validate_generated_text(report)
         return {
             "title": "Báo cáo Tổng hợp Ghi chú Nghiên cứu",
             "markdown": report,

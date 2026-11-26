@@ -1,6 +1,7 @@
 import os
 import re
 import time
+import uuid
 import logging
 from pathlib import Path
 from typing import Optional, Dict, Any
@@ -13,9 +14,12 @@ from src.api.deps import (
     get_session_manager,
     get_vector_store,
     get_llm_engine,
-    resolve_llm_config
+    resolve_llm_config,
+    select_notebook_documents,
+    collect_document_context,
 )
 from src.utils.config import settings
+from src.utils.audio import is_valid_audio_file
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Media & Podcast"])
@@ -28,25 +32,31 @@ def _podcast_file(notebook_id: str, suffix: str) -> Path:
         raise HTTPException(status_code=400, detail="notebook_id không hợp lệ.")
     return settings.project_root / "storage" / "podcasts" / f"{notebook_id}{suffix}"
 
-def _run_podcast_generation_task(generator: PodcastGenerator, notebook_id: str, **kwargs):
+def _run_podcast_generation_task(generator: PodcastGenerator, notebook_id: str, generation_id: str, source_revision: int, **kwargs):
     global _PODCAST_STATUS
-    _PODCAST_STATUS[notebook_id] = {
-        "status": "generating",
-        "started_at": time.time(),
-        "error": None
-    }
     try:
-        out = generator.generate_podcast(notebook_id=notebook_id, **kwargs)
+        out = generator.generate_podcast(notebook_id=notebook_id, source_revision=source_revision, **kwargs)
+        if not is_valid_audio_file(out):
+            raise RuntimeError("TTS không tạo được âm thanh Podcast hợp lệ.")
+        if generator.db.get_source_revision(notebook_id) != source_revision:
+            generator.db._delete_generated_audio(notebook_id)
+            raise RuntimeError("Nguồn tài liệu đã thay đổi. Vui lòng tạo lại Podcast.")
+        if _PODCAST_STATUS.get(notebook_id, {}).get("generation_id") != generation_id:
+            return
         _PODCAST_STATUS[notebook_id] = {
             "status": "completed",
             "completed_at": time.time(),
             "output_file": out,
+            "generation_id": generation_id,
+            "source_revision": source_revision,
             "error": None
         }
     except Exception as e:
         logger.error(f"Lỗi background tạo podcast notebook {notebook_id}: {e}")
         _PODCAST_STATUS[notebook_id] = {
             "status": "error",
+            "generation_id": generation_id,
+            "source_revision": source_revision,
             "error": str(e)
         }
 
@@ -79,42 +89,38 @@ async def generate_podcast(
 
     if not target_id:
         raise HTTPException(status_code=400, detail="Thiếu notebook_id")
+    _podcast_file(target_id, ".mp3")
 
     notebook = sm.get_notebook(target_id)
     if not notebook:
         raise HTTPException(status_code=404, detail="Notebook not found")
 
-    for ext in [".mp3", ".wav"]:
-        old_path = _podcast_file(target_id, ext)
-        if old_path.exists():
-            try:
-                old_path.unlink()
-            except Exception:
-                pass
-
-    custom_context = None
+    docs = select_notebook_documents(sm, target_id, selected_documents)
+    source_revision = sm.get_source_revision(target_id)
+    task = _PODCAST_STATUS.get(target_id, {})
+    if task.get("status") == "generating" and task.get("source_revision") == source_revision:
+        raise HTTPException(status_code=409, detail="Podcast đang được tạo. Vui lòng chờ hoàn tất.")
     vs = await run_in_threadpool(get_vector_store)
-    docs = sm.get_documents(target_id)
-    if selected_documents and len(selected_documents) > 0:
-        docs = [d for d in docs if d["filename"] in selected_documents]
-
-    if docs:
-        collected = []
-        for d in docs:
-            c = await run_in_threadpool(vs.get_chunks_by_document, target_id, d["filename"], limit=10)
-            if c:
-                collected.append(f"--- {d['filename']} ---\n" + "\n".join(c))
-        if collected:
-            custom_context = "\n\n".join(collected)
+    try:
+        custom_context = await run_in_threadpool(collect_document_context, vs, target_id, docs, limit=10)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     provider, model_name, api_key, base_url, is_private = resolve_llm_config(notebook)
     llm = get_llm_engine()
     generator = PodcastGenerator(llm, sm)
+    generation_id = uuid.uuid4().hex
+    _PODCAST_STATUS[target_id] = {
+        "status": "generating", "started_at": time.time(), "error": None,
+        "generation_id": generation_id, "source_revision": source_revision,
+    }
     
     background_tasks.add_task(
         _run_podcast_generation_task,
         generator=generator,
         notebook_id=target_id,
+        generation_id=generation_id,
+        source_revision=source_revision,
         is_private=is_private,
         provider=provider,
         model_name=model_name,
@@ -132,18 +138,24 @@ def get_podcast_status(notebook_id: str):
     """Kiểm tra trạng thái tiến trình tạo Podcast."""
     audio_path = _podcast_file(notebook_id, ".mp3")
     wav_path = _podcast_file(notebook_id, ".wav")
-    has_audio = (audio_path.is_file() and audio_path.stat().st_size > 100) or \
-                (wav_path.is_file() and wav_path.stat().st_size > 100)
+    sm = get_session_manager()
+    if not sm.get_notebook(notebook_id):
+        raise HTTPException(status_code=404, detail="Notebook not found")
+    has_audio = is_valid_audio_file(audio_path) or is_valid_audio_file(wav_path)
 
     task_info = _PODCAST_STATUS.get(notebook_id, {})
+    if task_info.get("source_revision") != sm.get_source_revision(notebook_id):
+        task_info = {}
     status = task_info.get("status")
 
+    if status == "generating":
+        return {"status": "generating", "has_audio": has_audio, "error": None}
+    if status == "error":
+        return {"status": "error", "has_audio": has_audio, "error": task_info.get("error")}
     if has_audio:
         return {"status": "completed", "has_audio": True, "error": None}
-    if status == "generating":
-        return {"status": "generating", "has_audio": False, "error": None}
-    if status == "error":
-        return {"status": "error", "has_audio": False, "error": task_info.get("error")}
+    if status == "completed":
+        return {"status": "error", "has_audio": False, "error": "Tệp Podcast bị thiếu hoặc không hợp lệ. Vui lòng tạo lại."}
     return {"status": "not_found", "has_audio": False, "error": None}
 
 @router.get("/api/podcast/audio/{notebook_id}")
@@ -151,10 +163,12 @@ def get_podcast_status(notebook_id: str):
 def get_podcast_audio(notebook_id: str):
     """Phục vụ file âm thanh Podcast đã tạo (Hỗ trợ cả GET và HEAD)."""
     audio_path = _podcast_file(notebook_id, ".mp3")
-    if audio_path.is_file() and audio_path.stat().st_size > 100:
+    if not get_session_manager().get_notebook(notebook_id):
+        raise HTTPException(status_code=404, detail="Notebook not found")
+    if is_valid_audio_file(audio_path):
         return FileResponse(audio_path, media_type="audio/mpeg")
     wav_path = _podcast_file(notebook_id, ".wav")
-    if wav_path.is_file() and wav_path.stat().st_size > 100:
+    if is_valid_audio_file(wav_path):
         return FileResponse(wav_path, media_type="audio/wav")
     raise HTTPException(status_code=404, detail="Chưa có file Podcast cho sổ tay này.")
 
@@ -170,6 +184,8 @@ async def transcribe_audio(file: UploadFile = File(...)):
     await file.close()
     if len(content) > max_bytes:
         raise HTTPException(status_code=413, detail=f"Audio vượt quá giới hạn {settings.max_upload_size_mb} MB.")
+    if not content:
+        raise HTTPException(status_code=400, detail="Tệp ghi âm rỗng. Vui lòng ghi âm lại.")
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp.write(content)
         tmp_path = tmp.name
@@ -182,7 +198,11 @@ async def transcribe_audio(file: UploadFile = File(...)):
 
         result = await run_in_threadpool(_transcribe)
         text = result.get("text", "").strip()
+        if not text:
+            raise HTTPException(status_code=422, detail="Không nhận diện được lời nói. Vui lòng ghi âm rõ hơn.")
         return {"status": "success", "text": text}
+    except HTTPException:
+        raise
     except (ImportError, RuntimeError) as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
     except Exception as e:

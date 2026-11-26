@@ -213,6 +213,8 @@ async def ingest_url(background_tasks: BackgroundTasks, notebook_id: str = Form(
     embedder = await run_in_threadpool(get_embedder)
     chunker = AdaptiveChunker(embedder=embedder)
     chunks = await run_in_threadpool(chunker.process_document, tree)
+    if not chunks:
+        raise HTTPException(status_code=400, detail="Không trích xuất được nội dung từ nguồn này.")
     
     for chunk in chunks:
         chunk["metadata"]["notebook_id"] = notebook_id
@@ -265,6 +267,8 @@ async def ingest_raw_text(background_tasks: BackgroundTasks, req: IngestTextRequ
     embedder = await run_in_threadpool(get_embedder)
     chunker = AdaptiveChunker(embedder=embedder)
     chunks = await run_in_threadpool(chunker.process_document, tree)
+    if not chunks:
+        raise HTTPException(status_code=400, detail="Văn bản quá ngắn hoặc không có nội dung để lập chỉ mục.")
 
     for chunk in chunks:
         chunk["metadata"]["notebook_id"] = req.notebook_id
@@ -287,8 +291,9 @@ async def compare_documents_endpoint(notebook_id: str, req: CompareDocsRequest):
     if not notebook:
         raise HTTPException(status_code=404, detail="Notebook not found")
         
-    if len(req.filenames) < 2:
+    if len(set(req.filenames)) < 2:
         raise HTTPException(status_code=400, detail="Vui lòng chọn ít nhất 2 tài liệu để so sánh.")
+    select_notebook_documents(sm, notebook_id, req.filenames)
 
     try:
         vs = await run_in_threadpool(get_vector_store)
@@ -296,6 +301,8 @@ async def compare_documents_endpoint(notebook_id: str, req: CompareDocsRequest):
         for fname in req.filenames:
             chunks = await run_in_threadpool(vs.get_chunks_by_document, notebook_id, fname)
             text = "\n".join(chunks[:20])
+            if not text.strip():
+                raise ValueError(f"Không tìm thấy nội dung trong nguồn {fname}. Vui lòng nạp lại tài liệu.")
             docs_data.append({"filename": fname, "text": text})
 
         provider, model_name, api_key, base_url, is_private = resolve_llm_config(notebook)
@@ -379,15 +386,25 @@ async def create_critique(
         elif request.headers.get("x-notebook-id"):
             target_nb = request.headers.get("x-notebook-id")
     _validate_notebook_id(target_nb)
+    sm = get_session_manager()
+    if not sm.get_notebook(target_nb):
+        raise HTTPException(status_code=404, detail="Notebook not found")
+    select_notebook_documents(sm, target_nb, req.selected_documents if req.selected_documents is not None else ([req.source_filter] if req.source_filter else None))
     engines = await run_in_threadpool(get_notebook_engines, target_nb)
     source_filter = req.source_filter or (req.selected_documents[0] if req.selected_documents and len(req.selected_documents) == 1 else None)
     llm_kwargs = engines.get("llm_kwargs", {})
-    return await run_in_threadpool(
-        engines["critique"].generate_critique,
-        source_filter=source_filter,
-        selected_documents=req.selected_documents,
-        **llm_kwargs
-    )
+    try:
+        result = await run_in_threadpool(
+            engines["critique"].generate_critique,
+            source_filter=source_filter,
+            selected_documents=req.selected_documents,
+            **llm_kwargs
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
 
 @router.post("/api/studio/action-plan")
 @router.post("/api/notebooks/{notebook_id}/studio/action-plan")
@@ -404,12 +421,22 @@ async def create_action_plan(
         elif request.headers.get("x-notebook-id"):
             target_nb = request.headers.get("x-notebook-id")
     _validate_notebook_id(target_nb)
+    sm = get_session_manager()
+    if not sm.get_notebook(target_nb):
+        raise HTTPException(status_code=404, detail="Notebook not found")
+    select_notebook_documents(sm, target_nb, req.selected_documents if req.selected_documents is not None else ([req.source_filter] if req.source_filter else None))
     engines = await run_in_threadpool(get_notebook_engines, target_nb)
     source_filter = req.source_filter or (req.selected_documents[0] if req.selected_documents and len(req.selected_documents) == 1 else None)
     llm_kwargs = engines.get("llm_kwargs", {})
-    return await run_in_threadpool(
-        engines["critique"].generate_action_plan,
-        source_filter=source_filter,
-        selected_documents=req.selected_documents,
-        **llm_kwargs
-    )
+    try:
+        result = await run_in_threadpool(
+            engines["critique"].generate_action_plan,
+            source_filter=source_filter,
+            selected_documents=req.selected_documents,
+            **llm_kwargs
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result

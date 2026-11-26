@@ -1,7 +1,8 @@
 import os
 import json
 from typing import Dict, Any, Optional, List
-from src.llm.llm_client import LLMEngine
+from src.llm.llm_client import LLMEngine, validate_generated_text
+from src.retrieval.search_engine import _document_matches
 from src.ingestion.indexing import VectorStoreManager
 from src.utils.logger import logger
 
@@ -29,12 +30,14 @@ class CritiqueAndActionGenerator:
         selected_documents: Optional[List[str]] = None,
         max_chars: int = 16000
     ) -> str:
+        if selected_documents == []:
+            return ""
         text_parts = []
         total = 0
 
         # Ưu tiên 1: Lấy theo danh sách tài liệu của sổ tay thông qua get_chunks_by_document
         target_filenames = []
-        if selected_documents and len(selected_documents) > 0:
+        if selected_documents is not None:
             target_filenames = list(selected_documents)
         elif source_filter:
             target_filenames = [source_filter]
@@ -61,7 +64,8 @@ class CritiqueAndActionGenerator:
 
         # Ưu tiên 2: Fallback trực tiếp vào kho chỉ mục BM25 (storage/bm25/{notebook_id}/bm25_docs.json)
         if not text_parts:
-            bm25_path = os.path.join("storage", "bm25", str(self.notebook_id), "bm25_docs.json")
+            from src.retrieval.bm25_index import _notebook_index_dir
+            bm25_path = _notebook_index_dir(self.notebook_id) / "bm25_docs.json"
             if os.path.exists(bm25_path):
                 try:
                     with open(bm25_path, "r", encoding="utf-8") as f:
@@ -69,7 +73,7 @@ class CritiqueAndActionGenerator:
                     for item in b_docs:
                         meta = item.get("metadata", {})
                         src = meta.get("filename") or meta.get("source_file") or meta.get("source") or meta.get("title") or "Tài liệu"
-                        if selected_documents and src not in selected_documents and os.path.basename(str(src)) not in [os.path.basename(s) for s in selected_documents]:
+                        if selected_documents is not None and not _document_matches(meta, selected_documents):
                             continue
                         if source_filter and src != source_filter and os.path.basename(str(src)) != os.path.basename(source_filter):
                             continue
@@ -90,7 +94,7 @@ class CritiqueAndActionGenerator:
                 for c in chunks:
                     meta = c.get("metadata", {})
                     src = meta.get("filename") or meta.get("source") or meta.get("source_file") or "Tài liệu"
-                    if selected_documents and src not in selected_documents:
+                    if selected_documents is not None and not _document_matches(meta, selected_documents):
                         continue
                     if source_filter and src != source_filter:
                         continue
@@ -103,7 +107,7 @@ class CritiqueAndActionGenerator:
                 logger.warning(f"Lỗi get_all_chunks trong CritiqueGenerator: {e}")
 
         # Ưu tiên 4: Fallback sang bản tóm tắt Study Guide nếu Vector Store & BM25 chưa trả kết quả
-        if not text_parts and self.sm is not None:
+        if not text_parts and self.sm is not None and selected_documents is None and not source_filter:
             try:
                 sg = self.sm.get_study_guide(self.notebook_id)
                 if sg and (sg.get("summary") or sg.get("faq")):
@@ -117,7 +121,17 @@ class CritiqueAndActionGenerator:
                 docs = self.sm.get_documents(self.notebook_id) or []
                 for d in docs:
                     fn = d.get("filename")
-                    up_file = os.path.join("uploads", fn) if fn else None
+                    if selected_documents is not None and fn not in selected_documents:
+                        continue
+                    if source_filter and fn != source_filter:
+                        continue
+                    from pathlib import Path
+                    from src.utils.config import settings
+                    if not fn or os.path.basename(fn.replace("\\", "/")) != fn:
+                        continue
+                    up_file = (settings.upload_dir / fn).resolve()
+                    if not up_file.is_relative_to(settings.upload_dir.resolve()):
+                        continue
                     if up_file and os.path.exists(up_file):
                         ext = os.path.splitext(fn)[1].lower()
                         if ext in ['.txt', '.md', '.json', '.csv', '.html']:
@@ -142,8 +156,8 @@ class CritiqueAndActionGenerator:
             **llm_kwargs
         )
         if hasattr(gen, "__iter__") and not isinstance(gen, str):
-            return "".join(gen).strip()
-        return str(gen).strip()
+            return validate_generated_text("".join(gen))
+        return validate_generated_text(str(gen))
 
     def generate_critique(
         self,
@@ -176,23 +190,6 @@ NỘI DUNG TÀI LIỆU:
 {context}
 """
         res = self._call_llm(prompt, system_prompt, llm_kwargs)
-        if not res or res.startswith("⚠️") or "không thể kết nối" in res.lower() or "lỗi" in res.lower()[:30]:
-            res = (
-                "## Báo Cáo Phản Biện Học Thuật & Đánh Giá Độc Lập (Academic Peer Review)\n\n"
-                "### 1. Điểm mạnh & Giá trị cốt lõi (Core Strengths)\n"
-                "- **Tính xác thực cao:** Tài liệu cung cấp số liệu thực nghiệm và hệ thống tọa độ, độ cao địa lý chính xác (đỉnh Fansipan 3.143m, ranh giới ngã ba sông Lũng Pô).\n"
-                "- **Cấu trúc phân tầng mạch lạc:** Nội dung được phân loại khoa học từ Địa lý tự nhiên, Đa dạng sinh học đến Văn hóa lịch sử các dân tộc bản địa.\n"
-                "- **Tính ứng dụng giáo dục:** Bám sát khung chương trình Giáo dục Địa phương tỉnh Lào Cai và định hướng phát triển năng lực học sinh.\n\n"
-                "### 2. Lỗ hổng lập luận & Điểm mù (Limitations & Blind Spots)\n"
-                "- **Số liệu cập nhật thời gian thực:** Một số dữ liệu về quy mô dân số và phát triển kinh tế du lịch Sa Pa cần được đối chiếu thêm với niên giám thống kê mới nhất.\n"
-                "- **Tác động biến đổi khí hậu:** Chưa có phân tích định lượng về sự suy giảm thảm thực vật hoặc nguy cơ sạt lở mùa mưa tại các vùng núi cao.\n\n"
-                "### 3. Góc nhìn phản biện & Câu hỏi chất vấn (Key Counter-Arguments)\n"
-                "1. Làm thế nào để cân bằng giữa bảo tồn di sản văn hóa của đồng bào dân tộc thiểu số và việc thương mại hóa du lịch?\n"
-                "2. Các biện pháp nào để bảo vệ hệ sinh thái rừng đặc dụng Vườn Quốc gia Hoàng Liên trước áp lực gia tăng lượng khách du lịch?\n\n"
-                "### 4. Đề xuất hoàn thiện học liệu\n"
-                "- Bổ sung biểu đồ phân bố lượng mưa và bản đồ số hóa GIS về hệ thống khoáng sản Apatit.\n"
-                "- Tích hợp thêm các câu hỏi tình huống thực tế để tăng cường tư duy phản biện cho học sinh trung học."
-            )
         return {"content": res}
 
     def generate_action_plan(
@@ -222,21 +219,4 @@ NỘI DUNG TÀI LIỆU:
 {context}
 """
         res = self._call_llm(prompt, system_prompt, llm_kwargs)
-        if not res or res.startswith("⚠️") or "không thể kết nối" in res.lower() or "lỗi" in res.lower()[:30]:
-            res = (
-                "## Báo Cáo Phản Biện Học Thuật & Đánh Giá Độc Lập (Academic Peer Review)\n\n"
-                "### 1. Điểm mạnh & Giá trị cốt lõi (Core Strengths)\n"
-                "- **Tính xác thực cao:** Tài liệu cung cấp số liệu thực nghiệm và hệ thống tọa độ, độ cao địa lý chính xác (đỉnh Fansipan 3.143m, ranh giới ngã ba sông Lũng Pô).\n"
-                "- **Cấu trúc phân tầng mạch lạc:** Nội dung được phân loại khoa học từ Địa lý tự nhiên, Đa dạng sinh học đến Văn hóa lịch sử các dân tộc bản địa.\n"
-                "- **Tính ứng dụng giáo dục:** Bám sát khung chương trình Giáo dục Địa phương tỉnh Lào Cai và định hướng phát triển năng lực học sinh.\n\n"
-                "### 2. Lỗ hổng lập luận & Điểm mù (Limitations & Blind Spots)\n"
-                "- **Số liệu cập nhật thời gian thực:** Một số dữ liệu về quy mô dân số và phát triển kinh tế du lịch Sa Pa cần được đối chiếu thêm với niên giám thống kê mới nhất.\n"
-                "- **Tác động biến đổi khí hậu:** Chưa có phân tích định lượng về sự suy giảm thảm thực vật hoặc nguy cơ sạt lở mùa mưa tại các vùng núi cao.\n\n"
-                "### 3. Góc nhìn phản biện & Câu hỏi chất vấn (Key Counter-Arguments)\n"
-                "1. Làm thế nào để cân bằng giữa bảo tồn di sản văn hóa của đồng bào dân tộc thiểu số và việc thương mại hóa du lịch?\n"
-                "2. Các biện pháp nào để bảo vệ hệ sinh thái rừng đặc dụng Vườn Quốc gia Hoàng Liên trước áp lực gia tăng lượng khách du lịch?\n\n"
-                "### 4. Đề xuất hoàn thiện học liệu\n"
-                "- Bổ sung biểu đồ phân bố lượng mưa và bản đồ số hóa GIS về hệ thống khoáng sản Apatit.\n"
-                "- Tích hợp thêm các câu hỏi tình huống thực tế để tăng cường tư duy phản biện cho học sinh trung học."
-            )
         return {"content": res}

@@ -330,7 +330,7 @@ export default function ModelManagerModal({
           {keyRequest && (
             <div className={`p-4 rounded-xl border space-y-3 ${isDark ? 'bg-purple-500/10 border-purple-500/30' : 'bg-purple-50 border-purple-200'}`}>
               <h3 className="text-sm font-semibold break-words">API key cho {keyRequest.model.model_name}</h3>
-              <p className={`text-xs leading-relaxed ${muted}`}>Key tùy chỉnh chỉ giữ trong phiên trang này. Nhập lại key hoặc dùng key đã lưu trong Cài đặt. Khi chọn model cùng nhà cung cấp, sổ tay cũng có thể giữ key hiện có.</p>
+              <p className={`text-xs leading-relaxed ${muted}`}>Trình duyệt chỉ giữ key tùy chỉnh trong phiên trang này. Nhập lại key hoặc dùng key đã lưu trong Cài đặt. Khi chọn model cùng nhà cung cấp, sổ tay cũng có thể giữ key hiện có.</p>
               <label htmlFor="model-session-key" className="sr-only">API key cho phiên trang hiện tại</label>
               <input id="model-session-key" type="password" autoComplete="off" value={sessionApiKey} onChange={event => setSessionApiKey(event.target.value)} className={input} placeholder="Nhập API key cho phiên này" disabled={busy} />
               <div className="flex flex-wrap gap-2">

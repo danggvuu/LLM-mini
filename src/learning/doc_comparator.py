@@ -1,6 +1,6 @@
 import logging
 from typing import Optional, Dict, Any, List
-from ..llm.llm_client import LLMEngine
+from ..llm.llm_client import LLMEngine, validate_generated_text
 from ..db.session_manager import SessionManager
 
 logger = logging.getLogger(__name__)
@@ -58,4 +58,4 @@ Viết chi tiết, chuẩn văn phong tiếng Việt, sử dụng Markdown heade
             base_url=base_url
         ))
         
-        return "".join(chunks).strip()
+        return validate_generated_text("".join(chunks))
