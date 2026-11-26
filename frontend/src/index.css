@@ -58,3 +58,75 @@
 .animate-shake {
   animation: shake 0.3s ease-in-out;
 }
+
+button, a, input, select, textarea, summary, [tabindex] {
+  -webkit-tap-highlight-color: transparent;
+}
+
+:is(button, a, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 3px;
+}
+
+button:disabled { cursor: not-allowed; opacity: 0.45; }
+input, textarea, select { max-width: 100%; }
+button, summary { touch-action: manipulation; }
+
+.skip-link {
+  position: fixed;
+  top: -5rem;
+  left: 1rem;
+  z-index: 10000;
+  padding: 0.75rem 1rem;
+  border-radius: 0.75rem;
+  color: white;
+  background: #2563eb;
+}
+.skip-link:focus { top: 1rem; }
+
+.studio-actions-menu > button {
+  width: 100%;
+  height: auto;
+  min-height: 2.5rem;
+  justify-content: flex-start;
+  gap: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.25rem;
+  border-color: transparent;
+  border-radius: 0.5rem;
+  text-align: left;
+  white-space: normal;
+}
+.studio-actions-menu > button > span { display: none; }
+.studio-actions-menu > button::after { content: attr(title); font-size: 0.75rem; line-height: 1.4; }
+.studio-actions-menu > button > svg { flex-shrink: 0; }
+.studio-actions-menu > div { display: none; }
+.studio-actions-menu > .lg\:hidden { display: none; }
+.studio-actions-menu > button:hover { background-color: rgba(59, 130, 246, 0.1); }
+.studio-header-actions > summary::-webkit-details-marker { display: none; }
+
+[data-theme="light"] :is(.text-gray-100, .text-gray-200, .text-gray-300) { color: #334155; }
+[data-theme="light"] .text-gray-400 { color: #64748b; }
+[data-theme="light"] [class*="border-white/"] { border-color: #e2e8f0; }
+[data-theme="light"] :is([class~="bg-black/20"], [class~="bg-black/30"], [class~="bg-black/40"], [class~="bg-black/50"]) { background-color: #f1f5f9; color: #0f172a; }
+[data-theme="light"] .create-dialog :is(input, select) { background: #f8fafc; color: #0f172a; border-color: #cbd5e1; }
+[data-theme="light"] .create-dialog label { color: #475569; }
+[data-theme="light"] .create-dialog button.bg-white { background: #2563eb; color: white; }
+[data-theme="dark"] { color-scheme: dark; }
+
+@media (max-width: 1023px) {
+  .studio-shell > .studio-panel.fixed { height: calc(100dvh - 4rem); }
+  .studio-header { gap: 0.5rem; }
+  .studio-shell main { width: 100%; max-width: 100%; }
+  .studio-header .studio-header-actions { margin-left: auto; }
+  [role="dialog"] { max-height: 90dvh; }
+}
+
+@media (pointer: coarse) {
+  .studio-shell :is(button, summary), .dashboard-shell :is(button, summary) { min-height: 2.5rem; }
+  input, textarea, select { font-size: 16px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+}

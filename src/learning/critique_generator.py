@@ -125,7 +125,6 @@ class CritiqueAndActionGenerator:
                         continue
                     if source_filter and fn != source_filter:
                         continue
-                    from pathlib import Path
                     from src.utils.config import settings
                     if not fn or os.path.basename(fn.replace("\\", "/")) != fn:
                         continue

@@ -351,6 +351,7 @@ def test_srs_accepts_original_index_and_resets_only_for_changed_cards(backend):
 def test_export_import_roundtrips_notes_cards_srs_and_chunk_metadata(backend):
     from src.api.deps import _save_notes, _load_notes
     add_source(backend)
+    backend.store.records[("safe-nb", "a.txt")][0]["metadata"]["chunk_id"] = "original-source-chunk"
     save_guide(backend.sm)
     backend.sm.update_notebook_settings("safe-nb", api_key="Never export")
     backend.sm.update_srs_progress("safe-nb", 0, 4)
@@ -370,6 +371,7 @@ def test_export_import_roundtrips_notes_cards_srs_and_chunk_metadata(backend):
     records = backend.store.get_document_chunk_records(new_id, "a.txt")
     assert records[0]["metadata"]["notebook_id"] == new_id
     assert records[0]["metadata"]["page"] == 3
+    assert "chunk_id" not in records[0]["metadata"]
     assert backend.store.get_document_chunk_records("safe-nb", "a.txt")[0]["metadata"]["notebook_id"] == "safe-nb"
     repeated = backend.client.post("/api/notebooks/import", json=exported).json()["notebook_id"]
     assert repeated not in {new_id, "safe-nb"}
@@ -585,3 +587,17 @@ def test_global_masked_key_save_preserves_secret(backend):
     response = backend.client.post("/api/settings", json={"openai_api_key": "******", "openai_model": "new-model"})
     assert response.status_code == 200
     assert backend.sm.get_app_settings()["openai_api_key"] == "Original secret"
+
+
+def test_source_change_during_podcast_synthesis_cannot_publish_stale_audio(backend, monkeypatch):
+    from src.learning.podcast_generator import PodcastGenerator
+    add_source(backend)
+    revision = backend.sm.get_source_revision("safe-nb")
+    generator = PodcastGenerator(SequenceLLM(["A: Source explanation\nB: Learning response"]), backend.sm)
+    def synthesize_stale(dialogues, output_file, **kwargs):
+        make_wav(Path(output_file).with_suffix(".wav"))
+        add_source(backend, "new.txt", "Updated source")
+    monkeypatch.setattr(generator, "_generate_with_edge_tts_native", synthesize_stale)
+    with pytest.raises(RuntimeError, match="Podcast"):
+        generator.generate_podcast("safe-nb", custom_context="Old source", source_revision=revision)
+    assert not list(Path(generator.output_dir).glob("safe-nb.*"))

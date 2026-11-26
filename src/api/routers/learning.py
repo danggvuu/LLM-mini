@@ -2,12 +2,11 @@ import uuid
 import logging
 import re
 from datetime import datetime
-from typing import Optional, List, Dict, Any, Literal
+from typing import Optional, List, Literal
 from fastapi import APIRouter, BackgroundTasks, Form, HTTPException, Request
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
-from src.learning.guide_generator import GuideGenerator
 from src.learning.evaluator import Evaluator
 from src.learning.mindmap_generator import MindmapGenerator
 from src.learning.timeline_generator import TimelineOutlineGenerator

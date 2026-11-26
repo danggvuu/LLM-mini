@@ -172,7 +172,7 @@ def export_notebook_endpoint(notebook_id: str):
             for chunk in doc_chunks:
                 chunks_export.append({
                     "content": chunk["content"],
-                    "metadata": {**chunk.get("metadata", {}), "filename": fname}
+                    "metadata": {**{key: value for key, value in chunk.get("metadata", {}).items() if key not in {"chunk_id", "notebook_id"}}, "filename": fname}
                 })
     data["chunks"] = chunks_export
     data["pinned_notes"] = _load_notes(notebook_id)
@@ -204,6 +204,7 @@ async def import_notebook_endpoint(payload: Dict[str, Any]):
         for ch in imported_chunks:
             content = ch.get("content", "")
             meta = dict(ch.get("metadata", {}))
+            meta.pop("chunk_id", None)
             meta["notebook_id"] = new_id
             if content:
                 formatted_chunks.append({"content": content, "metadata": meta})

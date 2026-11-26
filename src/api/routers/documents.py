@@ -3,14 +3,12 @@ import re
 import uuid
 from pathlib import Path
 import logging
-from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, File, UploadFile, BackgroundTasks, Form, HTTPException, Request, Depends
 from starlette.concurrency import run_in_threadpool
 
 from src.ingestion.parsers.markitdown_parser import MarkItDownParser
 from src.ingestion.parsers.web_parser import WebParser
 from src.ingestion.chunking import AdaptiveChunker
-from src.learning.guide_generator import GuideGenerator
 from src.learning.doc_comparator import DocComparator
 from src.api.deps import (
     get_session_manager,

@@ -33,6 +33,7 @@ import NotesModal from '../components/studio/NotesModal';
 import PasteTextModal from '../components/studio/PasteTextModal';
 import { requestJson, getErrorMessage, readSSE, escapeHtml } from '../lib/api';
 import { getCustomModels } from '../lib/customModels';
+import useDialog from '../hooks/useDialog';
 
 function Studio() {
   const { id } = useParams();
@@ -99,6 +100,9 @@ function Studio() {
   const [showEvalModal, setShowEvalModal] = useState(false);
 
   const [showUrlInput, setShowUrlInput] = useState(false);
+  const [urlError, setUrlError] = useState('');
+  const urlDialogRef = useRef(null);
+  useDialog(urlDialogRef, () => { if (!uploading) setShowUrlInput(false); }, showUrlInput);
   const [urlInputValue, setUrlInputValue] = useState('');
   const [uploadingDocs, setUploadingDocs] = useState([]);
 
@@ -384,6 +388,8 @@ function Studio() {
     setComparisonResult('');
     setAudioUrl(null);
     setQuizAnswers({});
+    clearTimeout(podcastTimerRef.current);
+    setPodcastGenerating(false);
     setQuizSubmitted(false);
     setShowQuiz(false);
     setShowFlashcards(false);
@@ -1042,6 +1048,7 @@ function Studio() {
 
   // --- Feature #8: Mindmap Handlers ---
   const handleOpenMindmap = async () => {
+    if (!requireSources()) return;
     setShowMindmapModal(true);
     if (!mindmapData) {
       setLoadingMindmap(true);
@@ -1092,6 +1099,7 @@ function Studio() {
 
   // --- Feature #15: Timeline & Outline Handlers ---
   const handleOpenTimeline = async () => {
+    if (!requireSources()) return;
     setShowTimelineModal(true);
     if (!timelineData) {
       setLoadingTimeline(true);
@@ -1275,6 +1283,7 @@ function Studio() {
 
   const handleUrlSubmit = async () => {
     if (!urlInputValue.trim() || !activeNotebook || uploading) return false;
+    setUrlError('');
     
     let urlToSubmit = urlInputValue.trim();
     if (!urlToSubmit.startsWith('http://') && !urlToSubmit.startsWith('https://')) {
@@ -1284,7 +1293,7 @@ function Studio() {
     try {
       const parsed = new URL(urlToSubmit);
       if (!['http:', 'https:'].includes(parsed.protocol) || !parsed.hostname.includes('.')) throw new Error();
-    } catch { showToast('Nhập đường dẫn website hoặc YouTube hợp lệ.'); return false; }
+    } catch { setUrlError('Nhập đường dẫn website hoặc YouTube hợp lệ.'); return false; }
     setUploading(true);
     setUploadingDocs(prev => [...prev, { filename: urlToSubmit }]);
     
@@ -1305,6 +1314,7 @@ function Studio() {
       setMobileActiveTab('chat');
       return true;
     } catch (e) {
+      setUrlError(getErrorMessage(e));
       showToast('Không thể thêm đường dẫn: ' + getErrorMessage(e), 8000);
       return false;
     } finally {
@@ -1559,7 +1569,7 @@ function Studio() {
       {/* Cột 1: Left Sidebar (Sources) */}
       <div className={`${
         showLeftSidebar ? 'w-64 xl:w-72 hidden lg:flex' : 'hidden'
-      } flex-shrink-0 h-full border-r flex-col p-4 z-20 relative transition-all duration-200 ${
+      } studio-panel flex-shrink-0 h-full border-r flex-col p-4 z-20 relative transition-all duration-200 ${
         isDark ? 'bg-[#14161a] border-white/5' : 'bg-white border-slate-200'
       } ${mobileActiveTab === 'docs' ? '!flex !w-full fixed inset-0 bottom-16 z-20 lg:!w-64 xl:lg:!w-72 lg:relative lg:inset-auto' : ''}`}>
         
@@ -2253,7 +2263,7 @@ function Studio() {
 
             return (
               <motion.div 
-                key={idx} 
+                key={msg.id || msg.clientId || idx}
                 id={`msg-${idx}`}
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -2277,7 +2287,7 @@ function Studio() {
                       : (isDark ? 'bg-[#181a20] border border-white/10 text-gray-100' : 'bg-white border border-slate-200 text-slate-800 shadow-sm') + ' rounded-tl-sm w-full'
                   }`}>
                     {/* Action buttons on message hover: TTS, Pin Note, Copy, Delete */}
-                    <div className="flex justify-end gap-1 mb-1 opacity-100 lg:opacity-0 lg:group-hover/msg:opacity-100 focus-within:opacity-100 transition z-10">
+                    <div className={`message-actions flex justify-end gap-1 mb-1 opacity-100 lg:opacity-0 lg:group-hover/msg:opacity-100 focus-within:opacity-100 transition z-10 ${msg.role === 'user' ? 'user-actions' : ''}`}>
                       {msg.content && (
                         <>
                           {/* TTS Play/Stop Button */}
@@ -2318,6 +2328,7 @@ function Studio() {
                       <button
                         type="button"
                         onClick={() => handleDeleteMessage(msg.id, idx)}
+                        disabled={loading}
                         className="p-1.5 rounded-lg bg-black/60 hover:bg-red-500/80 text-gray-400 hover:text-white transition shadow backdrop-blur-sm"
                         title="Xóa tin nhắn này"
                       >
@@ -2327,7 +2338,7 @@ function Studio() {
 
                     {/* Message Content: MarkdownRenderer for assistant */}
                     {msg.content ? (
-                      <div className="pr-5">
+                      <div className="break-words min-w-0">
                         {msg.role === 'assistant' ? (
                           <MarkdownRenderer content={msg.content} isDark={isDark} />
                         ) : (
@@ -2600,7 +2611,7 @@ function Studio() {
               className="hidden" 
               onChange={handleFileUpload}
               disabled={uploading}
-              accept=".pdf,.docx,.pptx,.xlsx,.xls,.html,.htm,.txt,.md,.csv,.png,.jpg,.jpeg,.webp,.mp3,.wav,.m4a,.mp4"
+              accept=".pdf,.docx,.pptx,.xlsx,.html,.htm,.txt,.md,.csv,.png,.jpg,.jpeg,.webp,.mp3,.wav,.m4a"
             />
 
             <textarea 
@@ -2670,7 +2681,7 @@ function Studio() {
       {/* Cột 3: Right Sidebar (Study Guide, Podcast, Mindmap, Timeline) */}
       <div className={`${
         showRightSidebar ? 'w-80 xl:w-96 hidden lg:flex' : 'hidden'
-      } flex-shrink-0 h-full p-3.5 overflow-y-auto scrollbar-hide flex-col gap-3 border-l transition-all duration-200 ${
+      } studio-panel flex-shrink-0 h-full p-3.5 overflow-y-auto scrollbar-hide flex-col gap-3 border-l transition-all duration-200 ${
         isDark ? 'bg-[#14161a] border-white/5' : 'bg-white border-slate-200'
       } ${mobileActiveTab === 'studio' ? '!flex !w-full fixed inset-0 bottom-16 z-20 lg:!w-80 xl:lg:!w-96 lg:relative lg:inset-auto' : ''}`}>
         

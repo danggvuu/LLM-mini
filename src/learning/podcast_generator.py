@@ -104,6 +104,8 @@ class PodcastGenerator:
                 methods.append(lambda: self._generate_with_edge_tts_native(dialogues, output_file, voice_mode=voice_mode))
             methods.extend((lambda: self._generate_with_gtts(dialogues, output_file), lambda: self._generate_offline(dialogues, output_file)))
             for synthesize in methods:
+                if source_revision is not None and self.db.get_source_revision(notebook_id) != source_revision:
+                    raise RuntimeError("Nguồn tài liệu đã thay đổi. Vui lòng tạo lại Podcast.")
                 try:
                     synthesize()
                     for suffix in (".mp3", ".wav"):
