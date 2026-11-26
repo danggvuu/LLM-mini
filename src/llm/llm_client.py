@@ -414,7 +414,7 @@ class LLMEngine:
                 return
 
         # 3. Xử lý các Provider dạng OpenAI-Compatible (9Router, OpenAI, Groq, OpenRouter, LM Studio, vLLM, Custom)
-        endpoint_url = base_url
+        endpoint_url = actual_base_url
         if not endpoint_url:
             if actual_provider == "9router":
                 endpoint_url = self.default_9router_url

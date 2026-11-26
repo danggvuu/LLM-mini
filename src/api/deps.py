@@ -238,11 +238,13 @@ def resolve_llm_config(notebook: dict, override_provider: str = None, override_m
     elif provider == "gemini":
         base_url = ""
     elif provider == "openai":
-        base_url = "https://api.openai.com/v1"
+        # A model selected from the model manager may use an OpenAI-compatible
+        # gateway (for example Xingqi) while retaining the openai provider ID.
+        base_url = nb_url or "https://api.openai.com/v1"
     elif provider == "groq":
-        base_url = "https://api.groq.com/openai/v1"
+        base_url = nb_url or "https://api.groq.com/openai/v1"
     elif provider == "openrouter":
-        base_url = "https://openrouter.ai/api/v1"
+        base_url = nb_url or "https://openrouter.ai/api/v1"
     else:
         base_url = nb_url or global_settings.get("custom_base_url") or ""
 

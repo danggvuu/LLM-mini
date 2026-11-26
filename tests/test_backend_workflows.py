@@ -417,6 +417,29 @@ def test_same_provider_nonstandard_endpoint_is_respected(backend):
     assert config[3] == "http://127.0.0.1:9011"
 
 
+@pytest.mark.parametrize("provider, fallback", [
+    ("openai", "https://api.openai.com/v1"),
+    ("groq", "https://api.groq.com/openai/v1"),
+    ("openrouter", "https://openrouter.ai/api/v1"),
+])
+def test_openai_compatible_provider_keeps_notebook_endpoint(backend, provider, fallback):
+    from src.api.deps import resolve_llm_config
+
+    custom_endpoint = "https://api.xingqi.example/v1"
+    config = resolve_llm_config({
+        "provider": provider,
+        "model_name": "xingqi-model",
+        "api_key": "xingqi-secret",
+        "base_url": custom_endpoint,
+    })
+    assert config[0] == provider
+    assert config[2] == "xingqi-secret"
+    assert config[3] == custom_endpoint
+
+    default_config = resolve_llm_config({"provider": provider})
+    assert default_config[3] == fallback
+
+
 def test_podcast_status_ignores_garbage_and_honors_generation_error(backend):
     from src.api.routers import media
     path = backend.root / "storage/podcasts/safe-nb.mp3"

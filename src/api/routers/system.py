@@ -134,6 +134,7 @@ def system_health_check():
             "openai": bool(settings.get("openai_api_key")),
             "groq": bool(settings.get("groq_api_key")),
             "openrouter": bool(settings.get("openrouter_api_key")),
+            "custom": bool(settings.get("custom_base_url")),
         }.get(configured_provider, False)
 
         llm_status = "healthy" if provider_available else "warning"
@@ -169,6 +170,7 @@ def system_health_check():
                 "openai": bool(settings.get("openai_api_key")),
                 "groq": bool(settings.get("groq_api_key")),
                 "openrouter": bool(settings.get("openrouter_api_key")),
+                "custom": bool(settings.get("custom_base_url")),
             }
         }
         if not provider_available:
