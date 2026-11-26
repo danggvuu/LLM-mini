@@ -196,7 +196,7 @@ function Studio() {
 
   const handleSpeakMessage = (text, idx) => {
     if (!('speechSynthesis' in window)) {
-      alert('Trình duyệt của bạn không hỗ trợ tính năng Web Speech Text-to-Speech.');
+      showToast('Trình duyệt chưa hỗ trợ đọc văn bản. Bạn vẫn có thể sao chép nội dung.');
       return;
     }
 
@@ -255,13 +255,10 @@ function Studio() {
   const fetchPinnedNotes = async (nbId) => {
     if (!nbId) return;
     try {
-      const res = await fetch(`/api/notebooks/${nbId}/notes`);
-      if (res.ok) {
-        const data = await res.json();
-        setPinnedNotes(data.notes || []);
-      }
+      const data = await requestJson(`/api/notebooks/${nbId}/notes`);
+      if (mountedRef.current) setPinnedNotes(data.notes || []);
     } catch (err) {
-      console.error("Lỗi lấy ghi chú ghim:", err);
+      if (mountedRef.current) showToast('Không thể tải ghi chú: ' + getErrorMessage(err));
     }
   };
 
@@ -303,7 +300,7 @@ function Studio() {
 
   const handleSynthesizeNotes = async () => {
     const targetNbId = activeNotebook?.id || id;
-    if (!targetNbId || pinnedNotes.length < 2) return;
+    if (!targetNbId || pinnedNotes.length < 2 || isSynthesizingNotes) return false;
     setIsSynthesizingNotes(true);
     try {
       const res = await fetch(`/api/notebooks/${targetNbId}/notes/synthesize`, {
@@ -326,10 +323,12 @@ function Studio() {
         loading: false
       });
       setShowNotesModal(false);
-      showToast('✨ Đã tổng hợp Báo cáo Chuyên đề thành công!');
+      showToast('Đã tổng hợp báo cáo từ ghi chú.');
+      return true;
     } catch (err) {
       console.error("Lỗi tổng hợp ghi chú:", err);
-      showToast(`❌ Lỗi: ${err.message || 'Không thể tổng hợp ghi chú'}`);
+      showToast(getErrorMessage(err, 'Không thể tổng hợp ghi chú.'));
+      return false;
     } finally {
       setIsSynthesizingNotes(false);
     }
@@ -337,7 +336,7 @@ function Studio() {
 
   const handleConvertNoteToSource = async (note) => {
     const targetNbId = activeNotebook?.id || id;
-    if (!targetNbId || !note) return;
+    if (!targetNbId || !note || convertingNoteId !== null || uploading) return false;
     setConvertingNoteId(note.id);
     try {
       const rawTitle = (note.title || 'Ghi chú').trim();
@@ -359,10 +358,12 @@ function Studio() {
         throw new Error(err.detail || 'Không thể nạp ghi chú thành nguồn');
       }
       await refreshSources();
-      showToast(`✅ Đã nạp "${docTitle}" thành tài liệu nguồn RAG!`);
+      showToast(`Đã thêm "${docTitle}" vào nguồn tài liệu.`);
+      return true;
     } catch (err) {
       console.error("Lỗi chuyển ghi chú thành nguồn:", err);
-      showToast(`❌ Lỗi: ${err.message || 'Không thể chuyển ghi chú'}`);
+      showToast(getErrorMessage(err, 'Không thể chuyển ghi chú thành nguồn.'));
+      return false;
     } finally {
       setConvertingNoteId(null);
     }
@@ -913,7 +914,7 @@ function Studio() {
 
   const handleExportChat = () => {
     if (!messages || messages.length === 0) {
-      alert("Chưa có tin nhắn nào để xuất!");
+      showToast('Chưa có tin nhắn để xuất.');
       return;
     }
     let md = `# Sổ tay: ${activeNotebook?.title || 'NotebookLM'}\n\n`;
@@ -973,7 +974,7 @@ function Studio() {
   const handleVoiceToggle = () => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      alert("Trình duyệt hiện tại chưa hỗ trợ nhận diện giọng nói trực tiếp. Vui lòng dùng Chrome, Edge hoặc Cốc Cốc.");
+      showToast('Trình duyệt chưa hỗ trợ nhận diện giọng nói. Dùng Chrome hoặc nhập câu hỏi trực tiếp.');
       return;
     }
 
@@ -1568,10 +1569,10 @@ function Studio() {
       
       {/* Cột 1: Left Sidebar (Sources) */}
       <div className={`${
-        showLeftSidebar ? 'w-64 xl:w-72 hidden lg:flex' : 'hidden'
-      } studio-panel flex-shrink-0 h-full border-r flex-col p-4 z-20 relative transition-all duration-200 ${
+        showLeftSidebar ? 'lg:flex lg:w-64 xl:lg:w-72' : 'lg:hidden'
+      } studio-panel flex-shrink-0 h-full border-r flex-col p-4 z-20 transition-all duration-200 ${
         isDark ? 'bg-[#14161a] border-white/5' : 'bg-white border-slate-200'
-      } ${mobileActiveTab === 'docs' ? '!flex !w-full fixed inset-0 bottom-16 z-20 lg:!w-64 xl:lg:!w-72 lg:relative lg:inset-auto' : ''}`}>
+      } ${mobileActiveTab === 'docs' ? 'flex w-full fixed inset-x-0 top-0 bottom-16 lg:static' : 'hidden'}`}>
         
         <div className="flex items-center justify-between pb-3.5 border-b border-white/10 mb-4 min-h-[44px]">
           <button onClick={() => navigate('/dashboard')} className={`flex items-center gap-2 transition-colors text-sm font-medium ${isDark ? 'text-gray-400 hover:text-white' : 'text-slate-500 hover:text-slate-900'}`}>
@@ -2562,28 +2563,6 @@ function Studio() {
           }`}>
             
             <div className="relative">
-              {showUrlInput && (
-                <div className={`absolute bottom-full left-0 mb-2 p-2.5 rounded-xl shadow-2xl flex gap-2 z-20 w-80 border ${
-                  isDark ? 'bg-[#1c1f26] border-white/15' : 'bg-white border-slate-200'
-                }`}>
-                  <input 
-                    type="text" 
-                    value={urlInputValue}
-                    onChange={(e) => setUrlInputValue(e.target.value)}
-                    placeholder="Dán link Website hoặc YouTube..." 
-                    className={`flex-1 text-xs px-3 py-2 rounded-lg outline-none border focus:border-blue-500 ${
-                      isDark ? 'bg-black/40 text-white border-white/15' : 'bg-slate-50 text-slate-900 border-slate-300'
-                    }`}
-                    onKeyDown={(e) => e.key === 'Enter' && handleUrlSubmit()}
-                  />
-                  <button 
-                    onClick={handleUrlSubmit}
-                    className="bg-blue-600 px-3 rounded-lg text-white hover:bg-blue-500 transition cursor-pointer"
-                  >
-                    <Check size={14}/>
-                  </button>
-                </div>
-              )}
               <button 
                 onClick={() => setShowUrlInput(!showUrlInput)}
                 className={`p-2.5 rounded-xl transition ${
@@ -2680,10 +2659,10 @@ function Studio() {
 
       {/* Cột 3: Right Sidebar (Study Guide, Podcast, Mindmap, Timeline) */}
       <div className={`${
-        showRightSidebar ? 'w-80 xl:w-96 hidden lg:flex' : 'hidden'
-      } studio-panel flex-shrink-0 h-full p-3.5 overflow-y-auto scrollbar-hide flex-col gap-3 border-l transition-all duration-200 ${
+        showRightSidebar ? 'lg:flex lg:w-80 xl:lg:w-96' : 'lg:hidden'
+      } studio-panel z-20 flex-shrink-0 h-full p-3.5 overflow-y-auto scrollbar-hide flex-col gap-3 border-l transition-all duration-200 ${
         isDark ? 'bg-[#14161a] border-white/5' : 'bg-white border-slate-200'
-      } ${mobileActiveTab === 'studio' ? '!flex !w-full fixed inset-0 bottom-16 z-20 lg:!w-80 xl:lg:!w-96 lg:relative lg:inset-auto' : ''}`}>
+      } ${mobileActiveTab === 'studio' ? 'flex w-full fixed inset-x-0 top-0 bottom-16 lg:static' : 'hidden'}`}>
         
         {/* Top Header Bar - aligned with Col 1 & Col 2 */}
         <div className={`flex justify-between items-center pb-3 mb-0.5 min-h-[44px] border-b ${
@@ -3180,6 +3159,15 @@ function Studio() {
         ].map(tab => <button key={tab.id} onClick={() => setMobileActiveTab(tab.id)} aria-current={mobileActiveTab === tab.id ? 'page' : undefined} className={`flex-1 flex flex-col items-center justify-center gap-1 text-[11px] font-semibold ${mobileActiveTab === tab.id ? 'text-blue-500 bg-blue-500/10' : 'text-slate-400'}`}><tab.icon size={19} /><span>{tab.label}{tab.count ? ` (${tab.count})` : ''}</span></button>)}
       </nav>
 
+      {showUrlInput && <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm p-4 flex items-center justify-center">
+        <form ref={urlDialogRef} role="dialog" aria-modal="true" aria-label="Thêm nguồn từ đường dẫn" tabIndex={-1} onSubmit={event => { event.preventDefault(); void handleUrlSubmit(); }} className={`w-full max-w-lg p-5 sm:p-6 border rounded-2xl space-y-4 ${isDark ? 'bg-[#181a20] border-white/15' : 'bg-white border-slate-200'}`}>
+          <div className="flex gap-3 items-center justify-between"><h2 className="font-semibold flex items-center gap-2"><LinkIcon size={18} className="text-blue-500" /> Thêm website hoặc YouTube</h2><button type="button" disabled={uploading} onClick={() => setShowUrlInput(false)} aria-label="Đóng thêm đường dẫn" className="p-2"><X size={18} /></button></div>
+          <p className="text-sm opacity-70 leading-6">Dán đường dẫn công khai. Nội dung website hoặc phụ đề YouTube sẽ được dùng làm nguồn cho sổ tay.</p>
+          <label className="block text-xs font-semibold">Đường dẫn<input autoFocus required type="url" value={urlInputValue} disabled={uploading} onChange={event => { setUrlInputValue(event.target.value); setUrlError(''); }} placeholder="https://..." className={`mt-2 w-full rounded-xl border p-3 font-normal text-sm ${isDark ? 'bg-black/20 border-white/15' : 'bg-slate-50 border-slate-300'}`} /></label>
+          {urlError && <p role="alert" className="p-3 bg-red-500/10 text-red-500 text-sm rounded-xl">{urlError}</p>}
+          <div className="flex justify-end gap-2"><button type="button" disabled={uploading} onClick={() => setShowUrlInput(false)} className="px-4 py-2.5 rounded-xl border border-current/10 text-sm">Hủy</button><button type="submit" disabled={uploading || !urlInputValue.trim()} className="px-4 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-semibold">{uploading ? 'Đang đọc nguồn...' : 'Thêm nguồn'}</button></div>
+        </form>
+      </div>}
       {/* MODAL: QUIZ (Modular Component) */}
       <QuizModal
         isDark={isDark}

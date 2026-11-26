@@ -112,6 +112,18 @@ button, summary { touch-action: manipulation; }
 [data-theme="light"] .create-dialog :is(input, select) { background: #f8fafc; color: #0f172a; border-color: #cbd5e1; }
 [data-theme="light"] .create-dialog label { color: #475569; }
 [data-theme="light"] .create-dialog button.bg-white { background: #2563eb; color: white; }
+.studio-shell[data-theme="light"] { color-scheme: light; }
+.studio-shell[data-theme="light"] [class*="bg-[#1c1e24]"] { background-color: white; }
+.studio-shell[data-theme="light"] :is(.text-blue-300, .text-blue-400) { color: #2563eb; }
+.studio-shell[data-theme="light"] :is(.text-purple-300, .text-purple-400) { color: #7e22ce; }
+.studio-shell[data-theme="light"] :is(.text-green-300, .text-green-400, .text-emerald-300, .text-emerald-400) { color: #047857; }
+.studio-shell[data-theme="light"] :is(.text-amber-300, .text-amber-400, .text-yellow-300, .text-yellow-400, .text-lime-300, .text-lime-400) { color: #946200; }
+.studio-shell[data-theme="light"] :is(.text-cyan-300, .text-cyan-400, .text-teal-300, .text-teal-400) { color: #0e7490; }
+.message-actions > button { background: transparent; color: #94a3b8; box-shadow: none; }
+.message-actions > button:hover { background: #3b82f61a; color: #3b82f6; }
+[data-theme="light"] .message-actions > button { color: #64748b; }
+[data-theme="light"] .message-actions.user-actions > button { color: #dbeafe; }
+[data-theme="light"] .message-actions.user-actions > button:hover { background: #ffffff26; color: white; }
 [data-theme="dark"] { color-scheme: dark; }
 
 @media (max-width: 1023px) {
